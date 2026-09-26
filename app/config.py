@@ -64,6 +64,7 @@ class Config:
     auto_apply_trips: bool = False         # when not dry_run: apply trip proposals without review
     auto_apply_local: bool = False
     auto_apply_home: bool = False
+    auto_apply_everyday: bool = False      # each run moves unclustered photos older than trip_gap_days to YYYY/MM
     scan_interval_min: int = 10
     write_xmp_sidecar: bool = True         # also write keywords into <file>.xmp via exiftool
     photo_extensions: list[str] = field(default_factory=lambda: [

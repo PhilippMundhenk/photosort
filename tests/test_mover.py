@@ -276,6 +276,25 @@ def test_put_back_undoes_a_correction(cfg, library):
     assert mover.list_clusters(cfg)[0]["n"] == len(m["photos"])
 
 
+def test_put_back_finds_a_photo_that_moved_on(cfg, library):
+    """A removed photo may have been moved into the everyday tree before it is put back."""
+    props, kinds = _props(cfg)
+    m = mover.apply(cfg, kinds["local"])
+    folder = mover.target_folder(cfg, kinds["local"])
+    entry = m["photos"][0]
+    mover.move_out(cfg, folder, Path(entry["dst"]))
+    src = Path(entry["src"])
+    elsewhere = Path(cfg.root) / "2026" / "06" / src.name
+    elsewhere.parent.mkdir(parents=True)
+    src.rename(elsewhere)
+    back = mover.put_back(cfg, folder, src)
+    assert back["dst"] == entry["dst"] and Path(entry["dst"]).exists() and not elsewhere.exists()
+    mover.move_out(cfg, folder, Path(entry["dst"]))
+    Path(entry["src"]).unlink()                                            # gone for good
+    with pytest.raises(FileNotFoundError):
+        mover.put_back(cfg, folder, Path(entry["src"]))
+
+
 def test_put_back_in_copy_mode(cfg, library):
     cfg.copy_instead_of_move = True
     props, kinds = _props(cfg)

@@ -16,6 +16,18 @@
 <div class="card muted">Nothing indexed yet — press “Run now”.</div>
 {% endif %}
 
+<div class="card">
+  <div class="row">
+    {% if moving %}<span class="badge warn">moving</span> <span class="small" data-progress="everyday">{{ moving.done }} / {{ moving.total }}</span>
+      <span data-poll="everyday"></span>
+    {% elif queued %}<span class="badge">queued</span> <span class="small">moving everyday photos starts after the current move</span><span data-poll="everyday"></span>
+    {% elif cfg.dry_run %}<span class="muted small">{{ movable }} everyday photos older than {{ cfg.trip_gap_days|int }} days could be moved into <code>{{ cfg.everyday_layout }}/</code> — dry-run is on, nothing moves.</span>
+    {% elif movable %}<form method="post" action="/everyday/move_all" class="inline" onsubmit="return confirm('Move {{ movable }} everyday photos older than {{ cfg.trip_gap_days|int }} days into {{ cfg.everyday_layout }}/ now?')"><button>Move {{ movable }} everyday photos into {{ cfg.everyday_layout }}/</button></form>
+      <span class="muted small">older than {{ cfg.trip_gap_days|int }} days; newer ones may still become a cluster</span>
+    {% else %}<span class="muted small">Nothing to move: every everyday photo is newer than {{ cfg.trip_gap_days|int }} days.</span>{% endif %}
+  </div>
+</div>
+
 {% if days %}
 <form method="post" action="/everyday/assign" id="assign">
 <div class="card sticky">

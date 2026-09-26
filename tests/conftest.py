@@ -25,6 +25,9 @@ def data_dir() -> Path:
     for t in threading.enumerate():        # nor may the startup cache warm-up still be reading it
         if t.name == "warm":
             t.join(60)
+    if any(t.name == "apply" for t in threading.enumerate()):
+        from app import main
+        main.wait_for_apply(60)            # nor a background move started by a web test
     d = config.DATA_DIR
     if d.exists():
         shutil.rmtree(d)

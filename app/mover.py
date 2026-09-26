@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import cluster, events, ingest
-from .config import Config
+from .config import Config, inbox_dirs
 
 MANIFEST = "manifest.json"
 
@@ -27,6 +27,16 @@ class DryRun(RuntimeError):
 
 class FolderInUse(OSError):
     """A folder could not be renamed because something holds a file in it (Windows only)."""
+
+
+def _current(p: Path) -> dict:
+    """What the worker is on right now, for the progress line (a 100 MB video over a slow mount
+    takes a while and must not look stuck)."""
+    try:
+        size = p.stat().st_size
+    except OSError:
+        size = 0
+    return {"file": p.name, "bytes": size, "since": time.time()}
 
 
 def _guard(cfg: Config) -> None:
@@ -139,7 +149,7 @@ def apply(cfg: Config, pr: dict, reviewed: bool = False, progress=None) -> dict:
     total = len(pr["photos"])
     for i, p in enumerate(pr["photos"], 1):
         if progress:
-            progress(i - 1, total)
+            progress(i - 1, total, _current(Path(p["path"])))
         src = Path(p["path"])
         if p["path"] in excluded or not src.exists():
             continue
@@ -158,7 +168,7 @@ def apply(cfg: Config, pr: dict, reviewed: bool = False, progress=None) -> dict:
                       "media": p.get("media", "photo"), "source": p.get("source"), "inbox": p.get("inbox"),
                       "uncertain": bool(p.get("uncertain")), "in_review": in_review})
     if progress:
-        progress(total, total)
+        progress(total, total, None)
     manifest = {
         "name": pr["name"], "kind": pr["kind"], "start": pr["start"], "end": pr["end"],
         "proposal_id": pr["id"], "decision": pr["decision"], "applied": _now(), "mode": _mode(cfg),
@@ -170,20 +180,24 @@ def apply(cfg: Config, pr: dict, reviewed: bool = False, progress=None) -> dict:
     return manifest
 
 
-def apply_everyday(cfg: Config, min_age_days: float) -> int:
+def everyday_movable(cfg: Config, min_age_days: float) -> list[dict]:
+    """Unclustered inbox photos older than min_age_days: what apply_everyday would move."""
+    if cfg.everyday_layout == "leave":
+        return []
+    cutoff = datetime.now(timezone.utc).timestamp() - min_age_days * 86400
+    return [r for r in cluster.everyday_records(cfg) if r["_t"].timestamp() <= cutoff]
+
+
+def apply_everyday(cfg: Config, min_age_days: float, progress=None) -> int:
     """Move (or copy) unclustered inbox photos older than min_age_days into root/YYYY/MM."""
     if cfg.everyday_layout == "leave":
         return 0
     _guard(cfg)
-    props = cluster.load_proposals()
-    clustered = {p["path"] for pr in props.values() if pr["status"] in ("pending", "ongoing", "approved")
-                 for p in pr["photos"]}
-    recs, _ = cluster.load_records(cfg)
-    cutoff = datetime.now(timezone.utc).timestamp() - min_age_days * 86400
+    todo = everyday_movable(cfg, min_age_days)
     n = 0
-    for r in recs:
-        if r["path"] in clustered or r["_t"].timestamp() > cutoff:
-            continue
+    for i, r in enumerate(todo):
+        if progress:
+            progress(i, len(todo), _current(Path(r["path"])))
         sub = cfg.everyday_layout.replace("YYYY", f"{r['_t']:%Y}").replace("MM", f"{r['_t']:%m}")
         dst_dir = Path(cfg.root) / sub
         if cfg.subfolder_by_source and r.get("source"):
@@ -193,6 +207,8 @@ def apply_everyday(cfg: Config, min_age_days: float) -> int:
         if cfg.copy_instead_of_move:
             _mark_source(cfg, Path(r["path"]), dst, sub)
         n += 1
+    if progress:
+        progress(len(todo), len(todo), None)
     if n:
         events.log("apply_everyday", n=n, mode=_mode(cfg))
     return n
@@ -299,6 +315,14 @@ def put_back(cfg: Config, folder: Path, src: Path) -> dict | None:
     entry = next((c for c in m.get("corrections", []) if c["src"] == str(src)), None)
     if entry is None:
         return None
+    if not src.exists():                                  # moved on since (e.g. into the everyday tree): find it
+        found = [f for f in Path(cfg.root).rglob(src.name) if f.is_file()]
+        found += [f for _, inbox in inbox_dirs(cfg)
+                  for f in inbox.rglob(src.name) if f.is_file()] if not found else []
+        if len(found) != 1:
+            raise FileNotFoundError(f"{src.name}: not found where it was left ({src}); "
+                                    f"{len(found)} files of that name under the sorted tree and inboxes")
+        src = found[0]
     dst_dir = Path(entry["dst"]).parent
     if m.get("mode") == "copy":
         dst = _transfer(cfg, src, dst_dir, copy=True)

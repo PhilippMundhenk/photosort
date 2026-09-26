@@ -136,8 +136,20 @@ def test_group_bursts_and_baseline():
     recs = [rec(t, Z.ZONE_HOME), rec(t + h(1), Z.ZONE_HOME), rec(t + h(4.5), Z.ZONE_HOME),
             rec(t + h(6), Z.ZONE_HOME), rec(t + timedelta(days=1), Z.ZONE_LOCAL)]
     assert [len(b) for b in cluster.group_bursts(cfg, recs)] == [2, 2, 1]
-    assert cluster.home_baseline(recs) == 4                # one day with 4 home photos -> median 4
-    assert cluster.home_baseline([rec(t, Z.ZONE_AWAY)]) == 1.0
+    assert cluster.home_baseline(recs, persist=False) == 4                # one day with 4 home photos -> median 4
+    assert cluster.home_baseline([rec(t, Z.ZONE_AWAY)], persist=False) == 1.0
+
+
+def test_home_baseline_is_remembered_across_moves(data_dir):
+    t = T0
+    days = [rec(t + timedelta(days=d), Z.ZONE_HOME, HOME) for d in range(10)]            # 1 photo/day
+    burst = [rec(t + timedelta(days=20, hours=i * 0.1), Z.ZONE_HOME, HOME) for i in range(25)]
+    assert cluster.home_baseline(days + burst) == 1                                      # median of 11 days
+    assert cluster.home_baseline(burst) == 1                                             # everyday moved out: same
+    assert cluster.home_baseline([]) == 1
+    assert cluster.BASELINE_PATH.exists()
+    cluster.BASELINE_PATH.write_text("{broken", encoding="utf-8")
+    assert cluster.home_baseline(burst) == 25                                            # unreadable: recomputed
 
 
 def test_fill_gps_from_neighbours_respects_48h_window():
