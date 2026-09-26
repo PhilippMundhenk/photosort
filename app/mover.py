@@ -265,9 +265,10 @@ def rename(cfg: Config, folder: Path, new_name: str) -> Path:
     return dst
 
 
-def move_out(cfg: Config, folder: Path, photo: Path) -> None:
-    """User says a photo does not belong: back to inbox (copy mode: delete the copy, unmark the
-    original), logged as a correction."""
+def move_out(cfg: Config, folder: Path, photo: Path) -> dict | None:
+    """User says a photo does not belong: back to its inbox (copy mode: delete the copy, unmark
+    the original), recorded as a correction in the manifest so it can be put back. Returns the
+    manifest entry (with src = where the photo is now)."""
     m = read_manifest(folder)
     entry = next((p for p in (m or {}).get("photos", []) if p["dst"] == str(photo)), None)
     rec = ingest.read_sidecar(photo, cfg) or {}
@@ -276,7 +277,9 @@ def move_out(cfg: Config, folder: Path, photo: Path) -> None:
         _mark_source(cfg, Path(entry["src"]), None, None)
     else:
         back = Path((entry or {}).get("inbox") or rec.get("inbox") or cfg.inboxes[0]["path"])
-        _transfer(cfg, photo, back)
+        now_at = _transfer(cfg, photo, back)
+        if entry:
+            entry["src"] = str(now_at)                    # where it is now (a name clash may have renamed it)
     if m and entry:
         m["photos"].remove(entry)
         entry["corrected"] = _now()
@@ -284,6 +287,34 @@ def move_out(cfg: Config, folder: Path, photo: Path) -> None:
         write_manifest(folder, m)
     events.log("correction", name=folder.name, photo=photo.name,
                decision_id=(m or {}).get("decision", {}).get("id"), note="moved out by user")
+    return entry
+
+
+def put_back(cfg: Config, folder: Path, src: Path) -> dict | None:
+    """Undo a correction: the photo returns from its inbox to the cluster folder. Returns the
+    restored manifest entry, None if there is no such correction."""
+    m = read_manifest(folder)
+    if not m:
+        return None
+    entry = next((c for c in m.get("corrections", []) if c["src"] == str(src)), None)
+    if entry is None:
+        return None
+    dst_dir = Path(entry["dst"]).parent
+    if m.get("mode") == "copy":
+        dst = _transfer(cfg, src, dst_dir, copy=True)
+        _mark_source(cfg, src, dst, m["name"])
+    else:
+        dst = _transfer(cfg, src, dst_dir)
+    _settle(cfg, dst, {"cluster": m["name"], "decision": {"by": m["decision"].get("by", "rule"),
+                                                          "conf": entry.get("conf", 1.0), "kind": m["kind"]}})
+    entry["dst"] = str(dst)
+    entry.pop("corrected", None)
+    m["corrections"].remove(entry)
+    m["photos"].append(entry)
+    m["photos"].sort(key=lambda p: Path(p["dst"]).name)
+    write_manifest(folder, m)
+    events.log("correction_undone", name=folder.name, photo=dst.name, proposal=m.get("proposal_id"))
+    return entry
 
 
 def list_clusters(cfg: Config) -> list[dict]:

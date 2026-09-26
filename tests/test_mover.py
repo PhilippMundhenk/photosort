@@ -258,6 +258,37 @@ def test_move_out_returns_photo_to_its_inbox_and_records_correction(cfg, library
     assert ev["kind"] == "correction" and ev["photo"] == dst.name and ev["decision_id"] == trip["decision"].get("id")
 
 
+def test_put_back_undoes_a_correction(cfg, library):
+    props, kinds = _props(cfg)
+    trip = kinds["trip"]
+    m = mover.apply(cfg, trip)
+    folder = mover.target_folder(cfg, trip)
+    entry = m["photos"][3]
+    out = mover.move_out(cfg, folder, Path(entry["dst"]))
+    assert out["src"] == entry["src"] and Path(entry["src"]).exists() and not Path(entry["dst"]).exists()
+    assert mover.put_back(cfg, folder, Path("nope.jpg")) is None
+    back = mover.put_back(cfg, folder, Path(entry["src"]))
+    assert back["dst"] == entry["dst"] and Path(entry["dst"]).exists() and not Path(entry["src"]).exists()
+    m2 = mover.read_manifest(folder)
+    assert m2["corrections"] == [] and len(m2["photos"]) == len(m["photos"])
+    assert ingest.read_sidecar(Path(entry["dst"]), cfg)["cluster"] == trip["name"]
+    assert events.read(limit=1)[0]["kind"] == "correction_undone"
+    assert mover.list_clusters(cfg)[0]["n"] == len(m["photos"])
+
+
+def test_put_back_in_copy_mode(cfg, library):
+    cfg.copy_instead_of_move = True
+    props, kinds = _props(cfg)
+    m = mover.apply(cfg, kinds["local"])
+    folder = mover.target_folder(cfg, kinds["local"])
+    entry = m["photos"][0]
+    mover.move_out(cfg, folder, Path(entry["dst"]))
+    assert "copied_to" not in ingest.read_sidecar(Path(entry["src"]), cfg)
+    mover.put_back(cfg, folder, Path(entry["src"]))
+    assert Path(entry["dst"]).exists() and Path(entry["src"]).exists()
+    assert ingest.read_sidecar(Path(entry["src"]), cfg)["copied_to"] == entry["dst"]
+
+
 def test_list_clusters(cfg, library):
     assert mover.list_clusters(cfg) == []
     props, kinds = _props(cfg)

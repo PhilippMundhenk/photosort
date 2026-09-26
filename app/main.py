@@ -497,11 +497,40 @@ def cluster_undo(folder: str = Form(...)):
     return RedirectResponse("/clusters", status_code=303)
 
 
+def _set_excluded(folder: Path, path: str, excluded: bool) -> None:
+    """Keep the proposal in step with a correction: a removed photo is excluded from its cluster
+    (so it counts as everyday), a put-back one is not."""
+    m = mover.read_manifest(folder) or {}
+    pid = m.get("proposal_id")
+    with _props_lock:
+        props = cluster.load_proposals()
+        pr = props.get(pid) if pid else None
+        if pr is None:
+            return
+        ex = set(pr.get("excluded", []))
+        (ex.add if excluded else ex.discard)(path)
+        pr["excluded"] = sorted(ex)
+        cluster.save_proposals(props)
+
+
 @app.post("/cluster/move_out")
 def cluster_move_out(folder: str = Form(...), photo: str = Form(...)):
     cfg = config.load()
-    mover.move_out(cfg, Path(folder), Path(photo))
-    return RedirectResponse(f"/clusters/view?folder={folder}", status_code=303)
+    entry = mover.move_out(cfg, Path(folder), Path(photo))
+    if entry:
+        _set_excluded(Path(folder), entry["src"], True)
+        with _lock:
+            ingest.scan(cfg)                              # index the returned file now, not in 10 minutes
+    return RedirectResponse(f"/clusters/view?folder={quote(folder)}", status_code=303)
+
+
+@app.post("/cluster/put_back")
+def cluster_put_back(folder: str = Form(...), src: str = Form(...)):
+    cfg = config.load()
+    entry = mover.put_back(cfg, Path(folder), Path(src))
+    if entry:
+        _set_excluded(Path(folder), src, False)
+    return RedirectResponse(f"/clusters/view?folder={quote(folder)}", status_code=303)
 
 
 def _allowed(cfg: config.Config, p: Path) -> bool:
