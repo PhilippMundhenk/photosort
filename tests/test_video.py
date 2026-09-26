@@ -52,6 +52,38 @@ def test_video_falls_back_to_file_modify_date_and_skips_zero_dates():
     assert ingest._parse_dt({"CreateDate": "garbage"}, video=True, tz=BERLIN) is None
 
 
+def test_file_name_timestamp_beats_mtime():
+    mtime = {"FileModifyDate": "2026:09:26 15:00:00+00:00"}
+    assert ingest._parse_dt(mtime, video=True, tz=BERLIN, name="20260101_000025.mp4") == "2026-01-01T00:00:25+01:00"
+    assert ingest._parse_dt(mtime, name="IMG_20260604_090000.jpg") == "2026-06-04T09:00:00"
+    assert ingest._parse_dt(mtime, name="PXL_20260604_090000123.mp4", video=True, tz=BERLIN) \
+        == "2026-06-04T09:00:00+02:00"
+    assert ingest._parse_dt(mtime, name="VID-20260604-090000.mp4") == "2026-06-04T09:00:00"
+    assert ingest._parse_dt(mtime, name="DSC_1234.jpg") == "2026-09-26T15:00:00+00:00"        # no pattern: mtime
+    assert ingest._parse_dt(mtime, name="20261399_990000.jpg") == "2026-09-26T15:00:00+00:00"  # invalid date
+    tags = {"CreateDate": "2026:06:04 07:00:00"}
+    assert ingest._parse_dt(tags, video=True, tz=BERLIN, name="20200101_000000.mp4") == "2026-06-04T09:00:00+02:00"
+
+
+def test_exif_batch_reads_videos_without_fast2(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        class R:
+            returncode, stdout = 0, "[]"
+        return R()
+    monkeypatch.setattr(ingest.subprocess, "run", fake_run)
+    files = [tmp_path / "a.jpg", tmp_path / "b.mp4", tmp_path / "c.MOV", tmp_path / "d.heic"]
+    ingest.exif_batch(files)
+    assert len(calls) == 2
+    photos, videos = calls
+    assert "-fast2" in photos and str(files[0]) in photos and str(files[3]) in photos
+    assert "-fast2" not in videos and str(files[1]) in videos and str(files[2]) in videos
+    ingest.exif_batch([tmp_path / "only.mp4"])
+    assert len(calls) == 3                                                      # no empty photo call
+
+
 def test_records_sort_by_instant_across_photos_and_videos(tmp_path):
     """A naive photo time and a converted video time of the same moment compare equal."""
     cfg = config.Config(timezone="Europe/Berlin")

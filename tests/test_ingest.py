@@ -3,6 +3,7 @@ import shutil
 import struct
 import subprocess
 import zlib
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -130,6 +131,8 @@ def test_scan_without_exiftool_leaves_photos_unindexed(tmp_path, monkeypatch):
 
 def test_exif_batch_empty_list_needs_no_exiftool():
     assert ingest.exif_batch([]) == {}
+    assert ingest._name_dt("20260604_090000.jpg") == datetime(2026, 6, 4, 9, 0, 0)
+    assert ingest._name_dt("random.jpg") is None
 
 
 # --- real exiftool ------------------------------------------------------------------
