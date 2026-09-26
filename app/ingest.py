@@ -343,7 +343,7 @@ def build_record(cfg: Config, photo: Path, tags: dict, source: str | None = None
         "zone": geo.ZONE_UNKNOWN,
         "place": None,
         "cluster": None,        # folder name once assigned
-        "decision": None,       # {"by": "rule"|"kev", "conf": float, "note": str}
+        "decision": None,       # {"by": "rule"|"user", "conf": float, "kind": str}
         "indexed": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
     enrich_location(cfg, rec)

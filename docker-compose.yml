@@ -11,8 +11,6 @@ services:
     environment:
       PHOTOSORT_DATA: /data
       TZ: ${TZ:-UTC}                                  # home zone: naive photo times, video UTC conversion
-      # default decision-model URL (base URL; the app appends /v1/systemone). Settings in the UI win.
-      PHOTOSORT_KEV_URL: ${PHOTOSORT_KEV_URL:-http://laya:8000}
     volumes:
       - ./data:/data                                  # config.yaml, proposals.json, events.jsonl
       - ${PHOTOS_INBOX_A:-/mnt/nas/photos/inbox-phone-a}:/photos/inbox/phone-a
@@ -20,8 +18,6 @@ services:
       - ${PHOTOS_ROOT:-/mnt/nas/photos/sorted}:/photos/sorted
     ports:
       - "8080:8080"
-    depends_on:
-      - laya
     # labels for Traefik, adapt to your setup:
     # labels:
     #   - traefik.enable=true
@@ -29,17 +25,3 @@ services:
     #   - traefik.http.routers.photosort.middlewares=authelia@docker
     mem_limit: 512m
 
-  # Decision model: Laya (open weights, Apache-2.0) behind TypeSafe's System One API, see
-  # docker/laya/Dockerfile. Any other server speaking /v1/systemone (Kev, jaredpalmer/kev, SemIf
-  # adapters, or Jev itself) works too: point PHOTOSORT_KEV_URL / kev_url at it and drop this
-  # service. Leave kev_url empty in Settings to use the rule-based fallback without a model.
-  laya:
-    build: docker/laya
-    image: ${LAYA_IMAGE:-ghcr.io/philippmundhenk/photosort-laya:latest}
-    container_name: photosort-laya
-    restart: unless-stopped
-    volumes:
-      - ${LAYA_MODELS:-./kev-models}:/models          # Hugging Face cache; 846 MB downloaded once
-    ports:
-      - "127.0.0.1:8000:8000"                         # local only: demo UI at http://localhost:8000/demo
-    mem_limit: 4g                                     # ~2.2 GB resident, ~3.3 GB peak

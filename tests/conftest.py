@@ -11,7 +11,6 @@ import pytest
 
 _SESSION_TMP = Path(tempfile.mkdtemp(prefix="photosort-pytest-"))
 os.environ["PHOTOSORT_DATA"] = str(_SESSION_TMP / "data")
-os.environ.pop("PHOTOSORT_KEV_URL", None)
 
 from app import config  # noqa: E402
 from tests import synth  # noqa: E402

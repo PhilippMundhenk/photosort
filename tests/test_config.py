@@ -24,19 +24,6 @@ def test_load_without_file_gives_defaults(data_dir):
     assert config.load() == config.Config()
 
 
-def test_kev_url_seeded_from_environment(monkeypatch):
-    monkeypatch.setenv("PHOTOSORT_KEV_URL", "http://laya:8000")
-    assert config.Config().kev_url == "http://laya:8000"
-    monkeypatch.delenv("PHOTOSORT_KEV_URL")
-    assert config.Config().kev_url == ""
-
-
-def test_saved_value_wins_over_environment(data_dir, monkeypatch):
-    monkeypatch.setenv("PHOTOSORT_KEV_URL", "http://laya:8000")
-    config.save(config.Config(kev_url=""))
-    assert config.load().kev_url == ""
-
-
 def test_update_from_form_coercion():
     cfg = config.Config()
     form = {
@@ -44,7 +31,7 @@ def test_update_from_form_coercion():
         "dry_run": "on", "subfolder_by_source": "on",
         "photo_extensions": ".JPG, heic , mp4",
         "inboxes": "phone-a=/photos/a\n\n/photos/b\ncam = /photos/c \n",
-        "kev_url": "  http://laya:8000/ ", "root": "/photos/sorted",
+        "root": "/photos/sorted", "unnamed_dir": "  _todo ",
         "unknown_field": "ignored",
     }
     out = config.update_from_form(cfg, form)
@@ -57,7 +44,7 @@ def test_update_from_form_coercion():
     assert out.inboxes == [{"path": "/photos/a", "name": "phone-a"},
                            {"path": "/photos/b", "name": "b"},
                            {"path": "/photos/c", "name": "cam"}]
-    assert out.kev_url == "http://laya:8000/"
+    assert out.unnamed_dir == "_todo"
     assert not hasattr(out, "unknown_field")
 
 

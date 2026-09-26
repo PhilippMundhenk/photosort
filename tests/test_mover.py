@@ -4,13 +4,12 @@ from pathlib import Path
 import pytest
 
 from app import cluster, config, events, ingest, mover
-from app.kev import Decider
 
 
 def _props(cfg):
     cfg.sidecar_cleanup = "never"                     # these tests inspect the records of sorted photos
     config.save(cfg)
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     props = cluster.load_proposals()
     return props, {p["kind"]: p for p in props.values()}
 
@@ -180,7 +179,7 @@ def test_rename_unnamed_burst_leaves_unnamed_dir(cfg, library):
     assert all(Path(p["dst"]).exists() and Path(p["dst"]).is_relative_to(dst) for p in m["photos"])
     assert ingest.read_sidecar(Path(m["photos"][0]["dst"]))["cluster"] == "2026-06-30 Hannas Geburtstag"
     ev = events.read(limit=1)[0]
-    assert ev["kind"] == "label" and ev["old"] == home["name"] and ev["decision_id"] == home["decision"]["id"]
+    assert ev["kind"] == "label" and ev["old"] == home["name"] and ev["decision_id"] is None
 
 
 def test_rename_named_cluster_in_place_and_sanitizes(cfg, library):
@@ -246,7 +245,7 @@ def test_copy_mode_keeps_originals_and_marks_them(copy_cfg, library):
     # already-copied originals are not proposed or sorted again
     local["status"] = "applied"                                      # as the UI does after apply
     cluster.save_proposals(props)
-    stats = cluster.run(cfg, Decider(cfg))
+    stats = cluster.run(cfg)
     assert stats["photos"] == library.n - local["n"]
     assert cluster.load_proposals()[local["id"]]["status"] == "applied"   # kept as history
     assert mover.apply_everyday(cfg, min_age_days=4) == 10
@@ -265,7 +264,7 @@ def test_copy_mode_undo_deletes_copies_and_clears_marks(copy_cfg, library):
     for p in m["photos"]:
         rec = ingest.read_sidecar(Path(p["src"]))
         assert Path(p["src"]).exists() and "copied_to" not in rec and rec["cluster"] is None
-    assert cluster.run(cfg, Decider(cfg))["photos"] == library.n    # everything is sortable again
+    assert cluster.run(cfg)["photos"] == library.n    # everything is sortable again
 
 
 def test_copy_mode_move_out_deletes_copy_only(copy_cfg, library):

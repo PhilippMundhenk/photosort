@@ -14,10 +14,9 @@ dependencies = { file = ["requirements.txt"] }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers -m 'not integration'"
+addopts = "-ra --strict-markers"
 markers = [
     "e2e: browser tests against a real uvicorn server (Playwright); deselect with -m 'not e2e'",
-    "integration: needs a running Laya/System One server at PHOTOSORT_LAYA_URL; run with -m integration",
 ]
 filterwarnings = [
     "ignore:.*on_event is deprecated.*:DeprecationWarning",

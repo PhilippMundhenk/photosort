@@ -13,7 +13,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import cluster, config, events, ingest, main, mover
-from app.kev import Decider
 from tests import synth
 
 
@@ -52,7 +51,7 @@ def _proposals(kind: str | None = None) -> dict:
 
 def test_pages_render_empty(client):
     for path, text in [("/", "Dashboard"), ("/review", "No open proposals"), ("/clusters", "No clusters applied yet"),
-                       ("/log", "Calibration"), ("/settings", "Save settings")]:
+                       ("/log", "filter:"), ("/settings", "Save settings")]:
         r = client.get(path)
         assert r.status_code == 200 and text in r.text, path
     assert "dry-run" in client.get("/").text                     # badge in the header
@@ -60,11 +59,9 @@ def test_pages_render_empty(client):
     assert client.get("/static/ui.js").status_code == 200 and 'src="/static/ui.js"' in client.get("/").text
 
 
-def test_api_status_and_kev_backend_shown(client):
+def test_api_status(client):
     s = client.get("/api/status").json()
-    assert s["pending"] == 0 and s["dry_run"] is True
-    assert s["kev"] == {"backend": "rule", "ok": True, "detail": "no kev_url configured"}
-    assert "rule" in client.get("/").text
+    assert s == {"state": main._state, "pending": 0, "dry_run": True}
 
 
 def test_startup_writes_config_and_schedules_scan(client):
@@ -107,7 +104,7 @@ def test_run_error_is_shown_on_dashboard(client, monkeypatch):
 
 def test_approve_moves_photos_without_review_folder(client, library):
     cfg = config.load()
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     local = _proposals("local")
     _force_uncertain(local["id"])
     r = client.post(f"/proposal/{local['id']}/approve")
@@ -124,7 +121,7 @@ def test_approve_moves_photos_without_review_folder(client, library):
 
 def test_reject_rename_toggle(client, library):
     cfg = config.load()
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     trip, home = _proposals("trip"), _proposals("home")
 
     r = client.post(f"/proposal/{trip['id']}/rename", data={"name": '2026-06 Portugal: "Sommer"'})
@@ -146,30 +143,18 @@ def test_reject_rename_toggle(client, library):
     assert client.get("/api/status").json()["pending"] == 2                # trip + local remain
     # rename and toggled-out photos survive the next run; rejected photos become everyday
     client.post(f"/proposal/{trip['id']}/toggle", data={"path": path})
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     assert _proposals("trip")["name"] == "2026-06 Portugal- -Sommer-"
     assert _proposals("trip")["excluded"] == [path]
     assert _proposals("home")["status"] == "rejected"
     assert client.post("/proposal/nope/approve").headers["location"] == "/review"
 
 
-def test_reject_of_model_decision_logs_correction(client, library):
-    cfg = config.load()
-    cluster.run(cfg, Decider(cfg))
-    home = _proposals("home")
-    props = cluster.load_proposals()
-    props[home["id"]]["decision"]["by"] = "kev"                  # pretend the model decided
-    cluster.save_proposals(props)
-    client.post(f"/proposal/{home['id']}/reject")
-    corr = events.read(limit=1, kind="correction")[0]
-    assert corr["decision_id"] == home["decision"]["id"] and corr["note"] == "proposal rejected"
-
-
 # --- clusters ------------------------------------------------------------------------------------
 
 def test_name_unnamed_burst_then_view_move_out_undo(client, library):
     cfg = config.load()
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     home = _proposals("home")
     client.post(f"/proposal/{home['id']}/approve")
     folder = mover.target_folder(cfg, home)
@@ -200,7 +185,7 @@ def test_name_unnamed_burst_then_view_move_out_undo(client, library):
 
 def test_undo_marks_applied_proposal_rejected(client, library):
     cfg = config.load()
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     trip = _proposals("trip")
     client.post(f"/proposal/{trip['id']}/approve")
     folder = mover.target_folder(cfg, trip)
@@ -234,7 +219,7 @@ def test_detect_home_without_gps(client, tmp_path):
 
 def test_rename_remembers_place(client, library):
     cfg = config.load()
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     local = _proposals("local")
     client.post(f"/proposal/{local['id']}/rename", data={"name": "2026-06-27 Blühendes Barock", "remember_place": "1"})
     places = config.load().named_places
@@ -250,7 +235,7 @@ def test_rename_remembers_place(client, library):
 
 def test_cluster_rename_remembers_place(client, library):
     cfg = config.load()
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     trip = _proposals("trip")
     client.post(f"/proposal/{trip['id']}/approve")
     folder = mover.target_folder(cfg, trip)
@@ -272,28 +257,24 @@ def test_settings_save_coerces_and_reschedules(client):
     cfg = config.load()
     form = {k: str(v) for k, v in cfg.as_dict().items() if not isinstance(v, (bool, list))}
     form.update({"inboxes": config.inboxes_text(cfg), "photo_extensions": "jpg, heic",
-                 "scan_interval_min": "42", "home_lat": "48.1", "copy_instead_of_move": "on",
-                 "kev_url": "http://127.0.0.1:9", "kev_model": "laya"})       # port 9: nothing listens
+                 "scan_interval_min": "42", "home_lat": "48.1", "copy_instead_of_move": "on"})
     r = client.post("/settings", data=form)
     assert r.status_code == 303 and r.headers["location"] == "/settings"
     new = config.load()
     assert new.scan_interval_min == 42 and new.home_lat == 48.1 and new.photo_extensions == ["jpg", "heic"]
     assert new.copy_instead_of_move is True and new.dry_run is False        # checkbox absent -> off
-    assert new.kev_url == "http://127.0.0.1:9" and new.kev_model == "laya"
     assert main.scheduler.get_job("scan").trigger.interval.total_seconds() == 42 * 60
     assert events.read(limit=1, kind="settings")[0]["changed"]
     page = client.get("/settings").text
     assert 'value="42"' in page and 'name="copy_instead_of_move" checked' in page
     assert "live" in client.get("/").text                                  # header badge, dry-run off
-    status = client.get("/api/status").json()["kev"]
-    assert status["backend"] == "kev" and status["ok"] is False           # nothing listening
 
 
 def test_live_mode_auto_applies_trips_with_review_folder(client, library, monkeypatch):
     cfg = config.load()
     cfg.dry_run, cfg.auto_apply_trips = False, True
     config.save(cfg)
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     trip = _proposals("trip")
     doubtful = trip["photos"][5]["file"]                                  # recomputed by the pipeline run:
     real = cluster._gps_conf                                              # make one photo low-confidence for real
@@ -312,7 +293,7 @@ def test_live_mode_applies_approved_without_review_folder(client, library):
     cfg = config.load()
     cfg.dry_run = False
     config.save(cfg)
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     props = cluster.load_proposals()
     local = next(p for p in props.values() if p["kind"] == "local")
     local["status"] = "approved"
@@ -367,16 +348,15 @@ def test_media_serves_original_or_preview(client, library, tmp_path):
 
 def test_review_page_thumbnails_are_linked(client, library):
     cfg = config.load()
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     page = client.get("/review").text
     assert f"/thumb?path={quote(str(library.paths[-1]), safe='')}" in page or "/thumb?path=" in page
     assert json.loads(client.get("/api/status").text)["pending"] == 3
 
 
-def test_log_page_filters_and_shows_calibration(client, library):
-    events.log("decision", id="k1", by="kev", conf=0.9, answer="occasion")
-    events.log("correction", decision_id="k1")
-    page = client.get("/log?kind=decision").text
-    assert "k1" in page and "correction" not in page.split("Calibration")[1].split("<h2")[0] or True
-    assert "0.8–1.0" in page
-    assert client.get("/log?kind=correction").text.count("decision_id=k1") == 1
+def test_log_page_filters(client, library):
+    events.log("review", proposal="p1", action="reject", name="x")
+    events.log("correction", name="x", photo="a.jpg")
+    page = client.get("/log?kind=review").text
+    assert "proposal=p1" in page and "photo=a.jpg" not in page
+    assert client.get("/log?kind=correction").text.count("photo=a.jpg") == 1

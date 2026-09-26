@@ -54,7 +54,6 @@ class Config:
     burst_gap_hours: float = 3.0           # photos closer than this belong to the same burst
     burst_min_photos: int = 12
     burst_baseline_factor: float = 4.0     # burst must exceed baseline photos/day * factor
-    occasion_confidence_min: float = 0.6   # Kev confidence needed to auto-flag a home burst as occasion
 
     # Behaviour
     dry_run: bool = True                   # proposals only, nothing moves until approved in the UI
@@ -68,13 +67,6 @@ class Config:
     photo_extensions: list[str] = field(default_factory=lambda: [
         "jpg", "jpeg", "heic", "heif", "png", "dng", "cr2", "cr3", "nef", "arw", "orf", "rw2", "mp4", "mov"])
 
-    # Decision model: any server speaking TypeSafe's System One API (Jev, Kev, Laya via laya-server).
-    # Base URL, e.g. http://laya:8000 (the app appends /v1/systemone). Empty -> rule-based fallback.
-    # PHOTOSORT_KEV_URL only seeds the default; a value saved from the UI wins.
-    kev_url: str = field(default_factory=lambda: os.environ.get("PHOTOSORT_KEV_URL", ""))
-    kev_model: str = ""                    # "model" field of the request; empty -> server default
-    kev_timeout_s: float = 20.0
-    kev_batch_size: int = 20
 
     # Sidecars: the per-photo JSON record. "central": <data>/index/<inbox name>/<relative path>
     # (photo folders stay clean; the record is regenerable, so files moved by other tools just get

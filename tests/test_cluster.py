@@ -1,7 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
 from app import cluster, config, geo, ingest
-from app.kev import Decider
 from tests.synth import HOME, LISBON, LUDWIGSBURG, SEVILLE, T0
 
 Z = geo
@@ -160,7 +159,7 @@ def test_home_state_summary():
 # --- run() -----------------------------------------------------------------------------
 
 def test_run_produces_trip_dayout_and_occasion(cfg, library):
-    stats = cluster.run(cfg, Decider(cfg))
+    stats = cluster.run(cfg)
     props = cluster.load_proposals()
     kinds = {p["kind"]: p for p in props.values()}
     assert set(kinds) == {"trip", "local", "home"} and stats["proposals"] == 3
@@ -171,15 +170,8 @@ def test_run_produces_trip_dayout_and_occasion(cfg, library):
     assert stats["no_timestamp"] == 0 and stats["threshold"] == 12
 
 
-def test_run_keeps_review_state_and_reuses_decisions(cfg, library):
-    class CountingDecider(Decider):
-        calls = 0
-
-        def choice(self, *a, **kw):
-            CountingDecider.calls += 1
-            return super().choice(*a, **kw)
-
-    cluster.run(cfg, CountingDecider(cfg))
+def test_run_keeps_review_state(cfg, library):
+    cluster.run(cfg)
     props = cluster.load_proposals()
     home = next(p for p in props.values() if p["kind"] == "home")
     local = next(p for p in props.values() if p["kind"] == "local")
@@ -188,26 +180,23 @@ def test_run_keeps_review_state_and_reuses_decisions(cfg, library):
     local["excluded"] = [local["photos"][0]["path"]]
     cluster.save_proposals(props)
 
-    cluster.run(cfg, CountingDecider(cfg))
+    cluster.run(cfg)
     props = cluster.load_proposals()
-    assert CountingDecider.calls == 1                       # rejected burst is not re-asked
     home2 = props[home["id"]]
     assert home2["status"] == "rejected"                    # kept as history, photos become everyday
     local2 = props[local["id"]]
     assert local2["name"] == "2026-06-27 Blühendes Barock" and local2["excluded"] == local["excluded"]
 
 
-def test_run_skips_home_burst_below_confidence(cfg, library):
-    cfg.occasion_confidence_min = 0.99
-    cluster.run(cfg, Decider(cfg))
-    assert {p["kind"] for p in cluster.load_proposals().values()} == {"trip", "local"}
-
-
-def test_run_uses_decider_answer_and_applied_history(cfg, library):
-    class Busy(Decider):
-        def choice(self, context, state, options, instructions="", criteria=None):
-            return {"id": "x", "by": "kev", "answer": "busy_day", "probs": {}, "conf": 0.9}
-    cluster.run(cfg, Busy(cfg))
+def test_every_dense_home_burst_is_proposed(cfg, library):
+    """No model in the loop: a burst well above the usual day is always proposed, with a note."""
+    cluster.run(cfg)
+    home = next(p for p in cluster.load_proposals().values() if p["kind"] == "home")
+    assert home["decision"]["by"] == "rule" and home["decision"]["conf"] == 1.0
+    assert home["decision"]["note"].startswith("25 files in 3.6 h at home, 2.08x your usual day, 2 devices")
+    assert home["decision"]["state"]["photos"] == 25 and home["name"].endswith("(25 Fotos)")
+    cfg.burst_baseline_factor = 40.0                        # threshold above the burst: everyday
+    cluster.run(cfg)
     assert "home" not in {p["kind"] for p in cluster.load_proposals().values()}
 
 
@@ -236,5 +225,5 @@ def test_run_records_without_timestamp_are_counted(cfg, library):
     rec_ = ingest.read_sidecar(p, cfg)
     rec_["ts"] = None
     ingest.write_sidecar(p, rec_, cfg)
-    stats = cluster.run(cfg, Decider(cfg))
+    stats = cluster.run(cfg)
     assert stats["no_timestamp"] == 1 and stats["photos"] == library.n - 1

@@ -57,7 +57,7 @@
   <label>Photos closer than (hours) form one burst</label><input type="number" step="0.5" name="burst_gap_hours" value="{{ cfg.burst_gap_hours }}">
   <label>Min photos per burst</label><input type="number" name="burst_min_photos" value="{{ cfg.burst_min_photos }}">
   <label>Home burst must exceed baseline photos/day ×</label><input type="number" step="0.5" name="burst_baseline_factor" value="{{ cfg.burst_baseline_factor }}">
-  <label>Min Kev confidence to flag an occasion</label><input type="number" step="0.05" min="0" max="1" name="occasion_confidence_min" value="{{ cfg.occasion_confidence_min }}">
+  <div class="muted small">Every burst above this goes to <code>{{ cfg.unnamed_dir }}/</code> as a proposal for you to name or reject.</div>
 </div>
 
 <div class="card">
@@ -91,14 +91,6 @@
   <div class="muted small">Records are regenerable: a photo without one is simply re-indexed on the next scan (one exiftool call).</div>
 </div>
 
-<div class="card">
-  <h2 style="margin-top:0">Decision model</h2>
-  <label>System One server URL (empty = rule-based fallback)</label><input type="text" name="kev_url" value="{{ cfg.kev_url }}" placeholder="http://laya:8000">
-  <label>Model name sent in requests (empty = server default)</label><input type="text" name="kev_model" value="{{ cfg.kev_model }}" placeholder="laya, laya-multilingual, kev-latest, ...">
-  <label>Timeout (s)</label><input type="number" step="1" name="kev_timeout_s" value="{{ cfg.kev_timeout_s }}">
-  <label>Batch size</label><input type="number" name="kev_batch_size" value="{{ cfg.kev_batch_size }}">
-  <div class="muted small">Any server speaking TypeSafe's System One API (<code>POST /v1/systemone</code>): the bundled Laya
-    container, Kev, or Jev itself. Base URL; <code>/v1/systemone</code> is appended. Status is shown on the dashboard.</div>
 </div>
 
 </div>

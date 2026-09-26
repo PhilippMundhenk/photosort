@@ -17,7 +17,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from . import cluster, config, events, geo, ingest, mover, thumbs
-from .kev import Decider
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("photosort")
@@ -40,7 +39,7 @@ def run_pipeline(trigger: str = "schedule") -> dict:
     try:
         cfg = config.load()
         s1 = ingest.scan(cfg)
-        s2 = cluster.run(cfg, Decider(cfg))
+        s2 = cluster.run(cfg)
         thumbs.prefetch(cfg, [p for _, folder in config.inbox_dirs(cfg) if folder.exists()
                               for p in ingest.list_photos(cfg, folder)])
         applied = 0
@@ -106,7 +105,7 @@ def dashboard(request: Request):
     props = cluster.load_proposals()
     unnamed = [c for c in mover.list_clusters(cfg) if c["unnamed"]]
     return render(request, "dashboard.html", pending=_pending(props), unnamed=unnamed,
-                  kev=Decider(cfg).status(), recent=events.read(limit=8))
+                  recent=events.read(limit=8))
 
 
 @app.get("/review", response_class=HTMLResponse)
@@ -194,8 +193,7 @@ def cluster_view(request: Request, folder: str):
 
 @app.get("/log", response_class=HTMLResponse)
 def log_page(request: Request, kind: str = ""):
-    return render(request, "log.html", rows=events.read(limit=300, kind=kind or None), kind=kind,
-                  calibration=events.calibration())
+    return render(request, "log.html", rows=events.read(limit=300, kind=kind or None), kind=kind)
 
 
 @app.get("/settings", response_class=HTMLResponse)
@@ -271,10 +269,7 @@ async def proposal_action(pid: str, action: str, request: Request):
         events.log("review", proposal=pid, action="approve", name=pr["name"])
     elif action == "reject":
         pr["status"] = "rejected"
-        events.log("review", proposal=pid, action="reject", name=pr["name"],
-                   decision_id=pr["decision"].get("id"))
-        if pr["decision"].get("by") == "kev":
-            events.log("correction", decision_id=pr["decision"]["id"], note="proposal rejected")
+        events.log("review", proposal=pid, action="reject", name=pr["name"], cluster_kind=pr["kind"])
     elif action == "rename":
         pr["name"], pr["name_edited"] = cluster.sanitize(form.get("name", pr["name"])), True
         events.log("review", proposal=pid, action="rename", name=pr["name"])
@@ -407,4 +402,4 @@ def media(path: str):
 def api_status():
     cfg = config.load()
     props = cluster.load_proposals()
-    return {"state": _state, "pending": len(_pending(props)), "kev": Decider(cfg).status(), "dry_run": cfg.dry_run}
+    return {"state": _state, "pending": len(_pending(props)), "dry_run": cfg.dry_run}

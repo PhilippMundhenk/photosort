@@ -35,21 +35,3 @@ def read(limit: int = 500, kind: str | None = None) -> list[dict]:
             rows.append(ev)
     return rows[-limit:][::-1]
 
-
-def calibration(bins: int = 5) -> list[dict]:
-    """Kev decisions vs later corrections, bucketed by confidence: the calibration view."""
-    decisions = {}
-    for ev in read(limit=100000, kind="decision"):
-        if ev.get("by") == "kev":
-            decisions[ev.get("id")] = ev
-    corrected = {ev.get("decision_id") for ev in read(limit=100000, kind="correction")}
-    buckets = [{"lo": i / bins, "hi": (i + 1) / bins, "n": 0, "wrong": 0} for i in range(bins)]
-    for did, ev in decisions.items():
-        c = float(ev.get("conf") or 0)
-        idx = min(int(c * bins), bins - 1)
-        buckets[idx]["n"] += 1
-        if did in corrected:
-            buckets[idx]["wrong"] += 1
-    for b in buckets:
-        b["acc"] = round(1 - b["wrong"] / b["n"], 2) if b["n"] else None
-    return buckets

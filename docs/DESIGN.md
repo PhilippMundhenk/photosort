@@ -21,6 +21,9 @@ Non-goals:
 
 ## 2. Why a decision model at all — and why so little of it
 
+*(Superseded: the model was dropped after the experiment in section 10. The reasoning below
+is kept because it explains the shape of the rules.)*
+
 Jev-style models take a short text *state* and typed questions (`Choice`, `Noul` = yes/no,
 `Score`) and return calibrated probabilities in ~100 ms, without generating text. They are
 small (Laya ≈ 1 GB, sub-second on CPU) and cheap to call thousands of times. They are weak on
@@ -202,7 +205,7 @@ built incrementally.
 - No JS build, no CDN: server-rendered Jinja templates and plain forms.
 - Moves are `rename()` on the same mount; inbox and target must share it.
 
-## 8. Feedback loop and calibration
+## 8. Feedback loop and calibration (historical, see section 10)
 
 Every model decision is logged with confidence and id. Rejecting a proposal, moving a photo
 out, or renaming a burst appends a *correction* that references the decision id. The Log page
@@ -234,3 +237,31 @@ match. This is the actual learning objective of the project: does "0.8" mean 0.8
 - Devices: `Make`/`Model` from EXIF (photos, iPhone videos) or the Android QuickTime keys;
   a file without any device metadata (typical Android video) takes the inbox name and, when
   counting devices for the home-burst question, merges with the inbox's single named device.
+
+## 10. The decision model, tried and dropped (September 2026)
+
+Laya (Convai Innovations' open-weights System One model, served behind TypeSafe's
+`/v1/systemone` API) was wired in as planned and asked the one question the rules cannot
+answer: is this dense burst of photos at home an occasion or just a busy day? On the first
+real library it answered `busy_day` for every burst, with confidence between 0.06 and 0.11.
+Rephrasing the state as prose and adding an obvious party did not help:
+
+| burst described as                        | p(occasion) | confidence |
+|-------------------------------------------|-------------|------------|
+| birthday, numbers only (as the app sent)  | 0.34        | 0.08       |
+| birthday, prose                           | 0.29        | 0.13       |
+| chores, numbers only                      | 0.30        | 0.11       |
+| chores, prose                             | 0.33        | 0.09       |
+| a 60-photo, five-phone party, prose       | 0.26        | 0.17       |
+
+The party scores below the chores; the signal is absent, and the low confidence says so. A
+text-classification model trained on tickets, routing and moderation has no way to read a
+handful of counts and hours, and the metadata itself carries no feature that separates a
+birthday from twenty shots of the same thing. The rule-based fallback gave the same verdicts.
+
+Decision: drop the model from the pipeline. Every burst above the size gate is proposed and
+the user names or rejects it, which is what the review queue is for. The adapter, the Laya
+container, the calibration view and the settings were removed rather than left as dead
+weight; they are in the git history (commits up to 1a02926) should a better question turn up.
+What would make a model useful here: image content (rejected for this hardware), or a few
+hundred reviewed bursts to fine-tune on, which the review queue now collects as manifests.

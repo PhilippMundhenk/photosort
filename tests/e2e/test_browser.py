@@ -41,7 +41,6 @@ def server(tmp_path_factory):
 
     port = _free_port()
     env = {**os.environ, "PHOTOSORT_DATA": str(data)}
-    env.pop("PHOTOSORT_KEV_URL", None)
     proc = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(port),
                              "--host", "127.0.0.1", "--log-level", "warning"], cwd=ROOT, env=env)
     url = f"http://127.0.0.1:{port}"

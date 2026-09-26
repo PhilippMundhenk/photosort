@@ -9,7 +9,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import cluster, events, ingest, main
-from app.kev import Decider
 from tests import synth
 
 
@@ -24,7 +23,7 @@ def _everyday_paths(cfg):
 
 
 def test_everyday_records_are_the_unclustered_ones(cfg, library):
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     ev = cluster.everyday_records(cfg)
     props = cluster.load_proposals()
     clustered = {p["path"] for pr in props.values() for p in pr["photos"]}
@@ -38,7 +37,7 @@ def test_everyday_records_are_the_unclustered_ones(cfg, library):
 
 
 def test_create_manual_and_survive_runs(cfg, library):
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     paths = _everyday_paths(cfg)[:4]
     pr = cluster.create_manual("home", "  2026-06 Grillabend ", _recs(cfg, paths))
     assert pr["id"].startswith("m") and pr["manual"] and pr["kind"] == "home" and pr["name"] == "2026-06 Grillabend"
@@ -49,7 +48,7 @@ def test_create_manual_and_survive_runs(cfg, library):
     props[pr["id"]] = pr
     cluster.save_proposals(props)
 
-    cluster.run(cfg, Decider(cfg))                                  # automatic recompute keeps it
+    cluster.run(cfg)                                  # automatic recompute keeps it
     props = cluster.load_proposals()
     kept = props[pr["id"]]
     assert kept["manual"] and set(kept["paths"]) == set(paths) and kept["n"] == 4
@@ -58,17 +57,17 @@ def test_create_manual_and_survive_runs(cfg, library):
 
     Path(paths[0]).unlink()                                         # a photo disappears: proposal shrinks
     ingest.delete_sidecar(Path(paths[0]), cfg)
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     assert cluster.load_proposals()[pr["id"]]["n"] == 3
     for p in paths[1:]:                                             # all gone: proposal dropped
         Path(p).unlink()
         ingest.delete_sidecar(Path(p), cfg)
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     assert pr["id"] not in cluster.load_proposals()
 
 
 def test_default_name_for_manual_cluster(cfg, library):
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     recs = _recs(cfg, _everyday_paths(cfg)[:3])
     assert cluster.create_manual("local", "", recs)["name"] == "2026-06-01..03 Bietigheim-Bissingen"
     assert "Fotos" in cluster.create_manual("home", "", recs)["name"]
@@ -80,21 +79,21 @@ def test_default_name_for_manual_cluster(cfg, library):
 
 def test_manual_photos_are_reserved_from_automatic_clustering(cfg, library):
     """Pulling photos out of the middle of the automatic trip into a manual cluster splits the trip."""
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     trip = next(p for p in cluster.load_proposals().values() if p["kind"] == "trip")
     mid = [p["path"] for p in trip["photos"][20:24]]
     props = cluster.load_proposals()
     pr = cluster.create_manual("local", "2026-06-11 Sintra", _recs(cfg, mid))
     props[pr["id"]] = pr
     cluster.save_proposals(props)
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     props = cluster.load_proposals()
     trips = [p for p in props.values() if p["kind"] == "trip"]
     assert sum(p["n"] for p in trips) == trip["n"] - 4 and props[pr["id"]]["n"] == 4
 
 
 def test_add_to_automatic_proposal_persists(cfg, library):
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     props = cluster.load_proposals()
     local = next(p for p in props.values() if p["kind"] == "local")
     extra = _everyday_paths(cfg)[:2]
@@ -102,14 +101,14 @@ def test_add_to_automatic_proposal_persists(cfg, library):
     assert cluster.add_to_proposal(local, _recs(cfg, extra)) == 0          # idempotent
     assert local["n"] == 15 + 2 and set(local["added"]) == set(extra)
     cluster.save_proposals(props)
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     again = cluster.load_proposals()[local["id"]]
     assert again["n"] == 17 and set(again["added"]) == set(extra)
     assert set(extra).isdisjoint(_everyday_paths(cfg))
     # excluding one of the added photos in review works like any other
     again["excluded"] = [extra[0]]
     cluster.save_proposals(cluster.load_proposals() | {again["id"]: again})
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     assert cluster.load_proposals()[local["id"]]["excluded"] == [extra[0]]
 
 
@@ -123,7 +122,7 @@ def client(library):
 
 
 def test_everyday_page_lists_by_month_and_day(client, cfg, library):
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     r = client.get("/everyday")
     assert r.status_code == 200
     page = r.text
@@ -135,7 +134,7 @@ def test_everyday_page_lists_by_month_and_day(client, cfg, library):
 
 
 def test_assign_creates_manual_cluster_and_adds_to_existing(client, cfg, library):
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     paths = _everyday_paths(cfg)
     r = client.post("/everyday/assign", data={"paths": [paths[0], paths[1]], "target": "new",
                                               "kind": "home", "name": "2026-06-01 Kaffee"})
@@ -163,7 +162,7 @@ def test_assign_creates_manual_cluster_and_adds_to_existing(client, cfg, library
 
 def test_manual_cluster_can_be_approved_and_applied(client, cfg, library):
     from app import mover
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     paths = _everyday_paths(cfg)[:3]
     client.post("/everyday/assign", data={"paths": paths, "target": "new", "kind": "local",
                                           "name": "2026-06-02 Spaziergang"})
@@ -172,14 +171,14 @@ def test_manual_cluster_can_be_approved_and_applied(client, cfg, library):
     folder = mover.target_folder(cfg, pr)
     assert folder.is_dir() and len(list(folder.rglob("*.jpg"))) == 3
     assert cluster.load_proposals()[pr["id"]]["status"] == "applied"
-    cluster.run(cfg, Decider(cfg))                                  # history is kept after the photos moved
+    cluster.run(cfg)                                  # history is kept after the photos moved
     assert cluster.load_proposals()[pr["id"]]["status"] == "applied"
 
 
 def test_manual_cluster_with_videos_and_span(cfg, library):
     a = Path(cfg.inboxes[0]["path"])
     library.video(a, synth.T0 + timedelta(days=1, hours=9), synth.HOME)
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     recs = [r for r in cluster.everyday_records(cfg) if r["ts"][:10] in ("2026-06-01", "2026-06-02")]
     pr = cluster.create_manual("home", "", recs)
     assert pr["name"].startswith("2026-06-01..02") and "1 Videos" in pr["name"]
