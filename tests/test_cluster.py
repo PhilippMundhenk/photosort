@@ -22,8 +22,10 @@ def h(n: float) -> timedelta:
 def test_span_label_variants():
     a = datetime(2026, 6, 4, 9)
     assert cluster.span_label(a, a + h(5)) == "2026-06-04"
-    assert cluster.span_label(a, a + timedelta(days=20)) == "2026-06-04..24"
-    assert cluster.span_label(a, a + timedelta(days=40)) == "2026-06-04..07-14"
+    assert cluster.span_label(a, a + timedelta(days=20)) == "2026-06"                    # same month: month only
+    assert cluster.span_label(a, a + timedelta(days=20), month_only=False) == "2026-06-04..24"
+    assert cluster.span_label(a, a + timedelta(days=1)) == "2026-06"
+    assert cluster.span_label(a, a + timedelta(days=40)) == "2026-06-04..07-14"          # across months: full range
     assert cluster.span_label(a, datetime(2027, 1, 2)) == "2026-06-04..2027-01-02"
 
 
@@ -115,7 +117,10 @@ def test_trip_proposal_confidences_and_ongoing():
            rec(t + h(1), Z.ZONE_AWAY, LISBON, "Lisbon", gps="neighbour:x"),
            rec(t + h(2), Z.ZONE_UNKNOWN), rec(t + timedelta(days=3), Z.ZONE_AWAY, SEVILLE, "Sevilla", "Spain")]
     pr = cluster.trip_proposal(cfg, run, now=t + timedelta(days=30))
-    assert pr["kind"] == "trip" and pr["name"] == "2026-06-01..04 Lisbon, Sevilla" and pr["status"] == "pending"
+    assert pr["kind"] == "trip" and pr["name"] == "2026-06 Lisbon, Sevilla" and pr["status"] == "pending"
+    cfg.name_multiday_by_month = False
+    assert cluster.trip_proposal(cfg, run, now=t + timedelta(days=30))["name"] == "2026-06-01..04 Lisbon, Sevilla"
+    cfg.name_multiday_by_month = True
     assert [p["conf"] for p in pr["photos"]] == [1.0, 0.8, 0.6, 1.0]
     assert pr["photos"][0]["lat"] == LISBON[0]
     assert pr["n"] == 4 and pr["n_uncertain"] == 1 and pr["photos"][2]["uncertain"]
@@ -163,7 +168,7 @@ def test_run_produces_trip_dayout_and_occasion(cfg, library):
     props = cluster.load_proposals()
     kinds = {p["kind"]: p for p in props.values()}
     assert set(kinds) == {"trip", "local", "home"} and stats["proposals"] == 3
-    assert kinds["trip"]["name"] == "2026-06-04..24 Lisbon, Sevilla" and kinds["trip"]["n"] == 67
+    assert kinds["trip"]["name"] == "2026-06 Lisbon, Sevilla" and kinds["trip"]["n"] == 67
     assert kinds["local"]["name"] == "2026-06-27 Ludwigsburg" and kinds["local"]["n"] == 15
     assert kinds["home"]["name"] == "2026-06-30 (25 Fotos)" and kinds["home"]["decision"]["by"] == "rule"
     assert stats["photos"] == library.n and stats["everyday"] == library.n - 67 - 15 - 25

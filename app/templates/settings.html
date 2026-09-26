@@ -50,6 +50,7 @@
   <label>Split a run on a photo-less gap longer than (days)…</label><input type="number" step="0.5" name="trip_gap_days" value="{{ cfg.trip_gap_days }}">
   <label>…if the two sides are further apart than (km)</label><input type="number" name="trip_split_distance_km" value="{{ cfg.trip_split_distance_km }}">
   <label>Max places in a folder name (then countries)</label><input type="number" name="max_places_in_name" value="{{ cfg.max_places_in_name }}">
+  <div class="check"><input type="checkbox" id="nmm" name="name_multiday_by_month" {% if cfg.name_multiday_by_month %}checked{% endif %}><label for="nmm">Name multi-day clusters within one month by month only (<code>2026-08 Singapore</code> instead of <code>2026-08-08..29 Singapore</code>)</label></div>
 </div>
 
 <div class="card">

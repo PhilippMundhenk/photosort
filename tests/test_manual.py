@@ -69,7 +69,7 @@ def test_create_manual_and_survive_runs(cfg, library):
 def test_default_name_for_manual_cluster(cfg, library):
     cluster.run(cfg)
     recs = _recs(cfg, _everyday_paths(cfg)[:3])
-    assert cluster.create_manual("local", "", recs)["name"] == "2026-06-01..03 Bietigheim-Bissingen"
+    assert cluster.create_manual("local", "", recs)["name"] == "2026-06 Bietigheim-Bissingen"
     assert "Fotos" in cluster.create_manual("home", "", recs)["name"]
     with pytest.raises(ValueError):
         cluster.create_manual("weird", "x", recs)
@@ -181,4 +181,4 @@ def test_manual_cluster_with_videos_and_span(cfg, library):
     cluster.run(cfg)
     recs = [r for r in cluster.everyday_records(cfg) if r["ts"][:10] in ("2026-06-01", "2026-06-02")]
     pr = cluster.create_manual("home", "", recs)
-    assert pr["name"].startswith("2026-06-01..02") and "1 Videos" in pr["name"]
+    assert pr["name"].startswith("2026-06 (") and "1 Videos" in pr["name"]

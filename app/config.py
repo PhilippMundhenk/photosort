@@ -45,6 +45,7 @@ class Config:
     trip_gap_days: float = 4.0             # gap without photos > this AND different area -> split
     trip_split_distance_km: float = 300.0  # "different area" if runs are further apart than this
     max_places_in_name: int = 4
+    name_multiday_by_month: bool = True    # several days in one month: "2026-08 Singapore", not "2026-08-08..29 ..."
     min_city_population: int = 1000        # below this use the state/region name instead of the village
     # Your own place names: photos within radius_km of (lat, lon) are labelled with the name
     # ("Black Forest", "Alps", "Allotment garden"). Grown from the "remember this place" box on rename.

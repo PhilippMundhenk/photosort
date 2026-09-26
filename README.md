@@ -13,7 +13,7 @@ See [docs/DESIGN.md](docs/DESIGN.md) for scope, the rules and why they were chos
 ## What it does
 
 ```
-inbox/phone-a/**.jpg ─┐                              sorted/2026-06-04..24 Lisbon, Sevilla/
+inbox/phone-a/**.jpg ─┐                              sorted/2026-06 Lisbon, Sevilla/
 inbox/phone-b/**.jpg ─┼─ scan ─ zone ─ cluster ─►    sorted/2026-06-27 Ludwigsburg/
 inbox/camera/**.dng  ─┘                              sorted/_unnamed/2026-06-30 (25 Fotos)/   ← you name it
                                                      sorted/2026/06/                          ← everything else
@@ -31,8 +31,9 @@ inbox/camera/**.dng  ─┘                              sorted/_unnamed/2026-06
 2. **Cluster** (deterministic):
    - **Trip** = a run of photos away from home spanning at least 20 hours. Any `home` photo
      ends it, no matter how short the stay. No-GPS photos inside the run ride along.
-     Lisbon → Seville → Lisbon is one trip. Name: `YYYY-MM-DD..DD Place, Place` (places in
-     order of first appearance; countries if more than four; "Multiple" beyond that). Places
+     Lisbon → Seville → Lisbon is one trip. Name: `YYYY-MM Place, Place` when the trip stays
+     within one month, `YYYY-MM-DD..MM-DD` otherwise (places in order of first appearance;
+     countries if more than four; "Multiple" beyond that). Places
      are your own named places (Settings, or "remember this place" when renaming), else the
      town from the offline geocoder.
    - **Day out** = a run of not-at-home photos shorter than 20 hours: `YYYY-MM-DD Place`.

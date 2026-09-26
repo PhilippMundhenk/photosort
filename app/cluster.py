@@ -6,7 +6,8 @@
                       inside the run ride along. A photo-less gap splits the run if it is long AND
                       the two sides are in different areas, or if it exceeds local_gap_hours while
                       either side is near home (you sleep at home, so a night ends the outing).
-    trip              the run spans >= trip_min_hours (an overnight stay)  -> "YYYY-MM-DD..DD Places"
+    trip              the run spans >= trip_min_hours (an overnight stay)  -> "YYYY-MM Places"
+                      (or "YYYY-MM-DD..DD" with name_multiday_by_month off; across months always)
     day out           shorter; >= dayout_min_photos photos near home, >= trip_min_photos
                       when mostly far away                                -> "YYYY-MM-DD Place"
   home burst          photos at home closer than burst_gap_hours, well above your usual photos/day
@@ -183,11 +184,13 @@ def _span(recs: list[dict]) -> tuple[datetime, datetime]:
     return recs[0]["_t"], recs[-1]["_t"]
 
 
-def span_label(a: datetime, b: datetime) -> str:
+def span_label(a: datetime, b: datetime, month_only: bool = True) -> str:
+    """One day -> 2026-08-08; several days in one month -> 2026-08 (or 2026-08-08..29 when
+    month_only is off); across months -> 2026-06-28..07-03; across years -> full dates."""
     if a.date() == b.date():
         return a.strftime("%Y-%m-%d")
     if a.year == b.year and a.month == b.month:
-        return f"{a:%Y-%m-%d}..{b:%d}"
+        return f"{a:%Y-%m}" if month_only else f"{a:%Y-%m-%d}..{b:%d}"
     if a.year == b.year:
         return f"{a:%Y-%m-%d}..{b:%m-%d}"
     return f"{a:%Y-%m-%d}..{b:%Y-%m-%d}"
@@ -247,7 +250,7 @@ def trip_proposal(cfg: Config, run: list[dict], now: datetime) -> dict:
     ongoing = (now - b) < timedelta(days=cfg.trip_gap_days)     # the home photo may not have synced yet
     return {
         "id": _pid("trip", run), "kind": "trip",
-        "name": sanitize(f"{span_label(a, b)} {places_label(cfg, run)}"),
+        "name": sanitize(f"{span_label(a, b, cfg.name_multiday_by_month)} {places_label(cfg, run)}"),
         "start": a.isoformat(), "end": b.isoformat(), "photos": photos,
         "n": len(photos), "n_uncertain": sum(p["uncertain"] for p in photos),
         "status": "ongoing" if ongoing else "pending",
@@ -281,7 +284,8 @@ def local_proposal(cfg: Config, run: list[dict], now: datetime | None = None) ->
     name = place.most_common(1)[0][0] if place else "Ausflug"
     photos = [_photo_entry(r, _gps_conf(r)) for r in run]
     ongoing = now is not None and (now - b) < timedelta(days=1)
-    return {"id": _pid("local", run), "kind": "local", "name": sanitize(f"{span_label(a, b)} {name}"),
+    return {"id": _pid("local", run), "kind": "local",
+            "name": sanitize(f"{span_label(a, b, cfg.name_multiday_by_month)} {name}"),
             "start": a.isoformat(), "end": b.isoformat(), "photos": photos, "n": len(photos),
             "n_uncertain": sum(p["uncertain"] for p in photos), "status": "ongoing" if ongoing else "pending",
             "decision": {"by": "rule", "conf": 1.0,
@@ -340,7 +344,7 @@ def home_proposal(cfg: Config, burst: list[dict], threshold: float) -> dict:
     note = (f"{st['photos']} files in {st['duration_h']} h at home, {st['burst_ratio']}x your usual day, "
             f"{st['devices']} device{'s' if st['devices'] != 1 else ''}")
     return {"id": _pid("home", burst), "kind": "home",
-            "name": sanitize(f"{span_label(a, b)} ({media_label(burst)})"),
+            "name": sanitize(f"{span_label(a, b, cfg.name_multiday_by_month)} ({media_label(burst)})"),
             "start": a.isoformat(), "end": b.isoformat(), "photos": photos, "n": len(photos),
             "n_uncertain": 0, "status": "pending",
             "decision": {"by": "rule", "conf": 1.0, "note": note, "state": st}}
@@ -365,7 +369,7 @@ def create_manual(kind: str, name: str, recs: list[dict]) -> dict:
     else:                                             # most common place, home photos included
         places = Counter((r.get("place") or {}).get("place") for r in recs if r.get("place"))
         where = places.most_common(1)[0][0] if places else "Unknown"
-    default = f"{span_label(a, b)} {where}"
+    default = f"{span_label(a, b, Config().name_multiday_by_month)} {where}"
     pr = {"id": "m" + uuid.uuid4().hex[:10], "kind": kind, "manual": True,
           "name": sanitize(name.strip() or default), "name_edited": bool(name.strip()),
           "paths": [r["path"] for r in recs], "photos": [_photo_entry(r, 1.0) for r in recs],

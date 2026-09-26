@@ -121,7 +121,7 @@ def test_full_review_flow(server, page):
     expect(page.get_by_role("heading", name="Proposed clusters (3)")).to_be_visible()
     props = _proposals(data)
     trip = page.locator(f"#{props['trip']['id']}")
-    expect(trip.locator("input[name=name]")).to_have_value("2026-06-04..24 Lisbon, Sevilla")
+    expect(trip.locator("input[name=name]")).to_have_value("2026-06 Lisbon, Sevilla")
     trip.locator("input[name=name]").fill("2026-06 Portugal & Spain")
     trip.get_by_role("button", name="rename").click()
     trip = page.locator(f"#{props['trip']['id']}")

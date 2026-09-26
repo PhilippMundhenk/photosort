@@ -80,7 +80,7 @@ def test_run_now_produces_proposals_and_dry_run_moves_nothing(client, library):
     assert stats["ingest"]["total"] == library.n and stats["ingest"]["new"] == 0
     assert all(p.exists() for p in library.paths)
     page = client.get("/review").text
-    assert "Proposed clusters (3)" in page and "Lisbon, Sevilla" in page and "Ludwigsburg" in page, page[-3000:]
+    assert "Proposed clusters (3)" in page and "2026-06 Lisbon, Sevilla" in page and "Ludwigsburg" in page
     assert "Approve &amp; move" in page and "(25 Fotos)" in page
     assert client.get("/api/status").json()["pending"] == 3
     assert "Open proposals" in client.get("/").text and "run" in client.get("/log?kind=run").text
