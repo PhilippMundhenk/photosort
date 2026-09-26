@@ -23,7 +23,7 @@ from . import geo
 from .config import DATA_DIR, Config, inbox_dirs, tzinfo
 
 SIDECAR_SUFFIX = ".photosort.json"
-SIDECAR_VERSION = 1
+SIDECAR_VERSION = 2          # 2: ts_source, offsets from GPSDateTime, 0/0 GPS ignored (records < 2 are re-indexed)
 INDEX_DIR = DATA_DIR / "index"
 log = logging.getLogger("photosort.ingest")
 
@@ -216,7 +216,7 @@ def purge_sidecars(cfg: Config, sorted_tree: bool = True, orphans: bool = True) 
 # Videos (QuickTime/MP4, iPhone and Android): CreateDate/MediaCreateDate are UTC by spec;
 # iPhones also write Keys:CreationDate with the local offset, which is exact. GPS comes from
 # EXIF or from QuickTime Keys:GPSCoordinates; exiftool folds both into GPSLatitude/Longitude.
-_EXIF_TAGS = ["-DateTimeOriginal", "-OffsetTimeOriginal", "-Keys:CreationDate", "-CreateDate",
+_EXIF_TAGS = ["-DateTimeOriginal", "-OffsetTimeOriginal", "-GPSDateTime", "-Keys:CreationDate", "-CreateDate",
               "-MediaCreateDate", "-FileModifyDate", "-MIMEType",
               "-GPSLatitude", "-GPSLongitude", "-Make", "-Model", "-AndroidManufacturer", "-AndroidModel"]
 VIDEO_EXTENSIONS = {"mp4", "mov", "m4v", "3gp", "mkv", "avi", "webm", "mts", "m2ts"}
@@ -283,12 +283,33 @@ def _exif_dt(s: str, offset: str = "") -> datetime | None:
     return dt
 
 
-def _parse_dt(tags: dict, video: bool = False, tz=None, name: str = "") -> str | None:
-    """Best timestamp from the tags, as ISO text. Photos keep their (naive) local wall time plus
-    the EXIF offset when there is one. Videos are always returned zone-aware, in the home zone:
-    Keys:CreationDate (iPhone, has an offset) wins; QuickTime CreateDate/MediaCreateDate are
-    UTC by spec (Android, iPhone) and are converted. A capture time in the file name beats the
-    file modification time, which copies and syncs rewrite."""
+def _gps_offset(local: datetime, tags: dict):
+    """The camera's UTC offset from the GPS clock: a photo taken at 13:58 local with a GPS fix at
+    12:58Z was taken at +01:00. Rounded to 15 min; None without a usable GPS time."""
+    v = tags.get("GPSDateTime")
+    if not v:
+        return None
+    utc = _exif_dt(str(v))
+    if utc is None:
+        return None
+    utc = utc.replace(tzinfo=None)
+    seconds = (local - utc).total_seconds()
+    off = round(seconds / 900) * 900                       # real zones are multiples of 15 min
+    if abs(off) > 14 * 3600 or abs(seconds - off) > 120:   # more than 2 min drift: the clocks disagree, no offset
+        return None
+    return timezone(timedelta(seconds=off))
+
+
+def _parse_dt(tags: dict, video: bool = False, tz=None, name: str = "") -> tuple[str | None, str | None]:
+    """Best timestamp from the tags, as (ISO text, ts_source).
+
+    Photos: local wall time; zone-aware when the EXIF offset is present ("exif+offset") or when
+    the GPS clock reveals the offset ("gps"); otherwise naive ("exif", read as home-zone time).
+    Videos: always zone-aware. Keys:CreationDate (iPhone, has an offset) wins ("exif+offset");
+    QuickTime CreateDate/MediaCreateDate are UTC by spec and are converted to the home zone
+    ("utc-home"); clustering later re-expresses such a video in the offset of the nearest photo
+    whose offset is known, so a clip shot abroad shows local time. A capture time in the file
+    name ("name") beats the file modification time ("mtime"), which copies and syncs rewrite."""
     tz = tz or timezone.utc
     order = (("CreationDate", "local"), ("CreateDate", "utc"), ("MediaCreateDate", "utc"),
              ("@name", "local"), ("FileModifyDate", "local")) if video else \
@@ -299,6 +320,7 @@ def _parse_dt(tags: dict, video: bool = False, tz=None, name: str = "") -> str |
             dt = _name_dt(name)
             if dt is None:
                 continue
+            source = "name"
         else:
             v = tags.get(key)
             if not v or str(v).startswith("0000"):
@@ -307,12 +329,19 @@ def _parse_dt(tags: dict, video: bool = False, tz=None, name: str = "") -> str |
             dt = _exif_dt(str(v), offset)
             if dt is None:
                 continue
+            source = "mtime" if key == "FileModifyDate" else "exif+offset" if dt.tzinfo else "exif"
+            if dt.tzinfo is None and not video and key in ("DateTimeOriginal", "CreateDate"):
+                gps_tz = _gps_offset(dt, tags)
+                if gps_tz is not None:
+                    dt, source = dt.replace(tzinfo=gps_tz), "gps"
         if video:
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc if kind == "utc" else tz)
-            dt = dt.astimezone(tz)
-        return dt.isoformat()
-    return None
+            if kind == "utc":                                  # QuickTime clock: UTC whether or not it says "Z"
+                dt = (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).astimezone(tz)
+                source = "utc-home"
+            elif dt.tzinfo is None:
+                dt = dt.replace(tzinfo=tz)
+        return dt.isoformat(), source
+    return None, None
 
 
 def _camera(tags: dict, source: str | None) -> tuple[str | None, str | None]:
@@ -327,13 +356,17 @@ def _camera(tags: dict, source: str | None) -> tuple[str | None, str | None]:
 
 def build_record(cfg: Config, photo: Path, tags: dict, source: str | None = None) -> dict:
     lat, lon = tags.get("GPSLatitude"), tags.get("GPSLongitude")
+    if lat is not None and lon is not None and float(lat) == 0.0 and float(lon) == 0.0:
+        lat = lon = None                                   # "0 0": a phone without a fix, not the Gulf of Guinea
     video = is_video(photo, tags)
     camera, camera_source = _camera(tags, source)
+    ts, ts_source = _parse_dt(tags, video=video, tz=tzinfo(cfg), name=photo.name)
     rec = {
         "v": SIDECAR_VERSION,
         "file": photo.name,
         "media": "video" if video else "photo",
-        "ts": _parse_dt(tags, video=video, tz=tzinfo(cfg), name=photo.name),
+        "ts": ts,
+        "ts_source": ts_source,
         "lat": float(lat) if lat is not None else None,
         "lon": float(lon) if lon is not None else None,
         "camera": camera,
@@ -360,6 +393,11 @@ def enrich_location(cfg: Config, rec: dict) -> None:
     rec["place"] = geo.reverse(cfg, rec["lat"], rec["lon"])
 
 
+def _needs_index(p: Path, cfg: Config) -> bool:
+    rec = read_sidecar(p, cfg)
+    return rec is None or int(rec.get("v") or 0) < SIDECAR_VERSION
+
+
 def scan(cfg: Config, force: bool = False) -> dict:
     """Index every photo in every inbox (recursively) lacking a sidecar. Returns stats."""
     stats = {"new": 0, "total": 0, "missing": []}
@@ -368,7 +406,7 @@ def scan(cfg: Config, force: bool = False) -> dict:
             stats["missing"].append(str(folder))
             continue
         photos = list_photos(cfg, folder)
-        todo = [p for p in photos if force or not sidecar_path(p, cfg).exists()]
+        todo = [p for p in photos if force or _needs_index(p, cfg)]
         try:
             tags = exif_batch(todo)
         except ExifToolMissing as e:

@@ -17,18 +17,31 @@ HAS_EXIFTOOL = shutil.which("exiftool") is not None
 # --- timestamps -------------------------------------------------------------------
 
 def test_parse_dt_plain_and_with_offset_tag():
-    assert ingest._parse_dt({"DateTimeOriginal": "2026:10:03 14:22:31"}) == "2026-10-03T14:22:31"
-    assert ingest._parse_dt({"DateTimeOriginal": "2026:10:03 14:22:31", "OffsetTimeOriginal": "+02:00"}) \
+    assert ingest._parse_dt({"DateTimeOriginal": "2026:10:03 14:22:31"})[0] == "2026-10-03T14:22:31"
+    assert ingest._parse_dt({"DateTimeOriginal": "2026:10:03 14:22:31", "OffsetTimeOriginal": "+02:00"})[0] \
         == "2026-10-03T14:22:31+02:00"
-    assert ingest._parse_dt({"CreateDate": "2026:10:03 14:22:31-05:00"}) == "2026-10-03T14:22:31-05:00"
+    assert ingest._parse_dt({"CreateDate": "2026:10:03 14:22:31-05:00"})[0] == "2026-10-03T14:22:31-05:00"
 
 
 def test_parse_dt_fallback_order_and_garbage():
     tags = {"DateTimeOriginal": "0000:00:00 00:00:00", "CreateDate": "not a date",
             "MediaCreateDate": "2026:01:02 03:04:05", "FileModifyDate": "2027:01:01 00:00:00"}
-    assert ingest._parse_dt(tags) == "2026-01-02T03:04:05"
-    assert ingest._parse_dt({}) is None
-    assert ingest._parse_dt({"FileModifyDate": ""}) is None
+    assert ingest._parse_dt(tags)[0] == "2026-01-02T03:04:05"
+    assert ingest._parse_dt({}) == (None, None)
+    assert ingest._parse_dt({"FileModifyDate": ""}) == (None, None)
+
+
+def test_scan_reindexes_records_of_an_older_version(tmp_path, monkeypatch):
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    (inbox / "a.jpg").write_bytes(b"x")
+    cfg = config.Config(inboxes=[{"path": str(inbox), "name": "cam"}])
+    monkeypatch.setattr(ingest, "exif_batch", lambda paths: {str(p): {"DateTimeOriginal": "2026:06:04 09:00:00"}
+                                                            for p in paths})
+    ingest.write_sidecar(inbox / "a.jpg", {"v": 1, "file": "a.jpg", "ts": "2026-06-04T09:00:00"}, cfg)
+    assert ingest.scan(cfg)["new"] == 1                                    # v1 record: indexed again
+    assert ingest.read_sidecar(inbox / "a.jpg", cfg)["v"] == ingest.SIDECAR_VERSION
+    assert ingest.scan(cfg)["new"] == 0
 
 
 # --- records & sidecars -----------------------------------------------------------
