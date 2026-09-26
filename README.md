@@ -159,9 +159,12 @@ CI (`.github/workflows/ci.yml`) runs the test image on every push and PR, then b
 
 ## Status / roadmap
 
-- [x] multi-inbox, recursive, per-source subfolders
-- [x] trips, day outs, home bursts, everyday tree
-- [x] review UI, undo, corrections, Everyday page with manual clusters
-- [x] decision model (Laya, System One API) tried on the home-burst question and dropped (DESIGN.md §10)
-- [ ] Matrix notifier on top of the review queue ("3 reviews waiting" + link)
-- [ ] optional CLIP pass for leftovers inside home bursts (Immich vectors)
+Done: inputs discovered per device folder; trips, day outs, home bursts, everyday tree; review
+UI with undo, corrections, Everyday page and manual clusters; videos, thumbnails, named places;
+dry-run that blocks every file operation; background moves with progress. A decision model
+(Laya, System One API) was tried on the home-burst question and dropped (DESIGN.md §10).
+
+Open work is tracked as [issues](https://github.com/PhilippMundhenk/photosort/issues), among
+them a generic rule engine (#2), multi-home (#3), background undo (#4), naming of transit
+stops and city districts (#5), a per-proposal "why" panel (#6), large-library performance (#7),
+a Matrix notifier (#8), content-based signals for home bursts (#9) and multi-user support (#1).
