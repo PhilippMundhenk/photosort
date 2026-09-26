@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Review queue</h1>
+{% if cfg.dry_run %}<div class="warnbox">Dry-run: nothing moves until you approve here. Turn it off in Settings once you trust a rule.</div>{% endif %}
+
+<h2>Proposed clusters ({{ pending|length }})</h2>
+{% for p in pending %}
+<div class="card" id="{{ p.id }}">
+  <div class="row">
+    <span class="badge {{ p.kind }}">{{ p.kind }}</span>
+    {% if p.status == 'ongoing' %}<span class="badge warn">ongoing – waiting for a home photo</span>{% endif %}
+    <form method="post" action="/proposal/{{ p.id }}/rename" class="inline row">
+      <input type="text" name="name" value="{{ p.name }}" style="width:340px">
+      <button class="secondary small">rename</button>
+    </form>
+    <span class="muted small">{{ p.n }} photos{% if p.n_uncertain %}, {{ p.n_uncertain }} uncertain{% endif %}
+      · {{ p.decision.by }} {{ '%.2f'|format(p.decision.conf) }}{% if p.decision.answer %} ({{ p.decision.answer }}){% endif %}
+      · {{ p.start[:16].replace('T',' ') }} → {{ p.end[:16].replace('T',' ') }}</span>
+  </div>
+  <details {% if p.n_uncertain or p.kind=='home' %}open{% endif %}>
+    <summary>photos</summary>
+    <div class="thumbs">
+    {% for ph in p.photos %}
+      <figure class="{{ 'excluded' if ph.path in p.excluded }} {{ 'uncertain' if ph.uncertain }}">
+        <form method="post" action="/proposal/{{ p.id }}/toggle"><input type="hidden" name="path" value="{{ ph.path }}">
+          <input type="hidden" name="back" value="/review#{{ p.id }}">
+          <button style="padding:0;border:0;background:none"><img src="/thumb?path={{ ph.path|urlencode }}" loading="lazy" title="{{ ph.file }} · {{ ph.zone }} · {{ ph.place or '' }} · conf {{ ph.conf }} · click to toggle"></button></form>
+        <figcaption>{{ ph.ts[5:16].replace('T',' ') }} {{ ph.zone }}{% if ph.source %} · {{ ph.source }}{% endif %}</figcaption>
+      </figure>
+    {% endfor %}
+    </div>
+    <div class="muted small">Click a photo to exclude/include it (greyed = excluded, orange = uncertain → goes to {{ cfg.review_dir }}/).</div>
+  </details>
+  <div class="row" style="margin-top:8px">
+    {% if p.status != 'ongoing' %}<form method="post" action="/proposal/{{ p.id }}/approve" class="inline"><button>Approve &amp; move</button></form>{% endif %}
+    <form method="post" action="/proposal/{{ p.id }}/reject" class="inline"><button class="secondary">Reject (keep as everyday)</button></form>
+  </div>
+</div>
+{% else %}<div class="card muted">No open proposals.</div>{% endfor %}
+
+<h2>Bursts waiting for a name ({{ unnamed|length }})</h2>
+{% for c in unnamed %}
+<div class="card">
+  <div class="row"><b>{{ c.name }}</b> <span class="muted small">{{ c.n }} photos · {{ c.start[:16].replace('T',' ') }}</span></div>
+  <div class="thumbs">{% for ph in c.photos[:8] %}<figure><img src="/thumb?path={{ ph.dst|urlencode }}" loading="lazy"></figure>{% endfor %}</div>
+  <form method="post" action="/cluster/rename" class="row">
+    <input type="hidden" name="folder" value="{{ c.folder }}">
+    <input type="text" name="name" placeholder="What was this? e.g. 2026-09-14 Hannas Geburtstag" style="width:380px" value="{{ c.start[:10] }} ">
+    <button>Name it</button>
+  </form>
+</div>
+{% else %}<div class="card muted">Nothing waiting.</div>{% endfor %}
+{% endblock %}

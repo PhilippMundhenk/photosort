@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>photosort · {{ page }}</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <b>photosort</b>
+  <a href="/" class="{{ 'active' if page=='dashboard' }}">Dashboard</a>
+  <a href="/review" class="{{ 'active' if page=='review' }}">Review</a>
+  <a href="/clusters" class="{{ 'active' if page in ('clusters','cluster') }}">Clusters</a>
+  <a href="/log" class="{{ 'active' if page=='log' }}">Log</a>
+  <a href="/settings" class="{{ 'active' if page=='settings' }}">Settings</a>
+  <div class="right">
+    {% if cfg.dry_run %}<span class="badge warn">dry-run</span>{% else %}<span class="badge ok">live</span>{% endif %}
+    {% if state.running %}<span class="badge">running…</span>{% endif %}
+    <form method="post" action="/run" class="inline"><button class="small">Run now</button></form>
+  </div>
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

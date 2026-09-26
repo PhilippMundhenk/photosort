@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+{% if not m %}<h1>Not a cluster folder</h1><p class="muted">{{ folder }}</p>{% else %}
+<h1>{{ m.name }} <span class="badge {{ m.kind }}">{{ m.kind }}</span></h1>
+<div class="card">
+  <div class="row">
+    <form method="post" action="/cluster/rename" class="row inline">
+      <input type="hidden" name="folder" value="{{ folder }}">
+      <input type="text" name="name" value="{{ m.name }}" style="width:360px"><button class="secondary">rename</button>
+    </form>
+    <span class="muted small">{{ m.start[:16].replace('T',' ') }} → {{ m.end[:16].replace('T',' ') }} · applied {{ m.applied[:16].replace('T',' ') }} · {{ m.decision.by }} {{ '%.2f'|format(m.decision.conf) }}</span>
+  </div>
+  <div class="muted small">{{ folder }}</div>
+</div>
+<div class="card">
+  <div class="thumbs">
+  {% for p in m.photos %}
+    <figure class="{{ 'uncertain' if p.uncertain }}">
+      <img src="/thumb?path={{ p.dst|urlencode }}" loading="lazy" title="{{ p.dst }} · conf {{ p.conf }}">
+      <figcaption>{{ p.zone }} {{ p.conf }}{% if p.source %} · {{ p.source }}{% endif %}</figcaption>
+      <form method="post" action="/cluster/move_out" class="inline">
+        <input type="hidden" name="folder" value="{{ folder }}"><input type="hidden" name="photo" value="{{ p.dst }}">
+        <button class="secondary small">not this trip</button></form>
+    </figure>
+  {% endfor %}
+  </div>
+</div>
+{% if m.corrections %}<div class="card"><b>Corrections</b> <span class="muted small">({{ m.corrections|length }} photos moved out)</span></div>{% endif %}
+<form method="post" action="/cluster/undo" onsubmit="return confirm('Move all photos back to their inbox?')">
+  <input type="hidden" name="folder" value="{{ folder }}"><button class="danger">Undo whole cluster</button></form>
+{% endif %}
+{% endblock %}
