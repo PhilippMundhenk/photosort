@@ -119,7 +119,6 @@ def clusters(request: Request):
 
 @app.get("/clusters/view", response_class=HTMLResponse)
 def cluster_view(request: Request, folder: str):
-    cfg = config.load()
     m = mover.read_manifest(Path(folder))
     return render(request, "cluster.html", m=m, folder=folder)
 

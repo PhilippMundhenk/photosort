@@ -94,7 +94,7 @@ class HttpBackend:
                                 "criteria": crit})
         probs = ans.get("probabilities") or {}
         if isinstance(probs, list):                       # some servers return a list aligned to options
-            probs = dict(zip(options, probs))
+            probs = dict(zip(options, probs, strict=False))
         probs = {str(k): float(v) for k, v in probs.items()}
         best = ans.get("choice") or ans.get("answer") or (max(probs, key=probs.get) if probs else None)
         if best not in options:

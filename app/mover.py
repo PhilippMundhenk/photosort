@@ -5,6 +5,7 @@ recorded in the target folder's manifest.json so it can be undone and later serv
 eval set."""
 from __future__ import annotations
 
+import contextlib
 import json
 import shutil
 from datetime import datetime, timezone
@@ -182,14 +183,10 @@ def undo(cfg: Config, folder: Path) -> int:
     (folder / MANIFEST).unlink(missing_ok=True)
     for sub in sorted(folder.rglob("*"), key=lambda x: -len(x.parts)):
         if sub.is_dir():
-            try:
+            with contextlib.suppress(OSError):
                 sub.rmdir()
-            except OSError:
-                pass
-    try:
+    with contextlib.suppress(OSError):
         folder.rmdir()
-    except OSError:
-        pass
     events.log("undo", name=m["name"], n=n, proposal=m.get("proposal_id"), mode=m.get("mode", "move"))
     return n
 

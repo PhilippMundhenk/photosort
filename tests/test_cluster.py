@@ -76,7 +76,8 @@ def test_trip_split_needs_long_gap_and_distance():
 def test_trip_proposal_confidences_and_ongoing():
     cfg = config.Config(trip_gap_days=4)
     t = T0
-    run = [rec(t, Z.ZONE_AWAY, LISBON, "Lisbon", "Portugal"), rec(t + h(1), Z.ZONE_AWAY, LISBON, "Lisbon", gps="neighbour:x"),
+    run = [rec(t, Z.ZONE_AWAY, LISBON, "Lisbon", "Portugal"),
+           rec(t + h(1), Z.ZONE_AWAY, LISBON, "Lisbon", gps="neighbour:x"),
            rec(t + h(2), Z.ZONE_UNKNOWN), rec(t + timedelta(days=3), Z.ZONE_AWAY, SEVILLE, "Sevilla", "Spain")]
     pr = cluster.trip_proposal(cfg, run, now=t + timedelta(days=30))
     assert pr["kind"] == "trip" and pr["name"] == "2026-06-01..04 Lisbon, Sevilla" and pr["status"] == "pending"
