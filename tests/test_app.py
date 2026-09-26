@@ -260,6 +260,7 @@ def test_thumb_prefers_nas_thumbnail_then_small_original_then_placeholder(client
     photo = library.paths[0]
     r = client.get("/thumb", params={"path": str(photo)})
     assert r.status_code == 200 and r.content == photo.read_bytes()      # small jpg served directly
+    assert r.headers["content-type"] == "image/jpeg"
     t = photo.parent / "@eaDir" / photo.name / "SYNOPHOTO_THUMB_M.jpg"
     t.parent.mkdir(parents=True)
     t.write_bytes(b"THUMB")
