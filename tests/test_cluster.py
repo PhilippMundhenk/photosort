@@ -75,6 +75,12 @@ def test_excursion_kind_by_duration_and_size():
     assert cluster.excursion_kind(cfg, day_out[:7]) is None                          # too few for a day out
     far_day = [rec(t + h(i * 2), Z.ZONE_AWAY, LISBON) for i in range(9)]             # 16 h, far away: still a day out
     assert cluster.excursion_kind(cfg, far_day) == "local"
+    three_far = [rec(t + h(i * 0.05), Z.ZONE_AWAY, LISBON) for i in range(3)]          # 3 photos 30 km out: an outing
+    assert cluster.excursion_kind(cfg, three_far) == "local"
+    assert cluster.excursion_kind(cfg, three_far[:2]) is None
+    three_near = [rec(t + h(i * 0.05), Z.ZONE_LOCAL, LUDWIGSBURG) for i in range(3)]   # 3 in the next town: noise
+    assert cluster.excursion_kind(cfg, three_near) is None
+    assert cluster.excursion_kind(cfg, three_far + three_near) is None                # half away: not mostly away
     overnight = [rec(t, Z.ZONE_LOCAL, LUDWIGSBURG), rec(t + h(10), Z.ZONE_UNKNOWN),
                  rec(t + h(25), Z.ZONE_LOCAL, LUDWIGSBURG)]
     assert cluster.excursion_kind(cfg, overnight) is None                            # 2 located photos < 3

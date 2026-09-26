@@ -62,14 +62,14 @@ def test_update_from_form_coercion():
 
 
 def test_named_places_parsing_and_text():
-    txt = "Harz = 51.77, 10.65, 30\n\nbad line\nHohenheim=48.71;9.21\n = 1,2\nX = 1, 2, 0"
+    txt = "Black Forest = 48.0, 8.2, 40\n\nbad line\nAllotment=52.52;13.40\n = 1,2\nX = 1, 2, 0"
     places = config.parse_named_places(txt)
-    assert places == [{"name": "Harz", "lat": 51.77, "lon": 10.65, "radius_km": 30.0},
-                      {"name": "Hohenheim", "lat": 48.71, "lon": 9.21, "radius_km": 2.0},
+    assert places == [{"name": "Black Forest", "lat": 48.0, "lon": 8.2, "radius_km": 40.0},
+                      {"name": "Allotment", "lat": 52.52, "lon": 13.4, "radius_km": 2.0},
                       {"name": "X", "lat": 1.0, "lon": 2.0, "radius_km": 0.05}]
     cfg = config.update_from_form(config.Config(), {"named_places": txt})
     assert cfg.named_places == places
-    assert config.named_places_text(cfg).splitlines()[0] == "Harz = 51.77000, 10.65000, 30"
+    assert config.named_places_text(cfg).splitlines()[0] == "Black Forest = 48.00000, 8.20000, 40"
     assert config.parse_named_places(config.named_places_text(cfg)) == places      # round trip
 
 

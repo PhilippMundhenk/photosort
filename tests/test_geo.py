@@ -31,8 +31,9 @@ def test_reverse_geocode_cities():
 
 
 def test_reverse_small_places_fall_back_to_region():
-    assert geo.reverse(config.Config(), 47.861, 8.034)["place"] == "Bernau"     # 1993 people, default 1000
-    assert geo.reverse(config.Config(min_city_population=20000), 47.861, 8.034)["place"] == "Baden-Wurttemberg"
+    village = (47.5, 11.1)                                              # Alpine village, a few thousand people
+    assert geo.reverse(config.Config(), *village)["place"] == geo.reverse(config.Config(), *village)["city"]
+    assert geo.reverse(config.Config(min_city_population=10_000_000), *village)["place"] == "Bavaria"
     big = geo.reverse(config.Config(min_city_population=1), *HOME)
     huge = geo.reverse(config.Config(min_city_population=10_000_000), *HOME)
     assert big["city"] == huge["city"]
@@ -51,13 +52,13 @@ def test_unknown_population_keeps_the_place_name(monkeypatch):
 
 
 def test_named_places_win_and_nearest_wins():
-    cfg = config.Config(named_places=[{"name": "Harz", "lat": 51.77, "lon": 10.65, "radius_km": 30},
-                                      {"name": "Brocken", "lat": 51.80, "lon": 10.62, "radius_km": 2}])
-    assert geo.named_place(cfg, 51.80, 10.62) == "Brocken"            # inside both, nearer one
-    assert geo.named_place(cfg, 51.70, 10.80) == "Harz"
+    cfg = config.Config(named_places=[{"name": "Black Forest", "lat": 48.0, "lon": 8.2, "radius_km": 40},
+                                      {"name": "Triberg falls", "lat": 48.13, "lon": 8.23, "radius_km": 2}])
+    assert geo.named_place(cfg, 48.13, 8.23) == "Triberg falls"        # inside both, nearer one
+    assert geo.named_place(cfg, 47.9, 8.1) == "Black Forest"
     assert geo.named_place(cfg, *LISBON) is None
-    assert geo.reverse(cfg, 51.70, 10.80)["place"] == "Harz"
-    assert geo.reverse(cfg, 51.70, 10.80)["country"] == "Germany"      # the rest still comes from the geocoder
+    assert geo.reverse(cfg, 47.9, 8.1)["place"] == "Black Forest"
+    assert geo.reverse(cfg, 47.9, 8.1)["country"] == "Germany"          # the rest still comes from the geocoder
 
 
 def test_circle_and_remember_place():
@@ -68,9 +69,9 @@ def test_circle_and_remember_place():
     pts = [(48.0 + i * 0.0001, 9.0) for i in range(100)] + [(49.0, 9.0)]   # one stray fix 111 km away
     assert geo.circle_for(pts)[2] < 2                                    # 95th percentile ignores it
     cfg = config.Config()
-    e = geo.remember_place(cfg, " Harz ", [(51.7, 10.6), (51.8, 10.7), (None, None)])
-    assert e["name"] == "Harz" and cfg.named_places == [e] and 5 < e["radius_km"] < 10
-    geo.remember_place(cfg, "Harz", [(51.75, 10.65)])
+    e = geo.remember_place(cfg, " Alps ", [(47.3, 11.0), (47.4, 11.1), (None, None)])
+    assert e["name"] == "Alps" and cfg.named_places == [e] and 5 < e["radius_km"] < 10
+    geo.remember_place(cfg, "Alps", [(47.35, 11.05)])
     assert len(cfg.named_places) == 1 and cfg.named_places[0]["radius_km"] == 0.5   # replaced
     assert geo.remember_place(cfg, "", [(1, 1)]) is None
 

@@ -127,9 +127,13 @@ def everyday(request: Request, month: str = ""):
     props = cluster.load_proposals()
     recs = cluster.everyday_records(cfg, props)
     months_c = Counter(_month_key(r["ts"]) for r in recs)
-    months = [{"key": k, "n": months_c[k]} for k in sorted(months_c, reverse=True)]
+    months = [{"key": k, "n": months_c[k]} for k in sorted(months_c)]
     if not month and months:
-        month = months[0]["key"]
+        month = months[-1]["key"]
+    keys = [m["key"] for m in months]
+    idx = keys.index(month) if month in keys else -1
+    prev_month = keys[idx - 1] if idx > 0 else None
+    next_month = keys[idx + 1] if 0 <= idx < len(keys) - 1 else None
     days: dict[str, list] = {}
     for r in recs:
         if _month_key(r["ts"]) == month:
@@ -146,7 +150,8 @@ def everyday(request: Request, month: str = ""):
                                 "media": r.get("media", "photo"), "place": (r.get("place") or {}).get("place")}
                                for r in rs]})
     return render(request, "everyday.html", months=months, month=month, days=out, pending=_pending(props),
-                  total=len(recs))
+                  total=len(recs), prev_month=prev_month, next_month=next_month,
+                  month_n=months_c.get(month, 0))
 
 
 @app.post("/everyday/assign")
@@ -294,7 +299,7 @@ _DATE_PREFIX = re.compile(r"^\d{4}(-\d{2}){0,2}(\.\.[\d-]+)?\s*")
 
 
 def _remember_place(cfg: config.Config, folder_name: str, points: list) -> dict | None:
-    """'2026-06-01..04 Harz' -> named place 'Harz' covering the cluster's photos."""
+    """'2026-06-01..04 Black Forest' -> named place 'Black Forest' covering the cluster's photos."""
     name = _DATE_PREFIX.sub("", folder_name).strip(" -_()")
     entry = geo.remember_place(cfg, name, points)
     if entry:

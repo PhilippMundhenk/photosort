@@ -57,8 +57,10 @@ one-day outing 30 km away with a two-week holiday. The user's observation: what 
 is *staying away overnight without photos at home in between*, not the distance. So both
 kinds now come from one rule: a run of photos outside the home radius, ended by any home
 photo, is a **trip** when it spans at least `trip_min_hours` (20 h, i.e. an overnight stay)
-and a **day out** otherwise. Day outs need `dayout_min_photos` (8) so the school run and the
-supermarket stay everyday; trips need `trip_min_photos` (3) located photos. The local/away
+and a **day out** otherwise. Day outs near home need `dayout_min_photos` (8) so the school run
+and the supermarket stay everyday; day outs mostly in the away zone, like trips, need only
+`trip_min_photos` (3): three photos 30 km from home are an outing, three photos in the next
+town are noise. The local/away
 zone remains as a label and for confidences only. The earlier notes below describe the run
 mechanics, which are unchanged.
 
@@ -88,7 +90,7 @@ countries; then "Multiple". Places mentioned by fewer than 3 % of a run's photos
 than two) are dropped, so a motorway stop does not name the trip. The place comes from:
 
 1. the user's **named places** (`named_places`: name, centre, radius), because nothing
-   offline knows that a spot is "Harz", "Feldberg" or "Universität Hohenheim". The list is
+   offline knows that a spot is "Black Forest", "the Alps" or "the allotment garden". The list is
    grown from the UI: tick "remember this place" when renaming a cluster and the cluster's
    photos define the circle (mean position, radius to the farthest photo).
 2. else the offline geocoder's town when its population is at least `min_city_population`

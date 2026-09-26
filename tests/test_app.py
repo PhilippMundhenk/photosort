@@ -258,7 +258,7 @@ def test_cluster_rename_remembers_place(client, library):
     places = config.load().named_places
     assert [p["name"] for p in places] == ["Portugal"] and 10 < places[0]["radius_km"] < 60   # Lisbon, 95th pct
     strip = main._DATE_PREFIX.sub
-    assert strip("", "2026-06-01..04 Harz") == "Harz" and strip("", "2026 Harz") == "Harz"
+    assert strip("", "2026-06-01..04 Alps") == "Alps" and strip("", "2026 Alps") == "Alps"
 
 
 def test_cluster_view_of_non_cluster_folder(client, tmp_path):

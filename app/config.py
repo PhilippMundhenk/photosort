@@ -39,14 +39,15 @@ class Config:
     # Excursions: a run of photos away from home, ended by any photo at home
     trip_min_hours: float = 20.0           # run spans at least this long -> trip (multi-day); shorter -> day out
     trip_min_photos: int = 3               # located photos a trip needs
-    dayout_min_photos: int = 8             # photos a day out needs (keeps the school run out)
+    dayout_min_photos: int = 8             # photos a day out near home needs (keeps the school run out);
+                                           # mostly-away day outs need only trip_min_photos
     local_gap_hours: float = 12.0          # near home (local zone) a photo-less gap longer than this ends the outing
     trip_gap_days: float = 4.0             # gap without photos > this AND different area -> split
     trip_split_distance_km: float = 300.0  # "different area" if runs are further apart than this
     max_places_in_name: int = 4
     min_city_population: int = 1000        # below this use the state/region name instead of the village
     # Your own place names: photos within radius_km of (lat, lon) are labelled with the name
-    # ("Harz", "Feldberg", "Universität Hohenheim"). Grown from the "remember this place" box on rename.
+    # ("Black Forest", "Alps", "Allotment garden"). Grown from the "remember this place" box on rename.
     named_places: list[dict] = field(default_factory=list)   # [{"name", "lat", "lon", "radius_km"}]
 
     # Bursts (local day outs and home occasions)
