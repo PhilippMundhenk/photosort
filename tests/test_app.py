@@ -71,6 +71,11 @@ def test_api_status(client):
 
 def test_startup_writes_config_and_schedules_scan(client):
     assert config.CONFIG_PATH.exists()
+    for _ in range(100):                                                    # the warm-up thread fills the cache
+        if cluster._records_cache["filled"] is not None:
+            break
+        time.sleep(0.1)
+    assert len(cluster._records_cache["filled"]) > 0
     job = main.scheduler.get_job("scan")
     assert job is not None and job.trigger.interval.total_seconds() == config.load().scan_interval_min * 60
 
@@ -300,6 +305,23 @@ def test_rename_over_fetch_returns_json(client, library):
     assert (Path(cfg.root) / "2026-06 Lissabon").is_dir()
     page = client.get("/review").text
     assert "data-autosave" in page and page.count("rename</button>") == page.count("<noscript><button")
+
+
+def test_cluster_rename_in_use_is_reported_not_500(client, library, monkeypatch):
+    cfg = config.load()
+    cluster.run(cfg)
+    local = _proposals("local")
+    client.post(f"/proposal/{local['id']}/approve")
+    main.wait_for_apply()
+    folder = mover.target_folder(cfg, local)
+
+    def in_use(cfg, folder, name):
+        raise mover.FolderInUse("busy")
+    monkeypatch.setattr(mover, "rename", in_use)
+    r = client.post("/cluster/rename", data={"folder": str(folder), "name": "x"}, headers={"X-Requested-With": "fetch"})
+    assert r.status_code == 423 and r.json() == {"ok": False, "error": "busy"}
+    r = client.post("/cluster/rename", data={"folder": str(folder), "name": "x"})
+    assert r.status_code == 423 and "Not renamed" in r.text
 
 
 def test_reject_rename_toggle(client, library):

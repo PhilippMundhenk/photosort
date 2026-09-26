@@ -45,6 +45,22 @@ def test_target_folder_home_goes_to_unnamed_until_named(cfg):
     assert mover.target_folder(cfg, {"kind": "home", "name": "H", "manual": True}) == root / "H"
 
 
+def test_rename_reports_a_folder_in_use(cfg, library, monkeypatch):
+    props, kinds = _props(cfg)
+    mover.apply(cfg, kinds["local"])
+    folder = mover.target_folder(cfg, kinds["local"])
+    calls = []
+
+    def locked(self, target):
+        calls.append(1)
+        raise PermissionError(13, "in use")
+    monkeypatch.setattr(Path, "rename", locked)
+    monkeypatch.setattr(mover.time, "sleep", lambda s: None)
+    with pytest.raises(mover.FolderInUse):
+        mover.rename(cfg, folder, "other")
+    assert len(calls) == 8 and folder.is_dir()                          # retried, then gave up, nothing changed
+
+
 def test_dry_run_blocks_every_file_operation(cfg, library):
     """Dry-run means nothing is moved, copied or deleted, whatever is asked."""
     import pytest as _pytest

@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import json
 import shutil
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -22,6 +23,10 @@ class DryRun(RuntimeError):
     Dry-run means nothing moves, period: not on approve, not on auto-apply, not on undo. Every
     path that touches a file goes through _transfer/_delete_with_sidecars, which check it, so
     no caller can forget the check."""
+
+
+class FolderInUse(OSError):
+    """A folder could not be renamed because something holds a file in it (Windows only)."""
 
 
 def _guard(cfg: Config) -> None:
@@ -230,7 +235,14 @@ def rename(cfg: Config, folder: Path, new_name: str) -> Path:
     # a named home burst leaves _unnamed
     dst = root / new_name if folder.parent.name == cfg.unnamed_dir else folder.with_name(new_name)
     dst = _unique(dst)
-    folder.rename(dst)
+    for attempt in range(8):                        # Windows: a folder with an open file (a thumbnail being
+        try:                                        # generated, a video being streamed) cannot be renamed
+            folder.rename(dst)
+            break
+        except PermissionError as e:
+            if attempt == 7:
+                raise FolderInUse(f"{folder.name}: a file in it is still open (thumbnail or video); try again") from e
+            time.sleep(0.25)
     m = read_manifest(dst)
     if m:
         m["label"] = new_name

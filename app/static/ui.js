@@ -22,14 +22,17 @@
     if (!input || input.value === form.dataset.saved) return;
     if (state) state.textContent = "saving…";
     fetch(form.action, {method: "POST", body: new FormData(form), headers: {"X-Requested-With": "fetch"}})
-      .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(r); })
       .then(function (d) {
         form.dataset.saved = input.value;
         if (d.redirect) { location.replace(d.redirect); return; }
         if (d.name && d.name !== input.value && document.activeElement !== input) input.value = d.name;
         if (state) { state.textContent = "saved"; setTimeout(function () { if (state.textContent === "saved") state.textContent = ""; }, 1500); }
       })
-      .catch(function () { if (state) state.textContent = "not saved"; });
+      .catch(function (err) {
+        if (state) state.textContent = "not saved";
+        if (err && err.json) err.json().then(function (d) { if (state && d.error) state.textContent = "not saved: " + d.error; });
+      });
   }
   document.querySelectorAll("form[data-autosave]").forEach(function (form) {
     var input = form.querySelector("input[name=name]");
