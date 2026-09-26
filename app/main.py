@@ -8,7 +8,7 @@ import re
 import threading
 import time
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
 
@@ -155,7 +155,9 @@ def run_pipeline(trigger: str = "schedule") -> dict:
         _state["progress"] = {"phase": "scanning", "done": done, "total": total}
     try:
         cfg = config.load()
+        cluster.busy = True                       # page requests serve a slightly stale cache meanwhile
         s1 = ingest.scan(cfg, progress=scanned)
+        cluster.busy = False
         _state["progress"] = {"phase": "clustering", "done": 0, "total": 0}
         s2 = cluster.run(cfg)
         thumbs.prefetch(cfg, [p for _, folder in config.inbox_dirs(cfg) if folder.exists()
@@ -181,6 +183,7 @@ def run_pipeline(trigger: str = "schedule") -> dict:
         _state["error"] = str(e)
         return {"error": str(e)}
     finally:
+        cluster.busy = False
         _state["running"], _state["progress"] = False, None
         _lock.release()
 
@@ -194,8 +197,8 @@ def _start():
     if not config.CONFIG_PATH.exists():
         config.save(cfg)
     scheduler.add_job(run_pipeline, "interval", minutes=max(1, cfg.scan_interval_min), id="scan",
-                      replace_existing=True)
-    scheduler.start()
+                      replace_existing=True, next_run_time=datetime.now() + timedelta(seconds=15))
+    scheduler.start()                                          # first run shortly after start, not one interval later
     if not any(t.name == "apply" for t in threading.enumerate()):
         threading.Thread(target=_apply_worker, name="apply", daemon=True).start()
     if not cfg.dry_run:
