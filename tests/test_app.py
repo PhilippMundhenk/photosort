@@ -48,6 +48,7 @@ def test_pages_render_empty(client):
         assert r.status_code == 200 and text in r.text, path
     assert "dry-run" in client.get("/").text                     # badge in the header
     assert client.get("/static/style.css").status_code == 200
+    assert client.get("/static/ui.js").status_code == 200 and 'src="/static/ui.js"' in client.get("/").text
 
 
 def test_api_status_and_kev_backend_shown(client):
@@ -122,9 +123,13 @@ def test_reject_rename_toggle(client, library):
     assert "2026-06 Portugal- -Sommer-" in client.get("/review").text
 
     path = trip["photos"][3]["path"]
-    r = client.post(f"/proposal/{trip['id']}/toggle", data={"path": path, "back": f"/review#{trip['id']}"})
-    assert r.headers["location"] == f"/review#{trip['id']}" and _proposals("trip")["excluded"] == [path]
-    client.post(f"/proposal/{trip['id']}/toggle", data={"path": path})
+    r = client.post(f"/proposal/{trip['id']}/toggle", data={"path": path, "back": f"/review?open={trip['id']}#x"})
+    assert r.headers["location"] == f"/review?open={trip['id']}#x" and _proposals("trip")["excluded"] == [path]
+    page = client.get(f"/review?open={trip['id']}").text                  # fallback keeps the cluster open
+    assert f'id="{trip["id"]}"' in page and page.count("<details open>") >= 2
+    r = client.post(f"/proposal/{trip['id']}/toggle", data={"path": path}, headers={"X-Requested-With": "fetch"})
+    assert r.status_code == 200 and r.json() == {"ok": True, "status": "pending", "name": _proposals("trip")["name"],
+                                                 "excluded": False}
     assert _proposals("trip")["excluded"] == []
 
     client.post(f"/proposal/{home['id']}/reject")
