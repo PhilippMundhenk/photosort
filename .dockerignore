@@ -1,0 +1,12 @@
+.git
+.github
+.venv
+__pycache__
+**/__pycache__
+.pytest_cache
+.ruff_cache
+data
+kev-models
+.env
+*.md
+!README.md

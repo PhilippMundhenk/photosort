@@ -1,0 +1,34 @@
+# Test stack. Nothing has to be installed on the host or the CI runner except Docker.
+#
+#   docker compose -f docker-compose.test.yml run --rm tests                        # lint + unit + e2e (browser)
+#   docker compose -f docker-compose.test.yml run --rm tests pytest -m e2e -v        # only the Playwright tests
+#   docker compose -f docker-compose.test.yml --profile integration run --rm laya-tests
+#                                          # adapter against the real Laya model (downloads 846 MB once)
+services:
+  tests:
+    build:
+      context: .
+      target: test
+    image: photosort-test:local
+    # default command (ruff + pytest) comes from the image
+
+  laya-tests:
+    profiles: ["integration"]
+    image: photosort-test:local
+    build:
+      context: .
+      target: test
+    command: pytest -q -m integration -v
+    environment:
+      PHOTOSORT_LAYA_URL: http://laya:8000
+    depends_on:
+      laya:
+        condition: service_healthy
+
+  laya:
+    profiles: ["integration"]
+    build: docker/laya
+    image: photosort-laya:local
+    volumes:
+      - ${LAYA_MODELS:-./kev-models}:/models
+    mem_limit: 4g

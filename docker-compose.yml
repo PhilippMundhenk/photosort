@@ -1,7 +1,9 @@
 services:
   photosort:
-    build: .
-    image: photosort:local
+    build:
+      context: .
+      target: runtime
+    image: ${PHOTOSORT_IMAGE:-ghcr.io/philippmundhenk/photosort:latest}
     container_name: photosort
     restart: unless-stopped
     # run as the NAS user so moved files keep sane ownership on the SMB/NFS mount
@@ -32,7 +34,7 @@ services:
   # service. Leave kev_url empty in Settings to use the rule-based fallback without a model.
   laya:
     build: docker/laya
-    image: photosort-laya:local
+    image: ${LAYA_IMAGE:-ghcr.io/philippmundhenk/photosort-laya:latest}
     container_name: photosort-laya
     restart: unless-stopped
     volumes:

@@ -1,5 +1,7 @@
 # photosort
 
+[![CI](https://github.com/PhilippMundhenk/photosort/actions/workflows/ci.yml/badge.svg)](https://github.com/PhilippMundhenk/photosort/actions/workflows/ci.yml)
+
 Sorts incoming photos from phones and cameras into a folder tree by **trip**, **day out** and
 **occasion at home**, fully locally, on weak hardware (built for a CPU-only ThinkPad T430).
 The filesystem is the only state; a "System One" decision model (the bundled open-weights
@@ -45,8 +47,12 @@ inbox/camera/**.dng  ─┘                              sorted/_unnamed/2026-06
 ```bash
 git clone … photosort && cd photosort
 cp .env.example .env          # set PUID/PGID (the NAS user) and the three mount paths
-docker compose up -d --build  # app + Laya decision model; first start downloads 846 MB of weights
+docker compose pull && docker compose up -d      # images from ghcr.io/philippmundhenk/{photosort,photosort-laya}
+# or build locally:  docker compose up -d --build
 ```
+
+The first Laya start downloads 846 MB of weights into `./kev-models`; the dashboard shows the
+decision backend as *down* until the model is loaded.
 
 Open `http://<host>:8080`, go to **Settings**, set home lat/lon, check the input folders, save.
 Press **Run now**. The first scan runs `exiftool` over every photo once (a few minutes for
@@ -121,21 +127,40 @@ app/
   mover.py     apply / undo / rename / move-out; manifest.json; cluster listing
   main.py      FastAPI app, scheduler, routes
   templates/   dashboard, review, clusters, cluster, log, settings
-tests/smoke.py    synthetic end-to-end run (no exiftool needed): python -m tests.smoke
-tests/test_kev.py System One adapter against a fake server:      python -m tests.test_kev
-docker/laya/      Dockerfile for the Laya decision-model container
+tests/           pytest suites (see Development & tests); tests/synth.py builds the synthetic library
+docker/laya/     Dockerfile for the Laya decision-model container
+Dockerfile       stages: base -> test (ruff, pytest, Playwright) -> runtime (default)
 ```
 
-## Development
+## Development & tests
+
+Everything runs in Docker; nothing but Docker is needed on the host or the CI runner.
 
 ```bash
-pip install -r requirements.txt          # plus exiftool on the host
-PHOTOSORT_DATA=./data uvicorn app.main:app --reload --port 8080
-python -m tests.smoke
-python -m tests.test_kev
-# decision model on the host instead of docker: see https://github.com/nvkudva/laya-server
-# (./start.sh serve laya --port 8000 --no-browser), then set kev_url=http://localhost:8000
+docker compose -f docker-compose.test.yml run --rm tests                 # ruff + unit + web + browser tests
+docker compose -f docker-compose.test.yml run --rm tests pytest -m e2e -v
+docker compose -f docker-compose.test.yml --profile integration run --rm laya-tests   # against the real model
 ```
+
+| Suite | Where | What |
+|---|---|---|
+| unit | `tests/test_{geo,config,ingest,events,cluster,mover,kev}.py` | rules, coercion, sidecars, moving/copying, the System One adapter against a fake server |
+| web e2e | `tests/test_app.py` | every page and form action through FastAPI's TestClient |
+| browser e2e | `tests/e2e/test_browser.py` | real uvicorn + headless Chromium (Playwright): run, rename, toggle, approve, name, move out, undo, settings |
+| integration | `tests/test_laya_integration.py` | the adapter against a live Laya container (`-m integration`) |
+| smoke | `python -m tests.smoke` | one synthetic end-to-end run without pytest |
+
+Locally without Docker (needs exiftool and `playwright install chromium`):
+
+```bash
+pip install -r requirements-dev.txt
+pytest                                    # -m "not e2e" to skip the browser tests
+PHOTOSORT_DATA=./data uvicorn app.main:app --reload --port 8080
+```
+
+CI (`.github/workflows/ci.yml`) runs the test image on every push and PR, then builds
+`photosort` (amd64+arm64) and `photosort-laya` (amd64) and publishes them to GHCR on `main`
+and on `v*` tags. The Laya integration job runs on tags or by hand (workflow_dispatch).
 
 ## Status / roadmap
 
