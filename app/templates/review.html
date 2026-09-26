@@ -20,7 +20,12 @@
 </div>
 {% endif %}
 
-<h2>Proposed clusters ({{ pending|length }})</h2>
+{% set ready = pending|selectattr('status', 'equalto', 'pending')|list %}
+<div class="row" style="justify-content:space-between;align-items:baseline">
+  <h2 style="margin:22px 0 10px">Proposed clusters ({{ pending|length }})</h2>
+  {% if ready %}<form method="post" action="/proposals/approve_all" class="inline" data-approve-all onsubmit="return confirm('Approve and move all {{ ready|length }} proposals?')">
+    <button>Approve &amp; move all ({{ ready|length }})</button></form>{% endif %}
+</div>
 {% for p in pending %}
 <div class="card" id="{{ p.id }}">
   <div class="row">

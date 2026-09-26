@@ -27,14 +27,24 @@ SIDECAR_VERSION = 2          # 2: ts_source, offsets from GPSDateTime, 0/0 GPS i
 INDEX_DIR = DATA_DIR / "index"
 log = logging.getLogger("photosort.ingest")
 
-# Bumped whenever a record is written, moved or deleted, or a scan ran: the record cache in
-# cluster.load_records keys on it (reading 800 small files through a bind mount costs seconds).
+# Change tracking for the record cache in cluster.load_records (reading a thousand small files
+# through a bind mount costs seconds, so the cache must not be thrown away for one changed
+# record): every write/delete names its photo, scans name the files that appeared or vanished,
+# migrations and purges invalidate everything.
 generation = 0
+changed: dict = {"all": True, "paths": set()}
 
 
-def _bump() -> None:
+def _bump(path: Path | None = None) -> None:
     global generation
     generation += 1
+    if path is None:
+        changed["all"] = True
+    else:
+        changed["paths"].add(str(path))
+
+
+_known: dict[str, set[str]] = {}          # inbox folder -> photo paths seen by the last scan
 
 
 class ExifToolMissing(RuntimeError):
@@ -101,7 +111,7 @@ def write_sidecar(photo: Path, rec: dict, cfg: Config | None = None) -> None:
     tmp = sp.with_name(sp.name + ".tmp")
     tmp.write_text(json.dumps(rec, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(sp)
-    _bump()
+    _bump(photo)
 
 
 def delete_sidecar(photo: Path, cfg: Config | None = None) -> bool:
@@ -110,7 +120,7 @@ def delete_sidecar(photo: Path, cfg: Config | None = None) -> bool:
         return False
     sp.unlink()
     _prune_empty(sp.parent)
-    _bump()
+    _bump(photo)
     return True
 
 
@@ -434,7 +444,14 @@ def scan(cfg: Config, force: bool = False) -> dict:
                 write_sidecar(p, rec, cfg)
         stats["new"] += len(todo)
         stats["total"] += len(photos)
-    _bump()                                   # files may have appeared or vanished
+        now = {str(p) for p in photos}
+        before = _known.get(str(folder))
+        if before is not None:
+            for gone in before - now:          # a file removed by another tool: drop it from the cache
+                _bump(Path(gone))
+        elif not todo:
+            _bump()                            # first scan in this process: the cache may predate it
+        _known[str(folder)] = now
     return stats
 
 

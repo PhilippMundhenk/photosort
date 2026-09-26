@@ -63,6 +63,27 @@
     }
   }, true);
 
+  // approve all: every card's current name (and remember-place box) travels with the request
+  document.addEventListener("submit", function (ev) {
+    var form = ev.target;
+    if (!form.hasAttribute("data-approve-all")) return;
+    document.querySelectorAll(".card[id] form[data-autosave]").forEach(function (nameForm) {
+      var card = nameForm.closest(".card");
+      var input = nameForm.querySelector("input[name=name]");
+      var remember = nameForm.querySelector("input[name=remember_place]");
+      if (!card || !input) return;
+      nameForm.dataset.saved = input.value;
+      var hidden = document.createElement("input");
+      hidden.type = "hidden"; hidden.name = "name_" + card.id; hidden.value = input.value;
+      form.appendChild(hidden);
+      if (remember && remember.checked) {
+        var h2 = document.createElement("input");
+        h2.type = "hidden"; h2.name = "remember_place_" + card.id; h2.value = "1";
+        form.appendChild(h2);
+      }
+    });
+  }, true);
+
   // --- moving in the background: refresh progress, reload when done -------------------------
   if (document.querySelector("[data-poll]")) {
     var poll = setInterval(function () {

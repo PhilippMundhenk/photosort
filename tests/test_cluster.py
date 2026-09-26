@@ -205,7 +205,8 @@ def test_every_dense_home_burst_is_proposed(cfg, library):
     assert "home" not in {p["kind"] for p in cluster.load_proposals().values()}
 
 
-def test_load_records_is_cached_until_a_record_changes(cfg, library, monkeypatch):
+def test_load_records_cache_is_patched_per_record(cfg, library, monkeypatch):
+    ingest.scan(cfg)                                                     # the first scan in a process reloads once
     calls = []
     real = cluster._load_records
     monkeypatch.setattr(cluster, "_load_records", lambda c: calls.append(1) or real(c))
@@ -214,14 +215,46 @@ def test_load_records_is_cached_until_a_record_changes(cfg, library, monkeypatch
     assert calls == [1] and a == b and a[0] is not b[0]                  # cached, copies
     a[0]["zone"] = "mutated"
     assert cluster.load_records(cfg)[0][0]["zone"] != "mutated"
-    ingest.write_sidecar(library.paths[0], {**ingest.read_sidecar(library.paths[0], cfg), "ts": None}, cfg)
-    assert cluster.load_records(cfg)[1] and calls == [1, 1]              # a write invalidates
+
+    first = library.paths[0]
+    ingest.write_sidecar(first, {**ingest.read_sidecar(first, cfg), "ts": None}, cfg)
+    recs, skipped = cluster.load_records(cfg)
+    assert calls == [1] and len(skipped) == 1 and len(recs) == library.n - 1     # patched, not reloaded
+
+    gone = library.paths[1]
+    gone.unlink()
+    ingest.delete_sidecar(gone, cfg)
+    recs, _ = cluster.load_records(cfg)
+    assert calls == [1] and all(r["path"] != str(gone) for r in recs) and len(recs) == library.n - 2
+
     cfg.home_lat += 1
     cluster.load_records(cfg)
-    assert calls == [1, 1, 1]                                            # so does a config change
-    ingest.scan(cfg)
+    assert calls == [1, 1]                                               # a config change reloads
+    ingest.scan(cfg)                                                     # nothing new: no reload
     cluster.load_records(cfg)
-    assert calls == [1, 1, 1, 1]                                         # and a scan
+    assert calls == [1, 1]
+    library.paths[2].unlink()                                            # vanished between scans
+    ingest.scan(cfg)
+    recs, _ = cluster.load_records(cfg)
+    assert calls == [1, 1] and all(r["path"] != str(library.paths[2]) for r in recs)
+    ingest.changed["all"] = True                                         # migration/purge: full reload
+    cluster.load_records(cfg)
+    assert calls == [1, 1, 1]
+
+
+def test_records_filled_is_cached_and_patched(cfg, library, monkeypatch):
+    calls = []
+    real = cluster.fill_gps_from_neighbours
+    monkeypatch.setattr(cluster, "fill_gps_from_neighbours", lambda c, r, **k: calls.append(1) or real(c, r, **k))
+    cluster.records_filled(cfg)
+    cluster.records_filled(cfg)
+    assert calls == [1]
+    no_gps = next(r for r in cluster.records_filled(cfg) if r.get("gps_source", "").startswith("neighbour"))
+    assert no_gps["lat"] is not None
+    ingest.write_sidecar(library.paths[0], ingest.read_sidecar(library.paths[0], cfg), cfg)
+    cluster.records_filled(cfg)
+    assert calls == [1, 1]                                               # a record change refills once
+    assert len(cluster.everyday_records(cfg)) == library.n
 
 
 def test_run_records_without_timestamp_are_counted(cfg, library):
