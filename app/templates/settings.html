@@ -3,6 +3,8 @@
 <h1>Settings</h1>
 {% if msg %}<div class="warnbox">{{ msg }}</div>{% endif %}
 <form method="post" action="/settings/detect_home" id="detect"></form>
+<form method="post" action="/settings/sidecars/migrate" id="sc-migrate"></form>
+<form method="post" action="/settings/sidecars/purge" id="sc-purge" onsubmit="return confirm('Delete the records of photos in the sorted tree and records without a photo?')"></form>
 <form method="post" action="/settings">
 <div class="settings-grid">
 
@@ -66,6 +68,26 @@
   <div class="check"><input type="checkbox" id="ah" name="auto_apply_home" {% if cfg.auto_apply_home %}checked{% endif %}><label for="ah">Auto-apply home bursts (into <code>{{ cfg.unnamed_dir }}/YYYY-MM-DD (n Fotos)/</code> until you name them)</label></div>
   <div class="check"><input type="checkbox" id="xmp" name="write_xmp_sidecar" {% if cfg.write_xmp_sidecar %}checked{% endif %}><label for="xmp">Also write keywords to .xmp sidecars</label></div>
   <label>Scan interval (minutes)</label><input type="number" name="scan_interval_min" value="{{ cfg.scan_interval_min }}">
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">Sidecars (per-photo records)</h2>
+  <label>Where</label>
+  <select name="sidecar_mode">
+    <option value="central" {% if cfg.sidecar_mode == 'central' %}selected{% endif %}>central: data/index/&lt;inbox&gt;/&lt;relative path&gt; (photo folders stay clean)</option>
+    <option value="beside" {% if cfg.sidecar_mode == 'beside' %}selected{% endif %}>beside the photo (follows the file anywhere)</option>
+  </select>
+  <label>File name (<code>{name}</code> = photo file name, <code>{stem}</code>, <code>{ext}</code>)</label><input type="text" name="sidecar_name" value="{{ cfg.sidecar_name }}">
+  <label>After a photo is sorted</label>
+  <select name="sidecar_cleanup">
+    <option value="after_move" {% if cfg.sidecar_cleanup == 'after_move' %}selected{% endif %}>drop its record (manifest.json in the folder has everything)</option>
+    <option value="never" {% if cfg.sidecar_cleanup == 'never' %}selected{% endif %}>keep the record with the photo</option>
+  </select>
+  <div style="margin:8px 0" class="row">
+    <button form="sc-migrate" class="secondary small" type="submit">Move existing records to this location</button>
+    <button form="sc-purge" class="secondary small" type="submit">Remove stale records now</button>
+  </div>
+  <div class="muted small">Records are regenerable: a photo without one is simply re-indexed on the next scan (one exiftool call).</div>
 </div>
 
 <div class="card">

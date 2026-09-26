@@ -44,7 +44,7 @@ class Library:
         if pos:
             tags["GPSLatitude"], tags["GPSLongitude"] = pos
         rec = {**ingest.build_record(self.cfg, p, tags, source=inbox.name), "source": inbox.name, "inbox": str(inbox)}
-        ingest.write_sidecar(p, rec)
+        ingest.write_sidecar(p, rec, self.cfg)
         self.paths.append(p)
         return p
 
@@ -65,7 +65,7 @@ class Library:
         if pos:
             tags["GPSLatitude"], tags["GPSLongitude"] = pos
         rec = {**ingest.build_record(self.cfg, p, tags, source=inbox.name), "source": inbox.name, "inbox": str(inbox)}
-        ingest.write_sidecar(p, rec)
+        ingest.write_sidecar(p, rec, self.cfg)
         self.paths.append(p)
         return p
 

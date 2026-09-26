@@ -91,6 +91,10 @@ def test_excursion_split_needs_long_gap_and_distance():
     assert len(cluster.find_excursions(cfg, far_quick)) == 1
     far_slow = [rec(t, Z.ZONE_AWAY, LISBON), rec(t + timedelta(days=10), Z.ZONE_AWAY, SEVILLE)]
     assert len(cluster.find_excursions(cfg, far_slow)) == 2
+    near_home = [rec(t, Z.ZONE_LOCAL, LUDWIGSBURG), rec(t + timedelta(days=10), Z.ZONE_LOCAL, LUDWIGSBURG)]
+    assert len(cluster.find_excursions(cfg, near_home)) == 2              # long gap near home: two outings
+    near_short = [rec(t, Z.ZONE_LOCAL, LUDWIGSBURG), rec(t + timedelta(days=2), Z.ZONE_LOCAL, LUDWIGSBURG)]
+    assert len(cluster.find_excursions(cfg, near_short)) == 1
 
 
 def test_trip_proposal_confidences_and_ongoing():
@@ -198,8 +202,8 @@ def test_run_uses_decider_answer_and_applied_history(cfg, library):
 def test_run_records_without_timestamp_are_counted(cfg, library):
     from app import ingest
     p = library.paths[0]
-    rec_ = ingest.read_sidecar(p)
+    rec_ = ingest.read_sidecar(p, cfg)
     rec_["ts"] = None
-    ingest.write_sidecar(p, rec_)
+    ingest.write_sidecar(p, rec_, cfg)
     stats = cluster.run(cfg, Decider(cfg))
     assert stats["no_timestamp"] == 1 and stats["photos"] == library.n - 1

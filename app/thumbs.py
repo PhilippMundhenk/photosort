@@ -34,6 +34,13 @@ BROWSER_NATIVE = {"jpg", "jpeg", "png", "webp", "gif", "mp4", "mov", "m4v", "web
 
 _lock = threading.Lock()
 _inflight: set[str] = set()
+_worker: threading.Thread | None = None
+
+
+def wait(timeout: float = 60) -> None:
+    """Block until the background prefetch (if any) is done; tests use this before cleaning up."""
+    if _worker is not None and _worker.is_alive():
+        _worker.join(timeout)
 
 
 def _ext(p: Path) -> str:
@@ -176,6 +183,9 @@ def prefetch(cfg: Config, photos: list[Path]) -> threading.Thread | None:
                 n += 1
         log.info("thumbnails: %d generated, %d skipped", n, len(todo) - n)
 
-    t = threading.Thread(target=work, name="thumbs", daemon=True)
-    t.start()
-    return t
+    global _worker
+    if _worker is not None and _worker.is_alive():
+        return _worker                                        # one at a time; the next run picks up the rest
+    _worker = threading.Thread(target=work, name="thumbs", daemon=True)
+    _worker.start()
+    return _worker

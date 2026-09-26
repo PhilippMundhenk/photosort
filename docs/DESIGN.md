@@ -143,10 +143,16 @@ pass (Immich already computes vectors) is the noted follow-up if it bothers.
 
 Explicit requirement: databases get lost and break. So:
 
-- **Sidecar per photo** (`<file>.photosort.json`): timestamp, GPS, place, zone, cluster,
-  decision. Regenerable — delete it and the next scan rebuilds it. Keywords are optionally
-  mirrored into a standard `.xmp` sidecar for digiKam/Lightroom. Writing into the originals
-  was rejected (no benefit, risky for RAW).
+- **One JSON record per photo**: timestamp, GPS, place, zone, cluster, decision.
+  Regenerable — delete it and the next scan rebuilds it. Since September 2026 it lives by
+  default in a central index (`data/index/<inbox>/<relative path>/<file>.photosort.json`)
+  because the first real run doubled the file count in the photo folders; "beside the
+  photo" remains an option (the record then follows the file wherever another tool moves
+  it), the file name pattern is configurable, and once a photo has been sorted its record
+  is dropped by default (the folder's `manifest.json` carries everything; copy-mode
+  originals keep theirs, which marks them as done). Keywords are optionally mirrored into a
+  standard `.xmp` sidecar for digiKam/Lightroom. Writing into the originals was rejected
+  (no benefit, risky for RAW).
 - **Manifest per cluster folder** (`manifest.json`): proposal, decision and confidence,
   source→target of every photo, later corrections. It is the undo log and the eval set.
 - **The folder tree is the decision**: a photo in a trip folder is settled; `_unnamed/` holds

@@ -1,11 +1,16 @@
-"""Ingest: read EXIF via exiftool, write one JSON sidecar per photo.
+"""Ingest: read EXIF via exiftool, write one JSON record ("sidecar") per photo.
 
-Sidecar = <photo>.photosort.json, next to the file. It is the machine record and is
-regenerable (delete it and the next scan recreates it). Optionally keywords are also
-written to <photo>.xmp so other tools (digiKam, Lightroom) can see the zone/cluster.
+The record is the machine's memory of a photo (timestamp, GPS, place, zone, cluster,
+decision) and is regenerable: delete it and the next scan recreates it. Where it lives is
+configurable (cfg.sidecar_mode): "central" keeps all records under <data>/index/, mirroring
+the inbox name and the photo's relative path, so photo folders stay clean; "beside" puts it
+next to the photo (<photo>.photosort.json by default, cfg.sidecar_name) so it follows the
+file wherever it goes. Optionally keywords are also written to <photo>.xmp so other tools
+(digiKam, Lightroom) can see the zone/cluster.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -13,11 +18,13 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from . import config as _config
 from . import geo
-from .config import Config, inbox_dirs, tzinfo
+from .config import DATA_DIR, Config, inbox_dirs, tzinfo
 
 SIDECAR_SUFFIX = ".photosort.json"
 SIDECAR_VERSION = 1
+INDEX_DIR = DATA_DIR / "index"
 log = logging.getLogger("photosort.ingest")
 
 
@@ -25,8 +32,38 @@ class ExifToolMissing(RuntimeError):
     """exiftool is not on PATH; the scan skips new photos instead of writing empty sidecars."""
 
 
-def sidecar_path(photo: Path) -> Path:
-    return photo.with_name(photo.name + SIDECAR_SUFFIX)
+# --- where a photo's record lives -------------------------------------------------------------
+
+def sidecar_name(cfg: Config, photo: Path) -> str:
+    try:
+        name = cfg.sidecar_name.format(name=photo.name, stem=photo.stem, ext=photo.suffix.lstrip("."))
+    except (KeyError, IndexError, ValueError):
+        name = photo.name + SIDECAR_SUFFIX
+    return name if name and name != photo.name else photo.name + SIDECAR_SUFFIX
+
+
+def _anchor(cfg: Config, photo: Path) -> tuple[str, Path] | None:
+    """(inbox name or 'sorted', path relative to it) for a photo under a known folder."""
+    roots = [*inbox_dirs(cfg), ("sorted", Path(cfg.root))]
+    for name, folder in roots:
+        try:
+            return name, photo.relative_to(folder)
+        except ValueError:
+            continue
+    return None
+
+
+def sidecar_path(photo: Path, cfg: Config | None = None, mode: str | None = None) -> Path:
+    cfg = cfg or _config.load()
+    mode = mode or cfg.sidecar_mode
+    if mode == "beside":
+        return photo.with_name(sidecar_name(cfg, photo))
+    anchor = _anchor(cfg, photo)
+    if anchor:
+        name, rel = anchor
+        return INDEX_DIR / name / rel.parent / sidecar_name(cfg, photo)
+    h = hashlib.sha1(str(photo).encode("utf-8", "surrogateescape")).hexdigest()
+    return INDEX_DIR / "_other" / h[:2] / (h[2:14] + "_" + sidecar_name(cfg, photo))
 
 
 def is_photo(cfg: Config, p: Path) -> bool:
@@ -38,21 +75,126 @@ def list_photos(cfg: Config, folder: Path) -> list[Path]:
     return sorted(p for p in folder.rglob("*") if is_photo(cfg, p))
 
 
-def read_sidecar(photo: Path) -> dict | None:
-    sp = sidecar_path(photo)
+def read_sidecar(photo: Path, cfg: Config | None = None) -> dict | None:
+    sp = sidecar_path(photo, cfg)
     if not sp.exists():
         return None
     try:
-        return json.loads(sp.read_text())
-    except json.JSONDecodeError:
+        return json.loads(sp.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
         return None
 
 
-def write_sidecar(photo: Path, rec: dict) -> None:
-    sp = sidecar_path(photo)
-    tmp = sp.with_suffix(".tmp")
-    tmp.write_text(json.dumps(rec, ensure_ascii=False, indent=1))
+def write_sidecar(photo: Path, rec: dict, cfg: Config | None = None) -> None:
+    sp = sidecar_path(photo, cfg)
+    sp.parent.mkdir(parents=True, exist_ok=True)
+    rec = {**rec, "path": str(photo)}                  # lets a central index find orphans
+    tmp = sp.with_name(sp.name + ".tmp")
+    tmp.write_text(json.dumps(rec, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(sp)
+
+
+def delete_sidecar(photo: Path, cfg: Config | None = None) -> bool:
+    sp = sidecar_path(photo, cfg)
+    if not sp.exists():
+        return False
+    sp.unlink()
+    _prune_empty(sp.parent)
+    return True
+
+
+def move_sidecar(src: Path, dst: Path, cfg: Config | None = None, keep_source: bool = False) -> bool:
+    """The record follows the photo from src to dst (copy mode keeps the source's)."""
+    rec = read_sidecar(src, cfg)
+    if rec is None:
+        return False
+    write_sidecar(dst, rec, cfg)
+    if not keep_source:
+        delete_sidecar(src, cfg)
+    return True
+
+
+def _prune_empty(folder: Path) -> None:
+    """Remove now-empty index folders up to the index root (never photo folders)."""
+    try:
+        while folder != INDEX_DIR and folder.is_relative_to(INDEX_DIR) and not any(folder.iterdir()):
+            folder.rmdir()
+            folder = folder.parent
+    except OSError:
+        pass
+
+
+def _record_files(cfg: Config) -> dict[str, Path]:
+    """Every record file under the index and the photo folders, by the photo path it names.
+    (Records written before September 2026 have no path and are found by name instead.)"""
+    found: dict[str, Path] = {}
+    folders = [INDEX_DIR, *(f for _, f in inbox_dirs(cfg)), Path(cfg.root)]
+    for folder in folders:
+        if not folder.exists():
+            continue
+        for f in folder.rglob("*.json"):
+            if f.name == "manifest.json" or not f.is_file():
+                continue
+            try:
+                rec = json.loads(f.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if isinstance(rec, dict) and rec.get("path"):
+                found.setdefault(rec["path"], f)
+    return found
+
+
+def migrate_sidecars(cfg: Config) -> dict:
+    """Move every record to the configured location (beside <-> central, or a renamed
+    pattern): for each photo under an inbox or the sorted root, its record found anywhere
+    else (by the path stored inside it, or by the default name) is moved. Returns counts."""
+    stats = {"moved": 0, "kept": 0, "photos": 0}
+    by_path = _record_files(cfg)
+    default = Config(**{**cfg.as_dict(), "sidecar_name": "{name}.photosort.json"})
+    for _, folder in [*inbox_dirs(cfg), ("sorted", Path(cfg.root))]:
+        if not folder.exists():
+            continue
+        for p in list_photos(cfg, folder):
+            stats["photos"] += 1
+            target = sidecar_path(p, cfg)
+            if target.exists():
+                stats["kept"] += 1
+                continue
+            candidates = [by_path.get(str(p))] + [sidecar_path(p, c, mode=m) for c in (cfg, default)
+                                                  for m in ("beside", "central")]
+            for cand in candidates:
+                if cand and cand != target and cand.exists():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    cand.replace(target)
+                    _prune_empty(cand.parent)
+                    stats["moved"] += 1
+                    break
+    return stats
+
+
+def purge_sidecars(cfg: Config, sorted_tree: bool = True, orphans: bool = True) -> dict:
+    """Delete records that are no longer needed: those of photos in the sorted tree (if
+    sorted_tree) and central records whose photo no longer exists (orphans)."""
+    stats = {"sorted": 0, "orphans": 0}
+    root = Path(cfg.root)
+    if sorted_tree and root.exists():
+        for p in list_photos(cfg, root):
+            if delete_sidecar(p, cfg):
+                stats["sorted"] += 1
+    if orphans and INDEX_DIR.exists():
+        for f in list(INDEX_DIR.rglob("*")):
+            if not f.is_file() or f.suffix != ".json":
+                continue
+            try:
+                rec = json.loads(f.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            path = rec.get("path")
+            if path and not Path(path).exists():
+                f.unlink()
+                _prune_empty(f.parent)
+                stats["orphans"] += 1
+    return stats
 
 
 # --- exiftool -----------------------------------------------------------------
@@ -213,7 +355,7 @@ def scan(cfg: Config, force: bool = False) -> dict:
             stats["missing"].append(str(folder))
             continue
         photos = list_photos(cfg, folder)
-        todo = [p for p in photos if force or not sidecar_path(p).exists()]
+        todo = [p for p in photos if force or not sidecar_path(p, cfg).exists()]
         try:
             tags = exif_batch(todo)
         except ExifToolMissing as e:
@@ -225,12 +367,12 @@ def scan(cfg: Config, force: bool = False) -> dict:
             rec = build_record(cfg, p, tags.get(str(p), {}), source=name)
             rec["source"] = name
             rec["inbox"] = str(folder)
-            write_sidecar(p, rec)
+            write_sidecar(p, rec, cfg)
         # re-zone existing sidecars if home/radii changed: cheap, no exiftool needed
         for p in photos:
             if p in todo:
                 continue
-            rec = read_sidecar(p)
+            rec = read_sidecar(p, cfg)
             if rec is None:
                 continue
             old = (rec.get("zone"), rec.get("dist_km"), rec.get("source"), rec.get("place"))
@@ -238,7 +380,7 @@ def scan(cfg: Config, force: bool = False) -> dict:
             rec.setdefault("source", name)
             rec.setdefault("inbox", str(folder))
             if (rec.get("zone"), rec.get("dist_km"), rec.get("source"), rec.get("place")) != old:
-                write_sidecar(p, rec)
+                write_sidecar(p, rec, cfg)
         stats["new"] += len(todo)
         stats["total"] += len(photos)
     return stats

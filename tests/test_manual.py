@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app import cluster, events, main
+from app import cluster, events, ingest, main
 from app.kev import Decider
 from tests import synth
 
@@ -57,12 +57,12 @@ def test_create_manual_and_survive_runs(cfg, library):
     assert len(cluster.everyday_records(cfg)) == 10 - 4
 
     Path(paths[0]).unlink()                                         # a photo disappears: proposal shrinks
-    Path(paths[0] + ".photosort.json").unlink()
+    ingest.delete_sidecar(Path(paths[0]), cfg)
     cluster.run(cfg, Decider(cfg))
     assert cluster.load_proposals()[pr["id"]]["n"] == 3
     for p in paths[1:]:                                             # all gone: proposal dropped
         Path(p).unlink()
-        Path(p + ".photosort.json").unlink()
+        ingest.delete_sidecar(Path(p), cfg)
     cluster.run(cfg, Decider(cfg))
     assert pr["id"] not in cluster.load_proposals()
 

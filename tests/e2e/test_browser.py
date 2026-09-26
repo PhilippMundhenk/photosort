@@ -35,7 +35,7 @@ def server(tmp_path_factory):
     base = tmp_path_factory.mktemp("e2e")
     data = base / "data"
     data.mkdir()
-    cfg = synth.make_config(base)
+    cfg = synth.make_config(base, sidecar_mode="beside")   # records must be visible to the server process
     (data / "config.yaml").write_text(yaml.safe_dump(cfg.as_dict(), sort_keys=False), encoding="utf-8")
     lib = synth.populate(cfg)
 

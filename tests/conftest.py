@@ -19,6 +19,8 @@ from tests import synth  # noqa: E402
 
 @pytest.fixture
 def data_dir() -> Path:
+    from app import thumbs
+    thumbs.wait()                          # a prefetch from the previous test must not write into the wiped dir
     d = config.DATA_DIR
     if d.exists():
         shutil.rmtree(d)

@@ -3,11 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from app import cluster, events, ingest, mover
+from app import cluster, config, events, ingest, mover
 from app.kev import Decider
 
 
 def _props(cfg):
+    cfg.sidecar_cleanup = "never"                     # these tests inspect the records of sorted photos
+    config.save(cfg)
     cluster.run(cfg, Decider(cfg))
     props = cluster.load_proposals()
     return props, {p["kind"]: p for p in props.values()}
@@ -82,7 +84,7 @@ def test_apply_moves_by_source_and_uncertain_into_review(cfg, library):
     assert dst.exists() and not Path(m["photos"][0]["src"]).exists()
     rec = ingest.read_sidecar(dst)
     assert rec["cluster"] == trip["name"] and rec["decision"] == {"by": "rule", "conf": 1.0, "kind": "trip"}
-    assert not ingest.sidecar_path(Path(m["photos"][0]["src"])).exists()
+    assert not ingest.sidecar_path(Path(m["photos"][0]["src"]), cfg).exists()
     ev = events.read(limit=1)[0]
     assert ev["kind"] == "apply" and ev["n"] == len(m["photos"]) and ev["proposal"] == trip["id"]
 
@@ -273,7 +275,7 @@ def test_copy_mode_move_out_deletes_copy_only(copy_cfg, library):
     folder = mover.target_folder(cfg, kinds["local"])
     entry = m["photos"][0]
     mover.move_out(cfg, folder, Path(entry["dst"]))
-    assert not Path(entry["dst"]).exists() and not ingest.sidecar_path(Path(entry["dst"])).exists()
+    assert not Path(entry["dst"]).exists() and not ingest.sidecar_path(Path(entry["dst"]), cfg).exists()
     assert Path(entry["src"]).exists() and "copied_to" not in ingest.read_sidecar(Path(entry["src"]))
     assert len(mover.read_manifest(folder)["photos"]) == len(m["photos"]) - 1
     assert events.read(limit=1)[0]["kind"] == "correction"

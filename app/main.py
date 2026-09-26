@@ -41,9 +41,8 @@ def run_pipeline(trigger: str = "schedule") -> dict:
         cfg = config.load()
         s1 = ingest.scan(cfg)
         s2 = cluster.run(cfg, Decider(cfg))
-        if s1.get("new"):
-            thumbs.prefetch(cfg, [p for _, folder in config.inbox_dirs(cfg) if folder.exists()
-                                  for p in ingest.list_photos(cfg, folder)])
+        thumbs.prefetch(cfg, [p for _, folder in config.inbox_dirs(cfg) if folder.exists()
+                              for p in ingest.list_photos(cfg, folder)])
         applied = 0
         if not cfg.dry_run:
             props = cluster.load_proposals()
@@ -202,6 +201,22 @@ def settings(request: Request, msg: str = ""):
                   extensions=", ".join(cfg.photo_extensions), msg=msg)
 
 
+@app.post("/settings/sidecars/{action}")
+def settings_sidecars(action: str):
+    cfg = config.load()
+    if action == "migrate":
+        st = ingest.migrate_sidecars(cfg)
+        msg = (f"Sidecars: {st['moved']} moved to the {cfg.sidecar_mode} location, {st['kept']} already there, "
+               f"{st['photos']} photos checked.")
+    elif action == "purge":
+        st = ingest.purge_sidecars(cfg)
+        msg = f"Sidecars removed: {st['sorted']} in the sorted tree, {st['orphans']} without a photo."
+    else:
+        return RedirectResponse("/settings", status_code=303)
+    events.log("settings", changed=[f"sidecars:{action}"], **st)
+    return RedirectResponse("/settings?msg=" + quote(msg), status_code=303)
+
+
 @app.post("/settings/detect_home")
 def settings_detect_home():
     """Set home to where photos are taken on the most distinct days (~100 m cell)."""
@@ -294,10 +309,13 @@ def cluster_rename(folder: str = Form(...), name: str = Form(...), remember_plac
     dst = mover.rename(cfg, Path(folder), name)
     if remember_place:
         m = mover.read_manifest(dst) or {}
-        pts = []
-        for p in m.get("photos", []):
-            rec = ingest.read_sidecar(Path(p["dst"])) or {}
-            pts.append((rec.get("lat"), rec.get("lon")))
+        pr = cluster.load_proposals().get(m.get("proposal_id") or "", {})
+        pts = [(p.get("lat"), p.get("lon")) for p in pr.get("photos", [])]
+        if not any(la is not None for la, _ in pts):                 # older proposal: try the records
+            pts = []
+            for p in m.get("photos", []):
+                rec = ingest.read_sidecar(Path(p["dst"]), cfg) or {}
+                pts.append((rec.get("lat"), rec.get("lon")))
         _remember_place(cfg, dst.name, pts)
     return RedirectResponse(f"/clusters/view?folder={dst}", status_code=303)
 

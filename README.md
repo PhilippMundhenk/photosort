@@ -21,7 +21,8 @@ inbox/camera/**.dng  ─┘                              sorted/_unnamed/2026-06
 ```
 
 1. **Scan** (every N minutes): every photo and video in every input folder (recursive) gets a
-   JSON sidecar `<file>.photosort.json` with timestamp, GPS, offline reverse-geocoded place and
+   JSON record (by default in `data/index/`, optionally as a sidecar next to the file; see
+   Settings → Sidecars) with timestamp, GPS, offline reverse-geocoded place and
    its *zone* relative to your home: `home` (< 0.5 km), `local` (< 20 km), `away` (beyond).
    Photos without GPS take the position of the nearest photo in time that has one.
    Videos (iPhone and Android MP4/MOV) are read the same way: GPS from the QuickTime keys,

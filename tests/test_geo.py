@@ -40,6 +40,16 @@ def test_reverse_small_places_fall_back_to_region():
     assert huge["place"] == huge["region"] and huge["region"]
 
 
+def test_unknown_population_keeps_the_place_name(monkeypatch):
+    cfg = config.Config(min_city_population=1000)
+    monkeypatch.setattr(geo, "_lookup", lambda la, lo: {"city": "Hamlet", "state": "Baden-Wurttemberg",
+                                                         "population": 0, "country": "Germany", "country_code": "DE"})
+    assert geo.reverse(cfg, 48.0, 9.0)["place"] == "Hamlet"
+    monkeypatch.setattr(geo, "_lookup", lambda la, lo: {"city": "Tiny", "state": "Baden-Wurttemberg",
+                                                         "population": 400, "country": "Germany", "country_code": "DE"})
+    assert geo.reverse(cfg, 48.0, 9.0)["place"] == "Baden-Wurttemberg"
+
+
 def test_named_places_win_and_nearest_wins():
     cfg = config.Config(named_places=[{"name": "Harz", "lat": 51.77, "lon": 10.65, "radius_km": 30},
                                       {"name": "Brocken", "lat": 51.80, "lon": 10.62, "radius_km": 2}])

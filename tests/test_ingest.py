@@ -53,16 +53,17 @@ def test_enrich_without_home_configured_gives_unknown_zone():
     assert rec["dist_km"] is None and rec["zone"] == geo.ZONE_UNKNOWN and rec["place"]["place"] == "Lisbon"
 
 
-def test_sidecar_roundtrip_and_corruption(tmp_path):
+def test_sidecar_roundtrip_and_corruption(tmp_path, data_dir):
+    cfg = config.Config(sidecar_mode="beside")
     p = tmp_path / "IMG.jpg"
-    sp = ingest.sidecar_path(p)
-    assert sp.name == "IMG.jpg.photosort.json"
-    assert ingest.read_sidecar(p) is None
-    ingest.write_sidecar(p, {"file": "IMG.jpg", "ts": None})
-    assert ingest.read_sidecar(p) == {"file": "IMG.jpg", "ts": None}
-    assert not sp.with_suffix(".tmp").exists()
+    sp = ingest.sidecar_path(p, cfg)
+    assert sp == tmp_path / "IMG.jpg.photosort.json"
+    assert ingest.read_sidecar(p, cfg) is None
+    ingest.write_sidecar(p, {"file": "IMG.jpg", "ts": None}, cfg)
+    assert ingest.read_sidecar(p, cfg) == {"file": "IMG.jpg", "ts": None, "path": str(p)}
+    assert not list(tmp_path.glob("*.tmp"))
     sp.write_text("{broken")
-    assert ingest.read_sidecar(p) is None
+    assert ingest.read_sidecar(p, cfg) is None
 
 
 def test_is_photo_and_list_photos(tmp_path):
@@ -96,7 +97,7 @@ def test_scan_indexes_only_new_files_and_rezones(tmp_path, monkeypatch):
 
     stats = ingest.scan(cfg)
     assert stats == {"new": 2, "total": 2, "missing": []} and calls == [["a.jpg", "b.jpg"]]
-    rec = ingest.read_sidecar(a)
+    rec = ingest.read_sidecar(a, cfg)
     assert rec["zone"] == geo.ZONE_LOCAL and rec["source"] == "cam" and rec["inbox"] == str(inbox)
 
     (inbox / "c.jpg").write_bytes(b"x")
@@ -107,7 +108,7 @@ def test_scan_indexes_only_new_files_and_rezones(tmp_path, monkeypatch):
     cfg.home_lon = HOME[1] + 0.05
     stats = ingest.scan(cfg)
     assert stats["new"] == 0 and calls[-1] == []
-    assert ingest.read_sidecar(a)["zone"] == geo.ZONE_HOME
+    assert ingest.read_sidecar(a, cfg)["zone"] == geo.ZONE_HOME
 
 
 def test_scan_reports_missing_inbox(tmp_path):
@@ -126,7 +127,7 @@ def test_scan_without_exiftool_leaves_photos_unindexed(tmp_path, monkeypatch):
     monkeypatch.setattr(ingest.subprocess, "run", boom)
     stats = ingest.scan(cfg)
     assert stats["new"] == 0 and "exiftool" in stats["error"]
-    assert ingest.read_sidecar(inbox / "a.jpg") is None       # no empty sidecar written
+    assert ingest.read_sidecar(inbox / "a.jpg", cfg) is None  # no empty sidecar written
 
 
 def test_exif_batch_empty_list_needs_no_exiftool():
