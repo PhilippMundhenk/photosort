@@ -7,7 +7,7 @@
 {% for p in pending %}
 <div class="card" id="{{ p.id }}">
   <div class="row">
-    <span class="badge {{ p.kind }}">{{ p.kind }}</span>
+    <span class="badge {{ p.kind }}">{{ p.kind }}</span>{% if p.manual %}<span class="badge">by hand</span>{% endif %}
     {% if p.status == 'ongoing' %}<span class="badge warn">ongoing – waiting for a home photo</span>{% endif %}
     <form method="post" action="/proposal/{{ p.id }}/rename" class="inline row">
       <input type="text" name="name" value="{{ p.name }}" style="width:340px">

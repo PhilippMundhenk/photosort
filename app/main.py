@@ -5,6 +5,7 @@ import logging
 import mimetypes
 import re
 import threading
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
@@ -115,6 +116,64 @@ def review(request: Request, open: str = ""):
     props = cluster.load_proposals()
     unnamed = [c for c in mover.list_clusters(cfg) if c["unnamed"]]
     return render(request, "review.html", pending=_pending(props), unnamed=unnamed, open_id=open)
+
+
+def _month_key(ts: str) -> str:
+    return ts[:7]
+
+
+@app.get("/everyday", response_class=HTMLResponse)
+def everyday(request: Request, month: str = ""):
+    cfg = config.load()
+    props = cluster.load_proposals()
+    recs = cluster.everyday_records(cfg, props)
+    months_c = Counter(_month_key(r["ts"]) for r in recs)
+    months = [{"key": k, "n": months_c[k]} for k in sorted(months_c, reverse=True)]
+    if not month and months:
+        month = months[0]["key"]
+    days: dict[str, list] = {}
+    for r in recs:
+        if _month_key(r["ts"]) == month:
+            days.setdefault(r["ts"][:10], []).append(r)
+    out = []
+    for date in sorted(days, reverse=True):
+        rs = sorted(days[date], key=lambda r: r["_t"])
+        zones = Counter(r["zone"] for r in rs)
+        places = Counter((r.get("place") or {}).get("place") for r in rs if r.get("place"))
+        out.append({"date": date, "weekday": rs[0]["_t"].strftime("%A"), "n": len(rs),
+                    "zones": ", ".join(f"{n} {z}" for z, n in zones.most_common()),
+                    "places": ", ".join(p for p, _ in places.most_common(3) if p),
+                    "photos": [{"path": r["path"], "file": r["file"], "ts": r["ts"], "zone": r["zone"],
+                                "media": r.get("media", "photo"), "place": (r.get("place") or {}).get("place")}
+                               for r in rs]})
+    return render(request, "everyday.html", months=months, month=month, days=out, pending=_pending(props),
+                  total=len(recs))
+
+
+@app.post("/everyday/assign")
+async def everyday_assign(request: Request):
+    """Ticked everyday photos join an existing proposal or form a new manual one."""
+    cfg = config.load()
+    form = await request.form()
+    paths = [str(p) for p in form.getlist("paths")]
+    target, kind, name = form.get("target", "new"), form.get("kind", "local"), str(form.get("name", ""))
+    props = cluster.load_proposals()
+    wanted = set(paths)
+    recs = [r for r in cluster.everyday_records(cfg, props) if r["path"] in wanted]
+    if not recs:
+        return RedirectResponse("/everyday", status_code=303)
+    if target == "new":
+        pr = cluster.create_manual(kind, name, recs)
+        props[pr["id"]] = pr
+        events.log("review", proposal=pr["id"], action="create", name=pr["name"], cluster_kind=kind, n=len(recs))
+    else:
+        pr = props.get(target)
+        if not pr or pr["status"] not in ("pending", "ongoing", "approved"):
+            return RedirectResponse("/everyday", status_code=303)
+        n = cluster.add_to_proposal(pr, recs)
+        events.log("review", proposal=pr["id"], action="add", name=pr["name"], n=n)
+    cluster.save_proposals(props)
+    return RedirectResponse(f"/review?open={pr['id']}#{pr['id']}", status_code=303)
 
 
 @app.get("/clusters", response_class=HTMLResponse)
