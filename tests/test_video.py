@@ -23,45 +23,63 @@ HAS_EXIFTOOL = shutil.which("exiftool") is not None
 # --- timestamp parsing --------------------------------------------------------------------
 
 def test_photo_naive_time_stays_naive_and_offset_is_kept():
-    assert ingest._parse_dt({"DateTimeOriginal": "2026:06:04 09:00:00"}, tz=BERLIN) == "2026-06-04T09:00:00"
+    assert ingest._parse_dt({"DateTimeOriginal": "2026:06:04 09:00:00"}, tz=BERLIN) == ("2026-06-04T09:00:00", "exif")
     assert ingest._parse_dt({"DateTimeOriginal": "2026:06:04 09:00:00", "OffsetTimeOriginal": "+01:00"},
-                            tz=BERLIN) == "2026-06-04T09:00:00+01:00"
+                            tz=BERLIN) == ("2026-06-04T09:00:00+01:00", "exif+offset")
+
+
+def test_photo_offset_from_gps_clock():
+    tags = {"DateTimeOriginal": "2026:01:02 13:58:42", "GPSDateTime": "2026:01:02 12:58:39Z"}
+    assert ingest._parse_dt(tags, tz=BERLIN) == ("2026-01-02T13:58:42+01:00", "gps")
+    tags = {"DateTimeOriginal": "2026:09:13 13:11:41", "GPSDateTime": "2026:09:13 05:11:30Z"}
+    assert ingest._parse_dt(tags, tz=BERLIN) == ("2026-09-13T13:11:41+08:00", "gps")
+    tags = {"DateTimeOriginal": "2026:09:13 13:11:41", "GPSDateTime": "2026:09:13 05:41:30Z"}       # +07:30
+    assert ingest._parse_dt(tags, tz=BERLIN) == ("2026-09-13T13:11:41+07:30", "gps")
+    stale = {"DateTimeOriginal": "2026:09:13 13:11:41", "GPSDateTime": "2026:09:10 05:11:30Z"}      # old fix: ignored
+    assert ingest._parse_dt(stale, tz=BERLIN) == ("2026-09-13T13:11:41", "exif")
+    drift = {"DateTimeOriginal": "2026:09:13 13:11:41", "GPSDateTime": "2026:09:13 05:31:30Z"}   # 20 min off: ignored
+    assert ingest._parse_dt(drift, tz=BERLIN) == ("2026-09-13T13:11:41", "exif")
+    explicit = {"DateTimeOriginal": "2026:09:13 13:11:41", "OffsetTimeOriginal": "+08:00",
+                "GPSDateTime": "2026:09:13 05:11:30Z"}
+    assert ingest._parse_dt(explicit, tz=BERLIN)[1] == "exif+offset"                           # EXIF offset wins
 
 
 def test_iphone_video_uses_creation_date_with_its_offset():
     tags = {"CreationDate": "2026:06:04 09:00:00+01:00", "CreateDate": "2026:06:04 08:00:00",   # Lisbon
             "MediaCreateDate": "2026:06:04 08:00:00"}
-    assert ingest._parse_dt(tags, video=True, tz=BERLIN) == "2026-06-04T10:00:00+02:00"      # same instant, home zone
-    assert datetime.fromisoformat(ingest._parse_dt(tags, video=True, tz=BERLIN)) == \
-        datetime.fromisoformat("2026-06-04T09:00:00+01:00")
+    ts, src = ingest._parse_dt(tags, video=True, tz=BERLIN)
+    assert (ts, src) == ("2026-06-04T09:00:00+01:00", "exif+offset")                          # exact, kept as is
+    assert datetime.fromisoformat(ts) == datetime.fromisoformat("2026-06-04T09:00:00+01:00")
 
 
 def test_android_video_create_date_is_utc_converted_to_home_zone():
     tags = {"CreateDate": "2026:06:04 07:00:00", "MediaCreateDate": "2026:06:04 07:00:00"}
-    assert ingest._parse_dt(tags, video=True, tz=BERLIN) == "2026-06-04T09:00:00+02:00"
-    assert ingest._parse_dt(tags, video=True, tz=ZoneInfo("America/New_York")) == "2026-06-04T03:00:00-04:00"
-    assert ingest._parse_dt({"CreateDate": "2026:12:04 07:00:00"}, video=True, tz=BERLIN) == "2026-12-04T08:00:00+01:00"
+    assert ingest._parse_dt(tags, video=True, tz=BERLIN) == ("2026-06-04T09:00:00+02:00", "utc-home")
+    assert ingest._parse_dt(tags, video=True, tz=ZoneInfo("America/New_York"))[0] == "2026-06-04T03:00:00-04:00"
+    winter = {"CreateDate": "2026:12:04 07:00:00"}
+    assert ingest._parse_dt(winter, video=True, tz=BERLIN)[0] == "2026-12-04T08:00:00+01:00"
     zulu = {"CreateDate": "2026:06:04 07:00:00Z"}
-    assert ingest._parse_dt(zulu, video=True, tz=BERLIN) == "2026-06-04T09:00:00+02:00"
+    assert ingest._parse_dt(zulu, video=True, tz=BERLIN)[0] == "2026-06-04T09:00:00+02:00"
 
 
 def test_video_falls_back_to_file_modify_date_and_skips_zero_dates():
     tags = {"CreateDate": "0000:00:00 00:00:00", "FileModifyDate": "2026:06:04 09:00:00+02:00"}
-    assert ingest._parse_dt(tags, video=True, tz=BERLIN) == "2026-06-04T09:00:00+02:00"
-    assert ingest._parse_dt({"CreateDate": "garbage"}, video=True, tz=BERLIN) is None
+    assert ingest._parse_dt(tags, video=True, tz=BERLIN) == ("2026-06-04T09:00:00+02:00", "mtime")
+    assert ingest._parse_dt({"CreateDate": "garbage"}, video=True, tz=BERLIN) == (None, None)
 
 
 def test_file_name_timestamp_beats_mtime():
     mtime = {"FileModifyDate": "2026:09:26 15:00:00+00:00"}
-    assert ingest._parse_dt(mtime, video=True, tz=BERLIN, name="20260101_000025.mp4") == "2026-01-01T00:00:25+01:00"
-    assert ingest._parse_dt(mtime, name="IMG_20260604_090000.jpg") == "2026-06-04T09:00:00"
-    assert ingest._parse_dt(mtime, name="PXL_20260604_090000123.mp4", video=True, tz=BERLIN) \
+    assert ingest._parse_dt(mtime, video=True, tz=BERLIN, name="20260101_000025.mp4") == \
+        ("2026-01-01T00:00:25+01:00", "name")
+    assert ingest._parse_dt(mtime, name="IMG_20260604_090000.jpg") == ("2026-06-04T09:00:00", "name")
+    assert ingest._parse_dt(mtime, name="PXL_20260604_090000123.mp4", video=True, tz=BERLIN)[0] \
         == "2026-06-04T09:00:00+02:00"
-    assert ingest._parse_dt(mtime, name="VID-20260604-090000.mp4") == "2026-06-04T09:00:00"
-    assert ingest._parse_dt(mtime, name="DSC_1234.jpg") == "2026-09-26T15:00:00+00:00"        # no pattern: mtime
-    assert ingest._parse_dt(mtime, name="20261399_990000.jpg") == "2026-09-26T15:00:00+00:00"  # invalid date
+    assert ingest._parse_dt(mtime, name="VID-20260604-090000.mp4")[0] == "2026-06-04T09:00:00"
+    assert ingest._parse_dt(mtime, name="DSC_1234.jpg") == ("2026-09-26T15:00:00+00:00", "mtime")   # no pattern
+    assert ingest._parse_dt(mtime, name="20261399_990000.jpg")[1] == "mtime"                       # invalid date
     tags = {"CreateDate": "2026:06:04 07:00:00"}
-    assert ingest._parse_dt(tags, video=True, tz=BERLIN, name="20200101_000000.mp4") == "2026-06-04T09:00:00+02:00"
+    assert ingest._parse_dt(tags, video=True, tz=BERLIN, name="20200101_000000.mp4")[0] == "2026-06-04T09:00:00+02:00"
 
 
 def test_exif_batch_reads_videos_without_fast2(tmp_path, monkeypatch):
@@ -91,6 +109,37 @@ def test_records_sort_by_instant_across_photos_and_videos(tmp_path):
     video = ingest.build_record(cfg, tmp_path / "a.mp4", {"CreateDate": "2026:06:04 07:00:00", "MIMEType": "video/mp4"})
     assert cluster._dt(photo["ts"], tz) == cluster._dt(video["ts"], tz)
     assert photo["media"] == "photo" and video["media"] == "video"
+    assert photo["ts_source"] == "exif" and video["ts_source"] == "utc-home" and video["v"] == 2
+
+
+def test_zero_gps_means_no_gps(tmp_path):
+    cfg = config.Config(home_lat=HOME[0], home_lon=HOME[1])
+    rec = ingest.build_record(cfg, tmp_path / "a.mp4", {"CreateDate": "2026:09:17 14:31:15", "MIMEType": "video/mp4",
+                                                        "GPSLatitude": 0, "GPSLongitude": 0})
+    assert rec["lat"] is None and rec["lon"] is None and rec["zone"] == geo.ZONE_UNKNOWN and rec["place"] is None
+    rec = ingest.build_record(cfg, tmp_path / "b.jpg", {"DateTimeOriginal": "2026:09:17 14:31:15",
+                                                        "GPSLatitude": 0.0, "GPSLongitude": 9.1})
+    assert rec["lat"] == 0.0 and rec["lon"] == 9.1                                              # only exactly 0/0
+
+
+def test_video_abroad_borrows_the_neighbouring_photos_offset():
+    from datetime import timezone as tzm
+    utc = tzm.utc
+    def r(ts, source, media="photo"):
+        d = datetime.fromisoformat(ts)
+        return {"ts": ts, "_t": d if d.tzinfo else d.replace(tzinfo=BERLIN), "ts_source": source, "media": media}
+    recs = [r("2026-09-13T13:11:41+08:00", "exif+offset"),                # Shanghai photo, real offset
+            r("2026-09-13T07:20:31+02:00", "utc-home", "video"),          # same minute, shown in Berlin time
+            r("2026-09-20T09:00:00", "exif"),                             # naive photo at home a week later
+            r("2026-09-20T09:05:00+02:00", "utc-home", "video")]          # video at home: nothing to borrow from
+    recs.sort(key=lambda x: x["_t"])
+    cluster.borrow_video_offsets(recs)
+    video = next(x for x in recs if x["media"] == "video" and x["ts"].startswith("2026-09-13"))
+    assert video["ts"] == "2026-09-13T13:20:31+08:00"                     # same instant, local wall time
+    assert video["_t"].astimezone(utc).hour == 5
+    home_video = next(x for x in recs if x["ts"].startswith("2026-09-20T09:05"))
+    assert home_video["ts"] == "2026-09-20T09:05:00+02:00"                # unchanged
+    cluster.borrow_video_offsets([r("2026-09-20T09:05:00+02:00", "utc-home", "video")])   # no known offsets: no-op
 
 
 def test_timezone_config_and_fallback(monkeypatch):

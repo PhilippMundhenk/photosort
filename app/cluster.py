@@ -102,6 +102,7 @@ def _load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
             rec["_t"] = _dt(rec["ts"], tz)
             recs.append(rec)
     recs.sort(key=lambda r: r["_t"])
+    borrow_video_offsets(recs)
     return recs, skipped
 
 
@@ -123,6 +124,28 @@ def fill_gps_from_neighbours(cfg: Config, recs: list[dict], max_hours: float = 4
         src = recs[best]
         r.update({"lat": src["lat"], "lon": src["lon"], "gps_source": f"neighbour:{src['file']}"})
         ingest.enrich_location(cfg, r)
+
+
+def borrow_video_offsets(recs: list[dict], max_hours: float = 48) -> None:
+    """A video's time is UTC converted to the home zone (ts_source "utc-home"). Abroad that is
+    hours off from the photos next to it. Re-express the same instant in the UTC offset of the
+    nearest photo whose offset is known (EXIF offset or GPS clock); the instant never changes."""
+    known = [i for i, r in enumerate(recs)
+             if r.get("ts_source") in ("exif+offset", "gps") and r["_t"].utcoffset() is not None]
+    if not known:
+        return
+    import bisect
+    times = [recs[i]["_t"] for i in known]
+    for r in recs:
+        if r.get("ts_source") != "utc-home":
+            continue
+        k = bisect.bisect_left(times, r["_t"])
+        cands = [known[j] for j in (k - 1, k) if 0 <= j < len(known)]
+        best = min(cands, key=lambda j: abs((recs[j]["_t"] - r["_t"]).total_seconds()))
+        if abs((recs[best]["_t"] - r["_t"]).total_seconds()) > max_hours * 3600:
+            continue
+        r["_t"] = r["_t"].astimezone(recs[best]["_t"].tzinfo)
+        r["ts"] = r["_t"].isoformat()
 
 
 # --- excursions (trips and day outs) ---------------------------------------------

@@ -222,14 +222,17 @@ match. This is the actual learning objective of the project: does "0.8" mean 0.8
   it. A larger home radius for a small town is the tuning knob.
 - Devices without GPS whose neighbours are all from another leg will land in the wrong leg;
   corrections catch it.
-- Time zones (revised September 2026 when videos were added): the config has a home zone
-  (`timezone`, seeded from `TZ`). Photo times with `OffsetTimeOriginal` are exact; naive EXIF
-  times are read as wall time in the home zone. Video times are exact when the file has
-  iPhone's `Keys:CreationDate` (with offset); otherwise QuickTime `CreateDate` is UTC by spec
-  and is converted to the home zone. Remaining error: a naive photo taken abroad is off by the
-  difference between the trip's zone and home (0-2 h in Europe), which cannot misorder it by
-  more than that. Some Android builds write local time into `CreateDate` against the spec;
-  those videos are then off by the UTC offset. No fix without per-device rules.
+- Time zones (revised September 2026 when videos were added, again after the first trip to
+  Asia): the config has a home zone (`timezone`, seeded from `TZ`). Photo times are exact when
+  the file has `OffsetTimeOriginal` (newer phones) or a GPS clock (`GPSDateTime`, UTC; the
+  offset is the difference to the wall time, rounded to 15 min); only a naive photo without
+  either is read as home-zone time. Video times are exact with iPhone's `Keys:CreationDate`;
+  otherwise QuickTime `CreateDate` is UTC by spec, converted to the home zone at scan time and
+  re-expressed at cluster time in the offset of the nearest photo (within 48 h) whose offset is
+  known, so a clip in Shanghai shows 13:20 next to the 13:11 photo, not 07:20. Records carry
+  `ts_source` (exif, exif+offset, gps, utc-home, name, mtime). A phone without a fix writes
+  GPS 0/0 into videos; that is read as no position, not as the Gulf of Guinea. Some Android
+  builds write local time into `CreateDate` against the spec; no fix without per-device rules.
 - Devices: `Make`/`Model` from EXIF (photos, iPhone videos) or the Android QuickTime keys;
   a file without any device metadata (typical Android video) takes the inbox name and, when
   counting devices for the home-burst note, merges with the inbox's single named device.
