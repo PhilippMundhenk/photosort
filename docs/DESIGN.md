@@ -70,6 +70,37 @@ population threshold are replaced by their region so names stay recognisable (`L
 instead of `Alfama`). The user did not care whether it says "Lisbon, Seville" or
 "Portugal, Spain", so the shorter list wins.
 
+### Why "trip" and "day out" are separate rules although the output is the same
+
+Asked in September 2026: a trip folder and a day-out folder look alike (`root/<span> <place>`),
+so is the distinction worth anything? In the *output* it is not, and the code treats both the
+same there (same target folder, same manifest, same review UI). It is kept because the two
+zones need opposite evidence rules, and no single threshold set serves both:
+
+- **Trip = run logic, sparse-tolerant.** Any run of `away` photos between two `home` photos,
+  at least 3 photos, no density requirement; photo-less days do not end it. One beach photo a
+  day is still the trip. Applied within 20 km of home this would turn the school run, the
+  supermarket and the grandparents in the next town into "trips" whenever three photos fall
+  between two home photos, and merge errands on consecutive days.
+- **Day out = burst logic, density-based.** At least `burst_min_photos` (12) with no gap over
+  `burst_gap_hours` (3). This filters everyday local noise, but would destroy trips: a
+  two-week trip with one photo a day never forms a burst.
+- Distance from home is therefore a proxy for *how much everyday background noise the zone
+  has*: far away almost everything is signal, nearby only a dense burst is.
+
+Other things that hang off the distinction: per-kind auto-apply trust (trips first), the
+`ongoing` status for trips (the home photo may not have synced yet), local/no-GPS photos
+riding along inside an away run as transit, and naming (date range + up to four places vs.
+one date + the most common place).
+
+Possible simplification, not done: one "excursion" rule using the run algorithm for both
+zones with zone-dependent thresholds (away: 3 photos, split on a 4-day/300 km gap; local: 12
+photos, split on a 3 h gap). `kind` would survive as metadata for trust and calibration. It
+would change one behaviour: today a local burst is decided by *majority* zone, so a burst that
+starts with a few home photos and continues at the lake is one day out including the home
+photos; under the run rule the home photos would end it. Probably an improvement, but a
+behaviour change that needs its own test before switching.
+
 ### Day outs and home occasions = bursts
 
 Photos closer together than `burst_gap_hours` form a burst; the majority zone decides the
