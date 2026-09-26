@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, Form, Request
@@ -13,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import cluster, config, events, ingest, mover, thumbs
+from . import cluster, config, events, geo, ingest, mover, thumbs
 from .kev import Decider
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -134,10 +136,28 @@ def log_page(request: Request, kind: str = ""):
 
 
 @app.get("/settings", response_class=HTMLResponse)
-def settings(request: Request):
+def settings(request: Request, msg: str = ""):
     cfg = config.load()
     return render(request, "settings.html", inboxes_text=config.inboxes_text(cfg),
-                  extensions=", ".join(cfg.photo_extensions))
+                  named_places_text=config.named_places_text(cfg),
+                  extensions=", ".join(cfg.photo_extensions), msg=msg)
+
+
+@app.post("/settings/detect_home")
+def settings_detect_home():
+    """Set home to where photos are taken on the most distinct days (~100 m cell)."""
+    cfg = config.load()
+    recs, _ = cluster.load_records(cfg)
+    found = geo.detect_home(recs)
+    if not found:
+        return RedirectResponse("/settings?msg=" + quote("No photos with GPS indexed yet; run a scan first."),
+                                status_code=303)
+    cfg.home_lat, cfg.home_lon = found["lat"], found["lon"]
+    config.save(cfg)
+    events.log("settings", changed=["home_lat", "home_lon"], detected=found)
+    msg = (f"Home set to {found['lat']:.4f}, {found['lon']:.4f}: {found['photos']} photos on {found['days']} "
+           f"different days there. Zones are recomputed on the next run.")
+    return RedirectResponse("/settings?msg=" + quote(msg), status_code=303)
 
 
 # --- actions --------------------------------------------------------------------
@@ -179,6 +199,9 @@ async def proposal_action(pid: str, action: str, request: Request):
     elif action == "rename":
         pr["name"], pr["name_edited"] = cluster.sanitize(form.get("name", pr["name"])), True
         events.log("review", proposal=pid, action="rename", name=pr["name"])
+        if form.get("remember_place"):
+            _remember_place(cfg, pr["name"], [(p.get("lat"), p.get("lon")) for p in pr["photos"]
+                                              if p["path"] not in set(pr.get("excluded", []))])
     elif action == "toggle":
         path = form.get("path", "")
         ex = set(pr.get("excluded", []))
@@ -193,10 +216,30 @@ async def proposal_action(pid: str, action: str, request: Request):
     return RedirectResponse(form.get("back", "/review"), status_code=303)
 
 
+_DATE_PREFIX = re.compile(r"^\d{4}(-\d{2}){0,2}(\.\.[\d-]+)?\s*")
+
+
+def _remember_place(cfg: config.Config, folder_name: str, points: list) -> dict | None:
+    """'2026-06-01..04 Harz' -> named place 'Harz' covering the cluster's photos."""
+    name = _DATE_PREFIX.sub("", folder_name).strip(" -_()")
+    entry = geo.remember_place(cfg, name, points)
+    if entry:
+        config.save(cfg)
+        events.log("settings", changed=["named_places"], place=entry)
+    return entry
+
+
 @app.post("/cluster/rename")
-def cluster_rename(folder: str = Form(...), name: str = Form(...)):
+def cluster_rename(folder: str = Form(...), name: str = Form(...), remember_place: str = Form("")):
     cfg = config.load()
     dst = mover.rename(cfg, Path(folder), name)
+    if remember_place:
+        m = mover.read_manifest(dst) or {}
+        pts = []
+        for p in m.get("photos", []):
+            rec = ingest.read_sidecar(Path(p["dst"])) or {}
+            pts.append((rec.get("lat"), rec.get("lon")))
+        _remember_place(cfg, dst.name, pts)
     return RedirectResponse(f"/clusters/view?folder={dst}", status_code=303)
 
 

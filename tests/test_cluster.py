@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from app import cluster, config, geo
 from app.kev import Decider
-from tests.synth import HOME, LISBON, SEVILLE, T0
+from tests.synth import HOME, LISBON, LUDWIGSBURG, SEVILLE, T0
 
 Z = geo
 
@@ -37,8 +37,11 @@ def test_places_label_cities_then_countries_then_multiple():
     cfg = config.Config(max_places_in_name=4)
     t = T0
     recs = [rec(t, Z.ZONE_AWAY, LISBON, "Lisbon", "Portugal"), rec(t, Z.ZONE_AWAY, SEVILLE, "Sevilla", "Spain"),
-            rec(t, Z.ZONE_AWAY, LISBON, "Lisbon", "Portugal"), rec(t, Z.ZONE_LOCAL, HOME, "Home", "Germany")]
-    assert cluster.places_label(cfg, recs) == "Lisbon, Sevilla"        # deduplicated, local ignored
+            rec(t, Z.ZONE_AWAY, LISBON, "Lisbon", "Portugal"), rec(t, Z.ZONE_AWAY, SEVILLE, "Sevilla", "Spain")]
+    assert cluster.places_label(cfg, recs) == "Lisbon, Sevilla"        # deduplicated, first appearance
+    noisy = [rec(t, Z.ZONE_AWAY, LISBON, "Lisbon", "Portugal")] * 60 + [rec(t, Z.ZONE_AWAY, SEVILLE, "Stop", "Spain")]
+    assert cluster.places_label(cfg, noisy) == "Lisbon"                 # one photo at a stop is dropped
+    assert cluster.places_label(cfg, noisy + [noisy[-1]] * 2) == "Lisbon, Stop"   # three of 63: kept
     five = [rec(t, Z.ZONE_AWAY, LISBON, f"City{i}", "Portugal" if i < 3 else "Spain") for i in range(5)]
     assert cluster.places_label(cfg, five) == "Portugal, Spain"
     many = [rec(t, Z.ZONE_AWAY, LISBON, f"C{i}", f"Country{i}") for i in range(6)]
@@ -46,31 +49,48 @@ def test_places_label_cities_then_countries_then_multiple():
     assert cluster.places_label(cfg, [rec(t, Z.ZONE_AWAY, LISBON)]) == "Unknown"
 
 
-# --- trips ---------------------------------------------------------------------------
+# --- excursions ------------------------------------------------------------------------
 
-def test_trip_run_ends_at_any_home_photo_and_carries_transit():
-    cfg = config.Config(trip_min_photos=3)
+def test_excursion_run_ends_at_any_home_photo_and_carries_gpsless():
+    cfg = config.Config()
     t = T0
-    recs = [rec(t, Z.ZONE_HOME, HOME),
-            rec(t + h(2), Z.ZONE_LOCAL, HOME),                 # station on the way: not part of the trip
+    recs = [rec(t, Z.ZONE_HOME, HOME), rec(t + h(1), Z.ZONE_UNKNOWN),   # GPS-less at home: not a run
+            rec(t + h(2), Z.ZONE_LOCAL, HOME),                        # station on the way out: part of the run
             rec(t + h(5), Z.ZONE_AWAY, LISBON), rec(t + h(30), Z.ZONE_UNKNOWN), rec(t + h(50), Z.ZONE_AWAY, LISBON),
-            rec(t + h(70), Z.ZONE_AWAY, LISBON), rec(t + h(80), Z.ZONE_LOCAL, HOME),
-            rec(t + h(90), Z.ZONE_HOME, HOME),                 # a single home photo ends the trip
-            rec(t + h(100), Z.ZONE_AWAY, SEVILLE), rec(t + h(101), Z.ZONE_AWAY, SEVILLE)]  # too short
-    runs = cluster.find_trip_runs(cfg, recs)
-    assert len(runs) == 1
-    assert [r["zone"] for r in runs[0]] == ["away", "unknown", "away", "away"]
+            rec(t + h(70), Z.ZONE_AWAY, LISBON), rec(t + h(80), Z.ZONE_LOCAL, HOME), rec(t + h(81), Z.ZONE_UNKNOWN),
+            rec(t + h(90), Z.ZONE_HOME, HOME),                        # a single home photo ends the run
+            rec(t + h(100), Z.ZONE_AWAY, SEVILLE), rec(t + h(101), Z.ZONE_AWAY, SEVILLE)]
+    runs = cluster.find_excursions(cfg, recs)
+    assert [[r["zone"] for r in run] for run in runs] == [["local", "away", "unknown", "away", "away", "local"],
+                                                          ["away", "away"]]
+    assert cluster.excursion_kind(cfg, runs[0]) == "trip"           # 78 h
+    assert cluster.excursion_kind(cfg, runs[1]) is None             # 1 h, 2 photos: everyday
 
 
-def test_trip_split_needs_long_gap_and_distance():
-    cfg = config.Config(trip_min_photos=1, trip_gap_days=4, trip_split_distance_km=300)
+def test_excursion_kind_by_duration_and_size():
+    cfg = config.Config(trip_min_hours=20, trip_min_photos=3, dayout_min_photos=8)
+    t = T0
+    day_out = [rec(t + h(i), Z.ZONE_LOCAL, LUDWIGSBURG) for i in range(8)]          # 7 h, 8 photos
+    assert cluster.excursion_kind(cfg, day_out) == "local"
+    assert cluster.excursion_kind(cfg, day_out[:7]) is None                          # too few for a day out
+    far_day = [rec(t + h(i * 2), Z.ZONE_AWAY, LISBON) for i in range(9)]             # 16 h, far away: still a day out
+    assert cluster.excursion_kind(cfg, far_day) == "local"
+    overnight = [rec(t, Z.ZONE_LOCAL, LUDWIGSBURG), rec(t + h(10), Z.ZONE_UNKNOWN),
+                 rec(t + h(25), Z.ZONE_LOCAL, LUDWIGSBURG)]
+    assert cluster.excursion_kind(cfg, overnight) is None                            # 2 located photos < 3
+    overnight.append(rec(t + h(26), Z.ZONE_LOCAL, LUDWIGSBURG))
+    assert cluster.excursion_kind(cfg, overnight) == "trip"                          # near home, but overnight
+
+
+def test_excursion_split_needs_long_gap_and_distance():
+    cfg = config.Config(trip_gap_days=4, trip_split_distance_km=300)
     t = T0
     same_area = [rec(t, Z.ZONE_AWAY, LISBON), rec(t + timedelta(days=10), Z.ZONE_AWAY, LISBON)]
-    assert len(cluster.find_trip_runs(cfg, same_area)) == 1
+    assert len(cluster.find_excursions(cfg, same_area)) == 1
     far_quick = [rec(t, Z.ZONE_AWAY, LISBON), rec(t + timedelta(days=1), Z.ZONE_AWAY, SEVILLE)]
-    assert len(cluster.find_trip_runs(cfg, far_quick)) == 1
+    assert len(cluster.find_excursions(cfg, far_quick)) == 1
     far_slow = [rec(t, Z.ZONE_AWAY, LISBON), rec(t + timedelta(days=10), Z.ZONE_AWAY, SEVILLE)]
-    assert len(cluster.find_trip_runs(cfg, far_slow)) == 2
+    assert len(cluster.find_excursions(cfg, far_slow)) == 2
 
 
 def test_trip_proposal_confidences_and_ongoing():
@@ -82,6 +102,7 @@ def test_trip_proposal_confidences_and_ongoing():
     pr = cluster.trip_proposal(cfg, run, now=t + timedelta(days=30))
     assert pr["kind"] == "trip" and pr["name"] == "2026-06-01..04 Lisbon, Sevilla" and pr["status"] == "pending"
     assert [p["conf"] for p in pr["photos"]] == [1.0, 0.8, 0.6, 1.0]
+    assert pr["photos"][0]["lat"] == LISBON[0]
     assert pr["n"] == 4 and pr["n_uncertain"] == 1 and pr["photos"][2]["uncertain"]
     assert pr["id"].startswith("t") and pr["id"] == cluster.trip_proposal(cfg, run, now=t)["id"]
     assert cluster.trip_proposal(cfg, run, now=t + timedelta(days=5))["status"] == "ongoing"
@@ -128,9 +149,9 @@ def test_run_produces_trip_dayout_and_occasion(cfg, library):
     kinds = {p["kind"]: p for p in props.values()}
     assert set(kinds) == {"trip", "local", "home"} and stats["proposals"] == 3
     assert kinds["trip"]["name"] == "2026-06-04..24 Lisbon, Sevilla" and kinds["trip"]["n"] == 67
-    assert kinds["local"]["name"] == "2026-06-27 Ludwigsburg" and kinds["local"]["n"] == 16
+    assert kinds["local"]["name"] == "2026-06-27 Ludwigsburg" and kinds["local"]["n"] == 15
     assert kinds["home"]["name"] == "2026-06-30 (25 Fotos)" and kinds["home"]["decision"]["by"] == "rule"
-    assert stats["photos"] == library.n and stats["everyday"] == library.n - 67 - 16 - 25
+    assert stats["photos"] == library.n and stats["everyday"] == library.n - 67 - 15 - 25
     assert stats["no_timestamp"] == 0 and stats["threshold"] == 12
 
 

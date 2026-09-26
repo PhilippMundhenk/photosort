@@ -41,12 +41,28 @@ a worse project.
 ### Zones instead of "holiday detection"
 
 Three zones by distance from a configured home point: **home** (< 0.5 km), **local**
-(< 20 km), **away**. Earlier ideas — a static "holiday or not" filter, DBSCAN over
+(< 20 km), **away**. The home point can be set from the data ("Detect home from photos" in
+Settings: the ~100 m cell with photos on the most distinct days), which the first real run
+showed to be necessary: a home point 2.6 km off turned every day into a day out and no trip
+ever ended. Earlier ideas — a static "holiday or not" filter, DBSCAN over
 time+space, a window around user-given dates — were dropped because trips vary from one day
 to four weeks and the user does not want to type exact dates. Distance from home is the one
 feature that is always available and always meaningful.
 
-### Trip = maximal run of `away` photos, ended by any `home` photo
+### Excursion = maximal run of photos not at home, ended by any `home` photo (revised September 2026)
+
+After the first run on real photos the distance-based split (day out = local burst, trip =
+away run) produced a 13-photo "trip" to a university 25 km away and would have merged a
+one-day outing 30 km away with a two-week holiday. The user's observation: what makes a trip
+is *staying away overnight without photos at home in between*, not the distance. So both
+kinds now come from one rule: a run of photos outside the home radius, ended by any home
+photo, is a **trip** when it spans at least `trip_min_hours` (20 h, i.e. an overnight stay)
+and a **day out** otherwise. Day outs need `dayout_min_photos` (8) so the school run and the
+supermarket stay everyday; trips need `trip_min_photos` (3) located photos. The local/away
+zone remains as a label and for confidences only. The earlier notes below describe the run
+mechanics, which are unchanged.
+
+### Trip runs: mechanics
 
 - Returning home ends a trip *no matter how short the stay*. This was an explicit
   requirement and removes all place-based adjacency logic.
@@ -64,11 +80,17 @@ feature that is always available and always meaningful.
 
 ### Naming
 
-`<span> <places>`: cities in order of first appearance, deduplicated, at most four; then
-countries; then "Multiple". The city name comes from the offline geocoder; villages below a
-population threshold are replaced by their region so names stay recognisable (`Lisbon`
-instead of `Alfama`). The user did not care whether it says "Lisbon, Seville" or
-"Portugal, Spain", so the shorter list wins.
+`<span> <places>`: places in order of first appearance, deduplicated, at most four; then
+countries; then "Multiple". Places mentioned by fewer than 3 % of a run's photos (and fewer
+than two) are dropped, so a motorway stop does not name the trip. The place comes from:
+
+1. the user's **named places** (`named_places`: name, centre, radius), because nothing
+   offline knows that a spot is "Harz", "Feldberg" or "Universität Hohenheim". The list is
+   grown from the UI: tick "remember this place" when renaming a cluster and the cluster's
+   photos define the circle (mean position, radius to the farthest photo).
+2. else the offline geocoder's town when its population is at least `min_city_population`
+   (1000 since September 2026; 20000 produced state names for most of Germany), else the
+   region.
 
 ### Why "trip" and "day out" are separate rules although the output is the same
 

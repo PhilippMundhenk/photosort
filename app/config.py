@@ -32,14 +32,20 @@ class Config:
     home_lat: float = 0.0
     home_lon: float = 0.0
     home_radius_km: float = 0.5            # < this: "home"
-    local_radius_km: float = 20.0          # < this: "local" (day out); beyond: "away" (trip)
+    local_radius_km: float = 20.0          # < this: "local", beyond: "away" (zone label only; the trip /
+                                           # day-out decision is by duration, see trip_min_hours)
 
-    # Trips
-    trip_min_photos: int = 3
+    # Excursions: a run of photos away from home, ended by any photo at home
+    trip_min_hours: float = 20.0           # run spans at least this long -> trip (multi-day); shorter -> day out
+    trip_min_photos: int = 3               # located photos a trip needs
+    dayout_min_photos: int = 8             # photos a day out needs (keeps the school run out)
     trip_gap_days: float = 4.0             # gap without photos > this AND different area -> split
     trip_split_distance_km: float = 300.0  # "different area" if runs are further apart than this
     max_places_in_name: int = 4
-    min_city_population: int = 20000       # below this use the state/region name instead of the village
+    min_city_population: int = 1000        # below this use the state/region name instead of the village
+    # Your own place names: photos within radius_km of (lat, lon) are labelled with the name
+    # ("Harz", "Feldberg", "Universität Hohenheim"). Grown from the "remember this place" box on rename.
+    named_places: list[dict] = field(default_factory=list)   # [{"name", "lat", "lon", "radius_km"}]
 
     # Bursts (local day outs and home occasions)
     burst_gap_hours: float = 3.0           # photos closer than this belong to the same burst
@@ -106,7 +112,9 @@ def update_from_form(cfg: Config, form: dict) -> Config:
         if not hasattr(cfg, k):
             continue
         cur = getattr(cfg, k)
-        if k == "inboxes":
+        if k == "named_places":
+            setattr(cfg, k, parse_named_places(str(v)))
+        elif k == "inboxes":
             # one per line: "name=/path" or just "/path"
             items = []
             for line in str(v).splitlines():
@@ -132,6 +140,29 @@ def update_from_form(cfg: Config, form: dict) -> Config:
         if isinstance(cur, bool) and k not in form:
             setattr(cfg, k, False)
     return cfg
+
+
+def parse_named_places(text: str) -> list[dict]:
+    """One per line: 'Name = lat, lon, radius_km' (radius optional, default 2 km)."""
+    out = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or "=" not in line:
+            continue
+        name, _, rest = line.partition("=")
+        nums = [x.strip() for x in rest.replace(";", ",").split(",") if x.strip()]
+        try:
+            lat, lon = float(nums[0]), float(nums[1])
+            radius = float(nums[2]) if len(nums) > 2 else 2.0
+        except (IndexError, ValueError):
+            continue
+        if name.strip():
+            out.append({"name": name.strip(), "lat": lat, "lon": lon, "radius_km": max(0.05, radius)})
+    return out
+
+
+def named_places_text(cfg: Config) -> str:
+    return "\n".join(f"{p['name']} = {p['lat']:.5f}, {p['lon']:.5f}, {p['radius_km']:g}" for p in cfg.named_places)
 
 
 def inbox_dirs(cfg: Config) -> list[tuple[str, Path]]:

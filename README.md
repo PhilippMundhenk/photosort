@@ -29,11 +29,14 @@ inbox/camera/**.dng  ─┘                              sorted/_unnamed/2026-06
    converted to your home time zone (`TZ` / Settings), the device from the metadata or, when
    the video carries none (Android), from the inbox name.
 2. **Cluster** (deterministic):
-   - **Trip** = a run of `away` photos. Any `home` photo ends it, no matter how short the stay.
-     Local/no-GPS photos inside the run ride along. Lisbon → Seville → Lisbon is one trip.
-     Name: `YYYY-MM-DD..DD City, City` (cities in order of first appearance; countries if more
-     than four; "Multiple" beyond that).
-   - **Day out** = a burst of `local` photos: `YYYY-MM-DD Place`.
+   - **Trip** = a run of photos away from home spanning at least 20 hours. Any `home` photo
+     ends it, no matter how short the stay. No-GPS photos inside the run ride along.
+     Lisbon → Seville → Lisbon is one trip. Name: `YYYY-MM-DD..DD Place, Place` (places in
+     order of first appearance; countries if more than four; "Multiple" beyond that). Places
+     are your own named places (Settings, or "remember this place" when renaming), else the
+     town from the offline geocoder.
+   - **Day out** = a run of not-at-home photos shorter than 20 hours: `YYYY-MM-DD Place`.
+     (Trip and day out are the same rule; only the duration differs.)
    - **Occasion at home** = a burst at home well above your normal photos/day. Here the
      decision model is asked `occasion / busy day`. Occasions go to `_unnamed/` until you name
      them (`2026-06-30 Hannas Geburtstag`); busy days stay everyday.

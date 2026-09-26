@@ -1,12 +1,13 @@
 """Clustering rules (all deterministic except the home-burst judgment):
 
-  zone per photo      home < home_radius < local < local_radius < away
+  zone per photo      home < home_radius < local < local_radius < away (local/away is a label only)
   no GPS              take the nearest photo in time that has GPS
-  trip                maximal run of away photos; ends at any home photo; local/unknown photos
-                      inside the run ride along (transit). A photo-less gap splits the run only
-                      if it is long AND the two sides are in different areas.
-  local burst         photos closer than burst_gap_hours, majority zone local -> "YYYY-MM-DD Place"
-  home burst          same grouping, majority home, above baseline -> Kev: occasion / busy_day
+  excursion           maximal run of photos not at home; ends at any home photo; GPS-less photos
+                      inside the run ride along. A photo-less gap splits the run only if it is
+                      long AND the two sides are in different areas.
+    trip              the run spans >= trip_min_hours (an overnight stay)  -> "YYYY-MM-DD..DD Places"
+    day out           shorter, with >= dayout_min_photos photos           -> "YYYY-MM-DD Place"
+  home burst          photos at home closer than burst_gap_hours, above baseline -> Kev: occasion / busy_day
   everyday            everything else -> YYYY/MM
 
 Output: proposals, persisted in <data>/proposals.json with their review status.
@@ -102,9 +103,11 @@ def fill_gps_from_neighbours(cfg: Config, recs: list[dict], max_hours: float = 4
         ingest.enrich_location(cfg, r)
 
 
-# --- trips ---------------------------------------------------------------------
+# --- excursions (trips and day outs) ---------------------------------------------
 
-def find_trip_runs(cfg: Config, recs: list[dict]) -> list[list[dict]]:
+def find_excursions(cfg: Config, recs: list[dict]) -> list[list[dict]]:
+    """Maximal runs of photos away from home (local or away zone), ended by any photo at home.
+    GPS-less photos ride along inside a run but never start or end one."""
     runs, cur = [], []
     for r in recs:
         z = r["zone"]
@@ -112,16 +115,16 @@ def find_trip_runs(cfg: Config, recs: list[dict]) -> list[list[dict]]:
             if cur:
                 runs.append(cur)
             cur = []
-        elif z == geo.ZONE_AWAY or cur:
+        elif z in (geo.ZONE_AWAY, geo.ZONE_LOCAL) or cur:
             cur.append(r)
     if cur:
         runs.append(cur)
-    # drop leading/trailing non-away photos, then split on long gaps between different areas
+    # drop leading/trailing GPS-less photos, then split on long gaps between different areas
     out = []
     for run in runs:
-        while run and run[0]["zone"] != geo.ZONE_AWAY:
+        while run and run[0]["zone"] == geo.ZONE_UNKNOWN:
             run.pop(0)
-        while run and run[-1]["zone"] != geo.ZONE_AWAY:
+        while run and run[-1]["zone"] == geo.ZONE_UNKNOWN:
             run.pop()
         if not run:
             continue
@@ -136,7 +139,17 @@ def find_trip_runs(cfg: Config, recs: list[dict]) -> list[list[dict]]:
                 part = []
             part.append(nxt)
         out.append(part)
-    return [r for r in out if sum(1 for x in r if x["zone"] == geo.ZONE_AWAY) >= cfg.trip_min_photos]
+    return out
+
+
+def excursion_kind(cfg: Config, run: list[dict]) -> str | None:
+    """'trip' (spans >= trip_min_hours, enough located photos), 'local' (a day out with enough
+    photos) or None (too small: everyday)."""
+    a, b = _span(run)
+    located = sum(1 for r in run if r["zone"] != geo.ZONE_UNKNOWN)
+    if (b - a) >= timedelta(hours=cfg.trip_min_hours):
+        return "trip" if located >= cfg.trip_min_photos else None
+    return "local" if len(run) >= cfg.dayout_min_photos else None
 
 
 def _span(recs: list[dict]) -> tuple[datetime, datetime]:
@@ -154,13 +167,17 @@ def span_label(a: datetime, b: datetime) -> str:
 
 
 def places_label(cfg: Config, recs: list[dict]) -> str:
+    """Places in order of first appearance, minus ones that only a couple of photos mention
+    (a photo at a motorway stop must not name the trip)."""
     def ordered(key):
+        counts = Counter((r.get("place") or {}).get(key) for r in recs if r["zone"] != geo.ZONE_HOME)
+        counts.pop(None, None)
+        counts.pop("", None)
+        keep = {v for v, n in counts.items() if (n >= 2 or len(recs) < 20) and n >= 0.03 * len(recs)} or set(counts)
         seen, out = set(), []
         for r in recs:
-            if r["zone"] != geo.ZONE_AWAY or not r.get("place"):
-                continue
-            v = r["place"].get(key)
-            if v and v not in seen:
+            v = (r.get("place") or {}).get(key)
+            if v in keep and v not in seen:
                 seen.add(v)
                 out.append(v)
         return out
@@ -177,8 +194,15 @@ def sanitize(name: str) -> str:
     return re.sub(r'[\\/:*?"<>|]+', "-", name).strip(" .")
 
 
+def _gps_conf(r: dict) -> float:
+    """How sure we are the photo belongs where its position says: own GPS, a neighbour's, none."""
+    src = r.get("gps_source") or ""
+    return 1.0 if src == "exif" else 0.8 if src.startswith("neighbour") else 0.6
+
+
 def _photo_entry(r: dict, conf: float) -> dict:
     return {"path": r["path"], "file": r["file"], "ts": r["ts"], "zone": r["zone"],
+            "lat": r.get("lat"), "lon": r.get("lon"),
             "media": r.get("media") or ("video" if ingest.is_video(Path(r["path"])) else "photo"),
             "source": r.get("source"), "inbox": r.get("inbox"),
             "place": (r.get("place") or {}).get("place"), "gps_source": r.get("gps_source"),
@@ -192,21 +216,16 @@ def _pid(kind: str, recs: list[dict]) -> str:
 
 def trip_proposal(cfg: Config, run: list[dict], now: datetime) -> dict:
     a, b = _span(run)
-    photos = []
-    for r in run:
-        if r["zone"] == geo.ZONE_AWAY:
-            conf = 1.0 if (r.get("gps_source") == "exif") else 0.8
-        else:
-            conf = 0.6                       # transit / no-GPS photo riding along
-        photos.append(_photo_entry(r, conf))
-    ongoing = (now - b) < timedelta(days=cfg.trip_gap_days)
+    photos = [_photo_entry(r, _gps_conf(r)) for r in run]
+    ongoing = (now - b) < timedelta(days=cfg.trip_gap_days)     # the home photo may not have synced yet
     return {
         "id": _pid("trip", run), "kind": "trip",
         "name": sanitize(f"{span_label(a, b)} {places_label(cfg, run)}"),
         "start": a.isoformat(), "end": b.isoformat(), "photos": photos,
         "n": len(photos), "n_uncertain": sum(p["uncertain"] for p in photos),
         "status": "ongoing" if ongoing else "pending",
-        "decision": {"by": "rule", "conf": 1.0, "note": "away-run terminated by home photo"},
+        "decision": {"by": "rule", "conf": 1.0,
+                     "note": f"{(b - a).total_seconds() / 3600:.0f} h away from home, ended by a home photo"},
     }
 
 
@@ -229,16 +248,17 @@ def home_baseline(recs: list[dict]) -> float:
     return statistics.median(per_day.values()) if per_day else 1.0
 
 
-def local_proposal(cfg: Config, burst: list[dict]) -> dict:
-    a, b = _span(burst)
-    place = Counter((r.get("place") or {}).get("place")
-                    for r in burst if r["zone"] == geo.ZONE_LOCAL and r.get("place"))
+def local_proposal(cfg: Config, run: list[dict], now: datetime | None = None) -> dict:
+    a, b = _span(run)
+    place = Counter((r.get("place") or {}).get("place") for r in run if r["zone"] != geo.ZONE_HOME and r.get("place"))
     name = place.most_common(1)[0][0] if place else "Ausflug"
-    photos = [_photo_entry(r, 1.0 if r["zone"] == geo.ZONE_LOCAL else 0.6) for r in burst]
-    return {"id": _pid("local", burst), "kind": "local", "name": sanitize(f"{span_label(a, b)} {name}"),
+    photos = [_photo_entry(r, _gps_conf(r)) for r in run]
+    ongoing = now is not None and (now - b) < timedelta(days=1)
+    return {"id": _pid("local", run), "kind": "local", "name": sanitize(f"{span_label(a, b)} {name}"),
             "start": a.isoformat(), "end": b.isoformat(), "photos": photos, "n": len(photos),
-            "n_uncertain": sum(p["uncertain"] for p in photos), "status": "pending",
-            "decision": {"by": "rule", "conf": 1.0, "note": f"local burst, {len(burst)} photos"}}
+            "n_uncertain": sum(p["uncertain"] for p in photos), "status": "ongoing" if ongoing else "pending",
+            "decision": {"by": "rule", "conf": 1.0,
+                         "note": f"{(b - a).total_seconds() / 3600:.1f} h away from home, {len(run)} photos"}}
 
 
 # The one question the decision model is asked today (see docs/DESIGN.md, section 2).
@@ -324,8 +344,11 @@ def run(cfg: Config, decider: Decider | None = None) -> dict:
     new: dict[str, dict] = {}
     taken: set[str] = set()
 
-    for run_ in find_trip_runs(cfg, recs):
-        pr = trip_proposal(cfg, run_, now)
+    for run_ in find_excursions(cfg, recs):
+        kind = excursion_kind(cfg, run_)
+        if kind is None:
+            continue
+        pr = trip_proposal(cfg, run_, now) if kind == "trip" else local_proposal(cfg, run_, now)
         new[pr["id"]] = pr
         taken.update(p["path"] for p in pr["photos"])
 
@@ -337,9 +360,7 @@ def run(cfg: Config, decider: Decider | None = None) -> dict:
         major = zones.most_common(1)[0][0]
         if len(burst) < cfg.burst_min_photos:
             continue
-        if major == geo.ZONE_LOCAL:
-            pr = local_proposal(cfg, burst)
-        elif major == geo.ZONE_HOME and len(burst) >= threshold:
+        if major == geo.ZONE_HOME and len(burst) >= threshold:
             pid = _pid("home", burst)
             prev = old.get(pid)
             if prev and prev.get("decision", {}).get("id"):

@@ -12,7 +12,7 @@ from urllib.parse import quote, unquote
 import pytest
 from fastapi.testclient import TestClient
 
-from app import cluster, config, events, main, mover
+from app import cluster, config, events, ingest, main, mover
 from app.kev import Decider
 from tests import synth
 
@@ -31,6 +31,15 @@ def _wait_run(timeout: float = 30) -> dict:
             return main._state["last_stats"]
         time.sleep(0.1)
     raise AssertionError(f"pipeline did not finish: {main._state}")
+
+
+def _force_uncertain(pid: str, i: int = 0) -> str:
+    """Mark one photo of a proposal low-confidence (as a GPS-less photo far from any neighbour would be)."""
+    props = cluster.load_proposals()
+    props[pid]["photos"][i].update(conf=0.6, uncertain=True)
+    props[pid]["n_uncertain"] = sum(p["uncertain"] for p in props[pid]["photos"])
+    cluster.save_proposals(props)
+    return props[pid]["photos"][i]["path"]
 
 
 def _proposals(kind: str | None = None) -> dict:
@@ -74,7 +83,7 @@ def test_run_now_produces_proposals_and_dry_run_moves_nothing(client, library):
     assert stats["ingest"]["total"] == library.n and stats["ingest"]["new"] == 0
     assert all(p.exists() for p in library.paths)
     page = client.get("/review").text
-    assert "Proposed clusters (3)" in page and "Lisbon, Sevilla" in page and "Ludwigsburg" in page
+    assert "Proposed clusters (3)" in page and "Lisbon, Sevilla" in page and "Ludwigsburg" in page, page[-3000:]
     assert "Approve &amp; move" in page and "(25 Fotos)" in page
     assert client.get("/api/status").json()["pending"] == 3
     assert "Open proposals" in client.get("/").text and "run" in client.get("/log?kind=run").text
@@ -100,7 +109,7 @@ def test_approve_moves_photos_without_review_folder(client, library):
     cfg = config.load()
     cluster.run(cfg, Decider(cfg))
     local = _proposals("local")
-    assert local["n_uncertain"] == 1
+    _force_uncertain(local["id"])
     r = client.post(f"/proposal/{local['id']}/approve")
     assert r.status_code == 303 and r.headers["location"] == "/review"
     folder = mover.target_folder(cfg, local)
@@ -199,6 +208,57 @@ def test_undo_marks_applied_proposal_rejected(client, library):
     assert "No clusters applied yet" in client.get("/clusters").text
 
 
+def test_detect_home_from_photos(client, library):
+    cfg = config.load()
+    cfg.home_lat, cfg.home_lon = 0.0, 0.0
+    config.save(cfg)
+    for d in range(40):                                                   # a normal stretch at home
+        library.photo(Path(cfg.inboxes[0]["path"]), synth.T0 + timedelta(days=40 + d, hours=19), synth.HOME)
+    r = client.post("/settings/detect_home")
+    assert r.status_code == 303 and "Home%20set%20to%2048.9440" in r.headers["location"]
+    new = config.load()
+    assert (new.home_lat, new.home_lon) == (48.944, 9.118)
+    assert "Home set to 48.9440" in client.get(r.headers["location"]).text
+    assert events.read(limit=1, kind="settings")[0]["detected"]["days"] >= 9
+
+
+def test_detect_home_without_gps(client, tmp_path):
+    cfg = config.load()
+    cfg.inboxes = [{"path": str(tmp_path / "empty"), "name": "e"}]
+    config.save(cfg)
+    r = client.post("/settings/detect_home")
+    assert "No%20photos%20with%20GPS" in r.headers["location"]
+
+
+def test_rename_remembers_place(client, library):
+    cfg = config.load()
+    cluster.run(cfg, Decider(cfg))
+    local = _proposals("local")
+    client.post(f"/proposal/{local['id']}/rename", data={"name": "2026-06-27 Blühendes Barock", "remember_place": "1"})
+    places = config.load().named_places
+    assert len(places) == 1 and places[0]["name"] == "Blühendes Barock"
+    assert abs(places[0]["lat"] - synth.LUDWIGSBURG[0]) < 0.01 and places[0]["radius_km"] == 0.5
+    assert events.read(limit=1, kind="settings")[0]["place"]["name"] == "Blühendes Barock"
+    # the label is used from the next scan on
+    ingest.scan(cfg := config.load())
+    assert ingest.read_sidecar(Path(local["photos"][0]["path"]))["place"]["place"] == "Blühendes Barock"
+    client.post(f"/proposal/{local['id']}/rename", data={"name": "no place"})
+    assert len(config.load().named_places) == 1                                    # unticked: unchanged
+
+
+def test_cluster_rename_remembers_place(client, library):
+    cfg = config.load()
+    cluster.run(cfg, Decider(cfg))
+    trip = _proposals("trip")
+    client.post(f"/proposal/{trip['id']}/approve")
+    folder = mover.target_folder(cfg, trip)
+    client.post("/cluster/rename", data={"folder": str(folder), "name": "2026-06 Portugal", "remember_place": "1"})
+    places = config.load().named_places
+    assert [p["name"] for p in places] == ["Portugal"] and 10 < places[0]["radius_km"] < 60   # Lisbon, 95th pct
+    strip = main._DATE_PREFIX.sub
+    assert strip("", "2026-06-01..04 Harz") == "Harz" and strip("", "2026 Harz") == "Harz"
+
+
 def test_cluster_view_of_non_cluster_folder(client, tmp_path):
     r = client.get("/clusters/view", params={"folder": str(tmp_path)})
     assert r.status_code == 200 and "Not a cluster folder" in r.text
@@ -231,14 +291,12 @@ def test_live_mode_auto_applies_trips_with_review_folder(client, library):
     cfg = config.load()
     cfg.dry_run, cfg.auto_apply_trips = False, True
     config.save(cfg)
-    # a local-zone photo in the middle of the trip rides along with low confidence
-    library.photo(Path(cfg.inboxes[0]["path"]), synth.T0 + timedelta(days=10, hours=12), synth.LUDWIGSBURG)
     cluster.run(cfg, Decider(cfg))
     trip = _proposals("trip")
-    assert trip["n_uncertain"] == 1
+    _force_uncertain(trip["id"])
 
     stats = main.run_pipeline("test")
-    assert stats["applied"] == 1 + 9                                       # trip + everyday photos
+    assert stats["applied"] == 1 + 10                                      # trip + everyday photos
     folder = mover.target_folder(cfg, trip)
     assert folder.is_dir() and list(folder.rglob(cfg.review_dir))          # auto-applied: _review used
     assert _proposals("trip")["status"] == "applied" and _proposals("local")["status"] == "pending"

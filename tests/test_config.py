@@ -61,6 +61,18 @@ def test_update_from_form_coercion():
     assert not hasattr(out, "unknown_field")
 
 
+def test_named_places_parsing_and_text():
+    txt = "Harz = 51.77, 10.65, 30\n\nbad line\nHohenheim=48.71;9.21\n = 1,2\nX = 1, 2, 0"
+    places = config.parse_named_places(txt)
+    assert places == [{"name": "Harz", "lat": 51.77, "lon": 10.65, "radius_km": 30.0},
+                      {"name": "Hohenheim", "lat": 48.71, "lon": 9.21, "radius_km": 2.0},
+                      {"name": "X", "lat": 1.0, "lon": 2.0, "radius_km": 0.05}]
+    cfg = config.update_from_form(config.Config(), {"named_places": txt})
+    assert cfg.named_places == places
+    assert config.named_places_text(cfg).splitlines()[0] == "Harz = 51.77000, 10.65000, 30"
+    assert config.parse_named_places(config.named_places_text(cfg)) == places      # round trip
+
+
 def test_inbox_helpers():
     cfg = config.Config(inboxes=[{"path": "/p/a", "name": "A"}, {"path": "/p/b"}])
     dirs = config.inbox_dirs(cfg)

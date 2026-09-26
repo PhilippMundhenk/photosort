@@ -7,6 +7,7 @@
     <form method="post" action="/cluster/rename" class="row inline">
       <input type="hidden" name="folder" value="{{ folder }}">
       <input type="text" name="name" value="{{ m.name }}" style="width:360px"><button class="secondary">rename</button>
+      {% if m.kind != 'home' %}<label class="small" style="margin:0;display:inline"><input type="checkbox" name="remember_place" value="1"> remember this place</label>{% endif %}
     </form>
     <span class="muted small">{{ m.start[:16].replace('T',' ') }} → {{ m.end[:16].replace('T',' ') }} · applied {{ m.applied[:16].replace('T',' ') }} · {{ m.decision.by }} {{ '%.2f'|format(m.decision.conf) }}</span>
   </div>

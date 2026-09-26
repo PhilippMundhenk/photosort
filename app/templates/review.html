@@ -12,6 +12,7 @@
     <form method="post" action="/proposal/{{ p.id }}/rename" class="inline row">
       <input type="text" name="name" value="{{ p.name }}" style="width:340px">
       <button class="secondary small">rename</button>
+      {% if p.kind != 'home' %}<label class="small" style="margin:0;display:inline"><input type="checkbox" name="remember_place" value="1"> remember this place</label>{% endif %}
     </form>
     <span class="muted small">{{ p.n }} photos{% if p.n_uncertain %}, {{ p.n_uncertain }} uncertain{% endif %}
       · {{ p.decision.by }} {{ '%.2f'|format(p.decision.conf) }}{% if p.decision.answer %} ({{ p.decision.answer }}){% endif %}
