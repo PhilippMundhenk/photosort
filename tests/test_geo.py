@@ -30,6 +30,15 @@ def test_reverse_geocode_cities():
     assert lb["place"] == "Ratingen" and lb["country"] == "Germany"
 
 
+def test_city_districts_resolve_to_their_city():
+    cfg = config.Config()
+    assert geo.reverse(cfg, 38.72, -9.14)["place"] == "Lisbon"            # "Intendente" in geonames
+    assert geo.reverse(cfg, 35.75, 139.55)["place"] == "Tokyo"          # "Hibarigaoka", 15 km from the centre
+    assert geo.reverse(cfg, 35.72, 139.80)["place"] == "Tokyo"          # "Asakusa"
+    assert geo.reverse(cfg, 35.44, 139.64)["place"] == "Yokohama"        # a city of its own: not Tokyo
+    assert geo.reverse(cfg, 51.297, 6.849)["place"] == "Ratingen"       # 12 km from Cologne: keeps its name
+
+
 def test_reverse_small_places_fall_back_to_region():
     village = (47.5, 11.1)                                              # Alpine village, a few thousand people
     assert geo.reverse(config.Config(), *village)["place"] == geo.reverse(config.Config(), *village)["city"]
