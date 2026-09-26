@@ -60,6 +60,36 @@ def test_build_record_with_and_without_gps(tmp_path):
     assert rec2["place"] is None and rec2["gps_source"] is None and rec2["camera"] == "cam"
 
 
+def test_malformed_gps_values_do_not_break_a_record(tmp_path):
+    cfg = config.Config(home_lat=HOME[0], home_lon=HOME[1])
+    for lat, lon in (("", ""), ("n/a", "1"), (None, 9.1), (float("nan"), 9.1), ("48.9", "")):
+        rec = ingest.build_record(cfg, tmp_path / "a.jpg", {"DateTimeOriginal": "2026:06:04 09:00:00",
+                                                            "GPSLatitude": lat, "GPSLongitude": lon})
+        assert rec["lat"] is None and rec["lon"] is None and rec["zone"] == geo.ZONE_UNKNOWN, (lat, lon)
+    rec = ingest.build_record(cfg, tmp_path / "a.jpg", {"GPSLatitude": str(HOME[0]), "GPSLongitude": str(HOME[1])})
+    assert rec["lat"] == HOME[0] and rec["zone"] == geo.ZONE_HOME                               # strings parse
+
+
+def test_scan_survives_a_file_that_cannot_be_indexed(tmp_path, monkeypatch):
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    (inbox / "a.jpg").write_bytes(b"x")
+    (inbox / "b.jpg").write_bytes(b"x")
+    cfg = config.Config(inboxes=[{"path": str(inbox), "name": "cam"}])
+    monkeypatch.setattr(ingest, "exif_batch", lambda paths: {str(p): {"DateTimeOriginal": "2026:06:04 09:00:00"}
+                                                            for p in paths})
+    real = ingest.build_record
+
+    def boom(cfg, photo, tags, source=None):
+        if photo.name == "a.jpg":
+            raise RuntimeError("odd file")
+        return real(cfg, photo, tags, source=source)
+    monkeypatch.setattr(ingest, "build_record", boom)
+    stats = ingest.scan(cfg)
+    assert stats["new"] == 1 and stats["failed"] == [str(inbox / "a.jpg")]
+    assert ingest.read_sidecar(inbox / "b.jpg", cfg) and ingest.read_sidecar(inbox / "a.jpg", cfg) is None
+
+
 def test_enrich_without_home_configured_gives_unknown_zone():
     rec = {"lat": LISBON[0], "lon": LISBON[1]}
     ingest.enrich_location(config.Config(), rec)
