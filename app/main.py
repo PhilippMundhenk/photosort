@@ -240,7 +240,7 @@ def dashboard(request: Request):
     props = cluster.load_proposals()
     unnamed = [c for c in mover.list_clusters(cfg) if c["unnamed"]]
     return render(request, "dashboard.html", pending=_pending(props), unnamed=unnamed,
-                  recent=events.read(limit=8))
+                  recent=events.read(limit=8), inputs=config.inbox_dirs(cfg))
 
 
 @app.get("/review", response_class=HTMLResponse)
@@ -353,7 +353,7 @@ def log_page(request: Request, kind: str = ""):
 def settings(request: Request, msg: str = ""):
     cfg = config.load()
     return render(request, "settings.html", inboxes_text=config.inboxes_text(cfg),
-                  named_places_text=config.named_places_text(cfg),
+                  discovered=config.discovered_inboxes(cfg), named_places_text=config.named_places_text(cfg),
                   extensions=", ".join(cfg.photo_extensions), msg=msg)
 
 

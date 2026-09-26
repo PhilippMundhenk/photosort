@@ -17,10 +17,12 @@ CONFIG_PATH = DATA_DIR / "config.yaml"
 @dataclass
 class Config:
     # Paths (inside the container; map them via docker volumes)
-    # Several input folders, each scanned recursively; "name" becomes the per-source subfolder.
-    inboxes: list[dict] = field(default_factory=lambda: [
-        {"path": "/photos/inbox/phone-a", "name": "phone-a"},
-        {"path": "/photos/inbox/phone-b", "name": "phone-b"}])
+    # The inbox root holds one folder per device (hans/, phone-b/, camera/). Every direct subfolder
+    # is an input named after the folder, discovered on each scan, unless `inboxes` lists inputs
+    # explicitly (name=/path lines in Settings). A root without subfolders but with files is one
+    # input named after the root.
+    inbox_root: str = "/photos/inbox"
+    inboxes: list[dict] = field(default_factory=list)
     subfolder_by_source: bool = False      # 2026-10 Lisbon/smartphone-a/... instead of a flat folder
     root: str = "/photos/sorted"
     everyday_layout: str = "YYYY/MM"      # where non-clustered photos go; "leave" keeps them in inbox
@@ -187,9 +189,27 @@ def named_places_text(cfg: Config) -> str:
     return "\n".join(f"{p['name']} = {p['lat']:.5f}, {p['lon']:.5f}, {p['radius_km']:g}" for p in cfg.named_places)
 
 
+def discovered_inboxes(cfg: Config) -> list[tuple[str, Path]]:
+    """One input per direct subfolder of the inbox root (hidden and @eaDir folders skipped),
+    sorted by name; the root itself when it has no subfolders but files."""
+    root = Path(cfg.inbox_root)
+    if not root.is_dir():
+        return []
+    subs = sorted((p for p in root.iterdir() if p.is_dir() and not p.name.startswith(".")
+                   and p.name != "@eaDir" and p.resolve() != Path(cfg.root).resolve()), key=lambda p: p.name)
+    if subs:
+        return [(p.name, p) for p in subs]
+    if any(p.is_file() for p in root.iterdir()):
+        return [(root.name or "inbox", root)]
+    return []
+
+
 def inbox_dirs(cfg: Config) -> list[tuple[str, Path]]:
-    return [(i.get("name") or Path(i["path"]).name, Path(i["path"])) for i in cfg.inboxes]
+    if cfg.inboxes:
+        return [(i.get("name") or Path(i["path"]).name, Path(i["path"])) for i in cfg.inboxes]
+    return discovered_inboxes(cfg)
 
 
 def inboxes_text(cfg: Config) -> str:
+    """The explicit lines; empty when inputs are discovered from the inbox root."""
     return "\n".join(f"{i.get('name') or Path(i['path']).name}={i['path']}" for i in cfg.inboxes)
