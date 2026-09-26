@@ -375,18 +375,59 @@ def test_name_unnamed_burst_then_view_move_out_undo(client, library):
     assert "Bursts waiting for a name (0)" in client.get("/review").text
 
     view = client.get("/clusters/view", params={"folder": str(dst)})
-    assert view.status_code == 200 and "Hannas Geburtstag" in view.text and "not this trip" in view.text
+    assert view.status_code == 200 and "Hannas Geburtstag" in view.text and "remove from cluster" in view.text
     m = mover.read_manifest(dst)
     photo = m["photos"][0]["dst"]
     r = client.post("/cluster/move_out", data={"folder": str(dst), "photo": photo})
     assert r.status_code == 303 and not Path(photo).exists()
-    assert len(mover.read_manifest(dst)["photos"]) == 24 and "Corrections" in client.get(
+    assert len(mover.read_manifest(dst)["photos"]) == 24 and "Removed from this cluster" in client.get(
         "/clusters/view", params={"folder": str(dst)}).text
 
     r = client.post("/cluster/undo", data={"folder": str(dst)})
     assert r.status_code == 303 and r.headers["location"] == "/clusters" and not dst.exists()
     assert len(list(Path(cfg.inboxes[0]["path"]).glob("*.jpg")) + list(Path(cfg.inboxes[1]["path"]).glob("*.jpg"))) \
         == library.n
+
+
+def test_removed_photo_is_everyday_and_can_be_put_back(client, library, monkeypatch):
+    cfg = config.load()
+    cfg.sidecar_cleanup = "never"                        # the record travels with the photo (no exiftool here)
+    config.save(cfg)
+    scans = []
+    real_scan = ingest.scan
+    monkeypatch.setattr(ingest, "scan", lambda c, **k: scans.append(1) or real_scan(c, **k))
+    cluster.run(cfg)
+    local = _proposals("local")
+    client.post(f"/proposal/{local['id']}/approve")
+    main.wait_for_apply()
+    folder = mover.target_folder(cfg, local)
+    m = mover.read_manifest(folder)
+    photo = m["photos"][0]["dst"]
+    n_everyday = len(cluster.everyday_records(cfg))
+    r = client.post("/cluster/move_out", data={"folder": str(folder), "photo": photo})
+    assert r.status_code == 303
+    src = mover.read_manifest(folder)["corrections"][0]["src"]
+    assert Path(src).exists() and src in _proposals("local")["excluded"] and scans == [1]   # indexed at once
+    assert len(cluster.everyday_records(cfg)) == n_everyday + 1         # visible on the Everyday page at once
+    assert src in client.get("/everyday?month=2026-06").text
+    page = client.get("/clusters/view", params={"folder": str(folder)}).text
+    assert "Removed from this cluster" in page and "put back" in page and "remove from cluster" in page
+    assert "not this trip" not in page
+    r = client.post("/cluster/put_back", data={"folder": str(folder), "src": src})
+    assert r.status_code == 303 and Path(photo).exists() and not Path(src).exists()
+    assert src not in _proposals("local")["excluded"]
+    assert len(cluster.everyday_records(cfg)) == n_everyday
+    assert "Removed from this cluster" not in client.get("/clusters/view", params={"folder": str(folder)}).text
+    assert client.post("/cluster/put_back", data={"folder": str(folder), "src": src}).status_code == 303   # no-op
+
+    # a removal made before exclusions were recorded is repaired by the next run
+    mover.move_out(cfg, folder, Path(photo))
+    props = cluster.load_proposals()
+    props[local["id"]]["excluded"] = []
+    cluster.save_proposals(props)
+    assert len(cluster.everyday_records(cfg)) == n_everyday
+    cluster.run(cfg)
+    assert src in _proposals("local")["excluded"] and len(cluster.everyday_records(cfg)) == n_everyday + 1
 
 
 def test_undo_marks_applied_proposal_rejected(client, library):

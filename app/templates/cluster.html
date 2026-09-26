@@ -20,14 +20,27 @@
       <img src="/thumb?path={{ p.dst|urlencode }}" loading="lazy" title="{{ p.dst }} · conf {{ p.conf }}" alt="">
       <button class="view" data-view="/media?path={{ p.dst|urlencode }}" data-type="{{ p.media or 'photo' }}" data-title="{{ p.dst.rsplit('/',1)[-1].rsplit('\\',1)[-1] }} · conf {{ p.conf }}" title="view full size">&#x2921;</button>
       <figcaption>{% if p.media == 'video' %}<span class="badge">video</span> {% endif %}{{ p.zone }} {{ p.conf }}{% if p.source %} · {{ p.source }}{% endif %}</figcaption>
-      <form method="post" action="/cluster/move_out" class="inline">
+      <form method="post" action="/cluster/move_out" class="inline" onsubmit="return confirm('Remove this photo from the cluster and move it back to the inbox?')">
         <input type="hidden" name="folder" value="{{ folder }}"><input type="hidden" name="photo" value="{{ p.dst }}">
-        <button class="secondary small">not this trip</button></form>
+        <button class="secondary small" title="moves the photo back to the inbox; it can be put back from the Corrections list below">remove from cluster</button></form>
     </figure>
   {% endfor %}
   </div>
 </div>
-{% if m.corrections %}<div class="card"><b>Corrections</b> <span class="muted small">({{ m.corrections|length }} photos moved out)</span></div>{% endif %}
+{% if m.corrections %}<div class="card">
+  <b>Removed from this cluster</b> <span class="muted small">({{ m.corrections|length }}, now back in the inbox and listed under Everyday)</span>
+  <div class="thumbs">
+  {% for c in m.corrections %}
+    <figure>
+      <img src="/thumb?path={{ c.src|urlencode }}" loading="lazy" alt="">
+      <figcaption>{{ c.src.rsplit('/',1)[-1].rsplit('\\',1)[-1] }}</figcaption>
+      <form method="post" action="/cluster/put_back" class="inline">
+        <input type="hidden" name="folder" value="{{ folder }}"><input type="hidden" name="src" value="{{ c.src }}">
+        <button class="secondary small" title="undo: move it back into this cluster">put back</button></form>
+    </figure>
+  {% endfor %}
+  </div>
+</div>{% endif %}
 <form method="post" action="/cluster/undo" onsubmit="return confirm('Move all photos back to their inbox?')">
   <input type="hidden" name="folder" value="{{ folder }}"><button class="danger">Undo whole cluster</button></form>
 {% endif %}

@@ -478,11 +478,28 @@ def everyday_records(cfg: Config, props: dict | None = None) -> list[dict]:
     """Records in no live proposal (pending/ongoing/approved/applied): what the Everyday page shows."""
     props = load_proposals() if props is None else props
     taken = {p["path"] for pr in props.values() if pr["status"] in ("pending", "ongoing", "approved", "applied")
-             for p in pr["photos"]}
+             for p in pr["photos"] if p["path"] not in set(pr.get("excluded", []))}
     return [r for r in records_filled(cfg) if r["path"] not in taken]
 
 
 # --- driver --------------------------------------------------------------------
+
+def _reconcile_corrections(cfg: Config, props: dict) -> None:
+    """Photos removed from an applied cluster in the UI live in the inbox again; their manifest
+    lists them under corrections. Keep them excluded in the proposal so they count as everyday
+    (also repairs removals made before the exclusion was recorded)."""
+    from . import mover  # local import: mover imports cluster
+    for pr in props.values():
+        if pr["status"] != "applied":
+            continue
+        m = mover.read_manifest(mover.target_folder(cfg, pr))
+        if not m:
+            continue
+        removed = {c["src"] for c in m.get("corrections", [])}
+        kept = {p["dst"] for p in m.get("photos", [])}
+        ex = {p for p in pr.get("excluded", []) if p not in kept} | removed
+        pr["excluded"] = sorted(ex)
+
 
 def run(cfg: Config) -> dict:
     """Recompute proposals from the inbox, keeping the status of ones already reviewed."""
@@ -559,6 +576,7 @@ def run(cfg: Config) -> dict:
     for pid, pr in old.items():
         if pid not in new and pr["status"] in ("applied", "rejected"):
             new[pid] = pr
+    _reconcile_corrections(cfg, new)
     save_proposals(new)
 
     everyday = [r for r in recs if r["path"] not in taken]
