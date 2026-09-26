@@ -4,7 +4,7 @@
   no GPS              take the nearest photo in time that has GPS
   excursion           maximal run of photos not at home; ends at any home photo; GPS-less photos
                       inside the run ride along. A photo-less gap splits the run only if it is
-                      long AND the two sides are in different areas.
+                      long AND (the two sides are in different areas OR one side is near home).
     trip              the run spans >= trip_min_hours (an overnight stay)  -> "YYYY-MM-DD..DD Places"
     day out           shorter, with >= dayout_min_photos photos           -> "YYYY-MM-DD Place"
   home burst          photos at home closer than burst_gap_hours, above baseline -> Kev: occasion / busy_day
@@ -66,7 +66,7 @@ def load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
         if not folder.exists():
             continue
         for p in ingest.list_photos(cfg, folder):
-            rec = ingest.read_sidecar(p)
+            rec = ingest.read_sidecar(p, cfg)
             if rec is None:
                 continue
             if rec.get("copied_to"):          # copy mode: the original was already sorted
@@ -135,7 +135,8 @@ def find_excursions(cfg: Config, recs: list[dict]) -> list[list[dict]]:
             far = False
             if prev.get("lat") is not None and nxt.get("lat") is not None:     # GPS-less photos never split
                 far = geo.haversine_km(prev["lat"], prev["lon"], nxt["lat"], nxt["lon"]) > cfg.trip_split_distance_km
-            if gap_days > cfg.trip_gap_days and far:
+            near_home = geo.ZONE_LOCAL in (prev["zone"], nxt["zone"])   # you sleep at home: no 2-week trip 10 km away
+            if gap_days > cfg.trip_gap_days and (far or near_home):
                 out.append(part)
                 part = []
             part.append(nxt)

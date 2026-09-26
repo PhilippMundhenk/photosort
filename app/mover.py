@@ -36,33 +36,40 @@ def _unique(dst: Path) -> Path:
         i += 1
 
 
-def _companions(photo: Path, dst: Path) -> list[tuple[Path, str]]:
-    """(existing companion file of `photo`, its file name next to `dst`)."""
-    return [(extra, newname) for extra, newname in
-            ((ingest.sidecar_path(photo), dst.name + ingest.SIDECAR_SUFFIX),
-             (photo.with_suffix(".xmp"), dst.stem + ".xmp")) if extra.exists()]
-
-
-def _transfer(src: Path, dst_dir: Path, copy: bool = False) -> Path:
-    """Move (or copy) a photo plus its sidecars into dst_dir; returns the new photo path."""
+def _transfer(cfg: Config, src: Path, dst_dir: Path, copy: bool = False) -> Path:
+    """Move (or copy) a photo, its record and its .xmp into dst_dir; returns the new photo path."""
     dst_dir.mkdir(parents=True, exist_ok=True)
     dst = _unique(dst_dir / src.name)
     op = shutil.copy2 if copy else shutil.move      # move = rename on same fs; copy+delete across mounts
     op(str(src), str(dst))
-    for extra, newname in _companions(src, dst):
-        op(str(extra), str(dst_dir / newname))
+    ingest.move_sidecar(src, dst, cfg, keep_source=copy)
+    xmp = src.with_suffix(".xmp")
+    if xmp.exists():
+        op(str(xmp), str(dst_dir / (dst.stem + ".xmp")))
     return dst
 
 
-def _delete_with_sidecars(photo: Path) -> None:
-    for extra, _ in _companions(photo, photo):
-        extra.unlink(missing_ok=True)
+def _settle(cfg: Config, dst: Path, update: dict | None = None) -> None:
+    """The record of a photo that just arrived in the sorted tree: updated, or dropped when
+    cfg.sidecar_cleanup says the manifest is enough."""
+    if cfg.sidecar_cleanup == "after_move":
+        ingest.delete_sidecar(dst, cfg)
+        return
+    rec = ingest.read_sidecar(dst, cfg) or {}
+    rec.pop("copied_to", None)
+    rec.update(update or {})
+    ingest.write_sidecar(dst, rec, cfg)
+
+
+def _delete_with_sidecars(cfg: Config, photo: Path) -> None:
+    ingest.delete_sidecar(photo, cfg)
+    photo.with_suffix(".xmp").unlink(missing_ok=True)
     photo.unlink(missing_ok=True)
 
 
-def _mark_source(src: Path, copied_to: Path | None, cluster_name: str | None) -> None:
-    """In copy mode the original's sidecar says where its copy lives (None clears the mark)."""
-    rec = ingest.read_sidecar(src)
+def _mark_source(cfg: Config, src: Path, copied_to: Path | None, cluster_name: str | None) -> None:
+    """In copy mode the original's record says where its copy lives (None clears the mark)."""
+    rec = ingest.read_sidecar(src, cfg)
     if rec is None:
         return
     if copied_to is None:
@@ -70,7 +77,7 @@ def _mark_source(src: Path, copied_to: Path | None, cluster_name: str | None) ->
     else:
         rec["copied_to"] = str(copied_to)
     rec["cluster"] = cluster_name
-    ingest.write_sidecar(src, rec)
+    ingest.write_sidecar(src, rec, cfg)
 
 
 def read_manifest(folder: Path) -> dict | None:
@@ -112,14 +119,11 @@ def apply(cfg: Config, pr: dict, reviewed: bool = False) -> dict:
         in_review = bool(p.get("uncertain")) and not reviewed
         if in_review:
             dst_dir = dst_dir / cfg.review_dir
-        dst = _transfer(src, dst_dir, copy)
-        rec = ingest.read_sidecar(dst) or {}
-        rec.pop("copied_to", None)
-        rec["cluster"] = pr["name"]
-        rec["decision"] = {"by": pr["decision"]["by"], "conf": p["conf"], "kind": pr["kind"]}
-        ingest.write_sidecar(dst, rec)
+        dst = _transfer(cfg, src, dst_dir, copy)
+        _settle(cfg, dst, {"cluster": pr["name"],
+                           "decision": {"by": pr["decision"]["by"], "conf": p["conf"], "kind": pr["kind"]}})
         if copy:
-            _mark_source(src, dst, pr["name"])
+            _mark_source(cfg, src, dst, pr["name"])
         if cfg.write_xmp_sidecar:
             ingest.write_xmp_keywords(dst, [f"zone/{p['zone']}", f"cluster/{pr['name']}"])
         moved.append({"src": p["path"], "dst": str(dst), "conf": p["conf"], "zone": p["zone"],
@@ -153,9 +157,10 @@ def apply_everyday(cfg: Config, min_age_days: float) -> int:
         dst_dir = Path(cfg.root) / sub
         if cfg.subfolder_by_source and r.get("source"):
             dst_dir = dst_dir / r["source"]
-        dst = _transfer(Path(r["path"]), dst_dir, cfg.copy_instead_of_move)
+        dst = _transfer(cfg, Path(r["path"]), dst_dir, cfg.copy_instead_of_move)
+        _settle(cfg, dst, {"cluster": sub})
         if cfg.copy_instead_of_move:
-            _mark_source(Path(r["path"]), dst, sub)
+            _mark_source(cfg, Path(r["path"]), dst, sub)
         n += 1
     if n:
         events.log("apply_everyday", n=n, mode=_mode(cfg))
@@ -175,10 +180,10 @@ def undo(cfg: Config, folder: Path) -> int:
         if not dst.exists():
             continue
         if copied:
-            _delete_with_sidecars(dst)
-            _mark_source(src, None, None)
+            _delete_with_sidecars(cfg, dst)
+            _mark_source(cfg, src, None, None)
         else:
-            _transfer(dst, src.parent)
+            _transfer(cfg, dst, src.parent)
         n += 1
     (folder / MANIFEST).unlink(missing_ok=True)
     for sub in sorted(folder.rglob("*"), key=lambda x: -len(x.parts)):
@@ -207,12 +212,14 @@ def rename(cfg: Config, folder: Path, new_name: str) -> Path:
             p["dst"] = str(dst / Path(p["dst"]).relative_to(folder))
         write_manifest(dst, m)
         for p in m["photos"]:
-            rec = ingest.read_sidecar(Path(p["dst"]))
+            old_dst = folder / Path(p["dst"]).relative_to(dst)
+            ingest.move_sidecar(old_dst, Path(p["dst"]), cfg)        # central records key on the path
+            rec = ingest.read_sidecar(Path(p["dst"]), cfg)
             if rec:
                 rec["cluster"] = new_name
-                ingest.write_sidecar(Path(p["dst"]), rec)
+                ingest.write_sidecar(Path(p["dst"]), rec, cfg)
             if m.get("mode") == "copy":
-                _mark_source(Path(p["src"]), Path(p["dst"]), new_name)
+                _mark_source(cfg, Path(p["src"]), Path(p["dst"]), new_name)
         events.log("label", old=old, new=new_name, proposal=m.get("proposal_id"),
                    decision_id=m.get("decision", {}).get("id"))
     return dst
@@ -223,13 +230,13 @@ def move_out(cfg: Config, folder: Path, photo: Path) -> None:
     original), logged as a correction."""
     m = read_manifest(folder)
     entry = next((p for p in (m or {}).get("photos", []) if p["dst"] == str(photo)), None)
-    rec = ingest.read_sidecar(photo) or {}
+    rec = ingest.read_sidecar(photo, cfg) or {}
     if m and m.get("mode") == "copy" and entry:
-        _delete_with_sidecars(photo)
-        _mark_source(Path(entry["src"]), None, None)
+        _delete_with_sidecars(cfg, photo)
+        _mark_source(cfg, Path(entry["src"]), None, None)
     else:
         back = Path((entry or {}).get("inbox") or rec.get("inbox") or cfg.inboxes[0]["path"])
-        _transfer(photo, back)
+        _transfer(cfg, photo, back)
     if m and entry:
         m["photos"].remove(entry)
         entry["corrected"] = _now()

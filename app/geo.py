@@ -78,7 +78,8 @@ def reverse(cfg: Config, lat: float, lon: float) -> dict:
     city = r.get("city") or ""
     region = r.get("state") or r.get("county") or ""
     pop = r.get("population") or 0
-    place = named_place(cfg, lat, lon) or (city if pop >= cfg.min_city_population or not region else region)
+    small = 0 < pop < cfg.min_city_population                # 0 = unknown in geonames: keep the name
+    place = named_place(cfg, lat, lon) or (region if small and region else city)
     return {
         "city": city,
         "region": region,

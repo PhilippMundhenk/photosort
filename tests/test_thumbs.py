@@ -92,7 +92,7 @@ def test_prefetch_generates_in_background(cfg, tmp_path):
         srcs.append(p)
     t = thumbs.prefetch(cfg, srcs + [tmp_path / "missing.jpg"])
     assert t is not None
-    t.join(30)
+    thumbs.wait()
     assert all(thumbs.cache_path(p).exists() for p in srcs)
     assert thumbs.prefetch(cfg, srcs) is None                     # nothing left to do
     cfg.generate_thumbnails = False
@@ -116,11 +116,12 @@ def test_raw_preview_via_exiftool(cfg, tmp_path):
     """exiftool cannot write preview tags into a bare TIFF, so the 'RAW' here is a JPEG under a
     .dng name with an EXIF ThumbnailImage: the extension selects the RAW path (no Pillow decode
     of the file itself), the embedded image is what gets extracted."""
-    src = tmp_path / "shot.dng"
-    Image.new("RGB", (400, 300), "purple").save(src, "JPEG")
+    jpg = tmp_path / "shot.jpg"
+    Image.new("RGB", (400, 300), "purple").save(jpg, "JPEG")
     preview = tmp_path / "prev.jpg"
     Image.new("RGB", (800, 600), "purple").save(preview, "JPEG")
-    subprocess.run(["exiftool", "-q", "-overwrite_original", f"-ThumbnailImage<={preview}", str(src)], check=True)
+    subprocess.run(["exiftool", "-q", "-overwrite_original", f"-ThumbnailImage<={preview}", str(jpg)], check=True)
+    src = jpg.rename(tmp_path / "shot.dng")                  # exiftool checks extension vs content on write
     assert thumbs._raw_preview(src).size == (800, 600)
     t = thumbs.get(cfg, src)
     assert t and _img(t)[0] == (440, 330)

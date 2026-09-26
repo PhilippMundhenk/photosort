@@ -243,7 +243,7 @@ def test_rename_remembers_place(client, library):
     assert events.read(limit=1, kind="settings")[0]["place"]["name"] == "Blühendes Barock"
     # the label is used from the next scan on
     ingest.scan(cfg := config.load())
-    assert ingest.read_sidecar(Path(local["photos"][0]["path"]))["place"]["place"] == "Blühendes Barock"
+    assert ingest.read_sidecar(Path(local["photos"][0]["path"]), cfg)["place"]["place"] == "Blühendes Barock"
     client.post(f"/proposal/{local['id']}/rename", data={"name": "no place"})
     assert len(config.load().named_places) == 1                                    # unticked: unchanged
 

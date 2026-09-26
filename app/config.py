@@ -1,6 +1,7 @@
 """Configuration: a single YAML file in the data dir, editable from the UI."""
 from __future__ import annotations
 
+import copy
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -73,6 +74,14 @@ class Config:
     kev_timeout_s: float = 20.0
     kev_batch_size: int = 20
 
+    # Sidecars: the per-photo JSON record. "central": <data>/index/<inbox name>/<relative path>
+    # (photo folders stay clean; the record is regenerable, so files moved by other tools just get
+    # re-indexed); "beside": next to the photo, which follows it wherever it goes.
+    sidecar_mode: str = "central"
+    sidecar_name: str = "{name}.photosort.json"    # {name} = file name, {stem}, {ext} (without dot)
+    sidecar_cleanup: str = "after_move"            # "after_move": no record kept for photos in the sorted
+                                                   # tree (manifest.json has it all); "never": keep them
+
     # Thumbnails: the NAS's own (Synology @eaDir pattern) are used when present; otherwise they are
     # generated into <data>/thumbs (Pillow; exiftool preview for RAW; one ffmpeg frame for videos)
     thumb_pattern: str = "@eaDir/{name}/SYNOPHOTO_THUMB_M.jpg"
@@ -89,21 +98,35 @@ def tzinfo(cfg: Config) -> ZoneInfo:
         return ZoneInfo("UTC")
 
 
+_cache: dict = {"key": None, "cfg": None}
+
+
 def load() -> Config:
+    """Config from YAML. Cached on the file's mtime/size (it is read per request and per
+    sidecar); every caller gets its own copy, so mutating it never leaks without save()."""
+    try:
+        st = CONFIG_PATH.stat()
+        key = (str(CONFIG_PATH), st.st_mtime_ns, st.st_size)
+    except OSError:
+        key = None
+    if key is not None and _cache["key"] == key:
+        return copy.deepcopy(_cache["cfg"])
     cfg = Config()
-    if CONFIG_PATH.exists():
-        data = yaml.safe_load(CONFIG_PATH.read_text()) or {}
+    if key is not None:
+        data = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
         for k, v in data.items():
             if hasattr(cfg, k):
                 setattr(cfg, k, v)
+        _cache.update(key=key, cfg=copy.deepcopy(cfg))
     return cfg
 
 
 def save(cfg: Config) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     tmp = CONFIG_PATH.with_suffix(".tmp")
-    tmp.write_text(yaml.safe_dump(cfg.as_dict(), sort_keys=False, allow_unicode=True))
+    tmp.write_text(yaml.safe_dump(cfg.as_dict(), sort_keys=False, allow_unicode=True), encoding="utf-8")
     tmp.replace(CONFIG_PATH)
+    _cache["key"] = None
 
 
 def update_from_form(cfg: Config, form: dict) -> Config:
