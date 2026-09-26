@@ -413,27 +413,45 @@ def _needs_index(p: Path, cfg: Config) -> bool:
     return rec is None or int(rec.get("v") or 0) < SIDECAR_VERSION
 
 
-def scan(cfg: Config, force: bool = False) -> dict:
-    """Index every photo in every inbox (recursively) lacking a sidecar. Returns stats."""
+SCAN_CHUNK = 200
+
+
+def scan(cfg: Config, force: bool = False, progress=None) -> dict:
+    """Index every photo in every inbox (recursively) lacking a sidecar. Returns stats.
+    progress(done, total) is called per chunk of new files (a first scan of a big library
+    takes long; the UI shows where it is)."""
     stats = {"new": 0, "total": 0, "missing": []}
+    plan: list[tuple[str, Path, list[Path], list[Path]]] = []
     for name, folder in inbox_dirs(cfg):
         if not folder.exists():
             stats["missing"].append(str(folder))
             continue
         photos = list_photos(cfg, folder)
-        todo = [p for p in photos if force or _needs_index(p, cfg)]
-        try:
-            tags = exif_batch(todo)
-        except ExifToolMissing as e:
-            log.error("%s: %d new photos in %s left unindexed", e, len(todo), folder)
-            stats["error"] = str(e)
-            todo = []
-            tags = {}
-        for p in todo:
-            rec = build_record(cfg, p, tags.get(str(p), {}), source=name)
-            rec["source"] = name
-            rec["inbox"] = str(folder)
-            write_sidecar(p, rec, cfg)
+        plan.append((name, folder, photos, [p for p in photos if force or _needs_index(p, cfg)]))
+    total_new = sum(len(todo) for _, _, _, todo in plan)
+    done = 0
+    if progress:
+        progress(0, total_new)
+    for name, folder, photos, todo in plan:
+        indexed: list[Path] = []
+        for i in range(0, len(todo), SCAN_CHUNK):
+            chunk = todo[i:i + SCAN_CHUNK]
+            try:
+                tags = exif_batch(chunk)
+            except ExifToolMissing as e:
+                log.error("%s: %d new photos in %s left unindexed", e, len(todo) - i, folder)
+                stats["error"] = str(e)
+                break
+            for p in chunk:
+                rec = build_record(cfg, p, tags.get(str(p), {}), source=name)
+                rec["source"] = name
+                rec["inbox"] = str(folder)
+                write_sidecar(p, rec, cfg)
+                indexed.append(p)
+            done += len(chunk)
+            if progress:
+                progress(done, total_new)
+        todo = indexed
         # re-zone existing sidecars if home/radii changed: cheap, no exiftool needed
         for p in photos:
             if p in todo:

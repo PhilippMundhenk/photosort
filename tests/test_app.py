@@ -114,6 +114,29 @@ def test_run_now_produces_proposals_and_dry_run_moves_nothing(client, library):
     assert events.read(limit=1, kind="run")[0]["new_photos"] == 0
 
 
+def test_status_reports_scan_progress_and_page_has_banner(client, library, monkeypatch):
+    seen = []
+    real = ingest.scan
+
+    def spy(cfg, **kw):
+        out = real(cfg, **kw)
+        seen.append(dict(main._state["progress"]))
+        return out
+    monkeypatch.setattr(main.ingest, "scan", spy)
+    main.run_pipeline("test")
+    assert seen == [{"phase": "scanning", "done": 0, "total": 0}]          # nothing new in the library
+    assert main._state["progress"] is None and client.get("/api/status").json()["state"]["progress"] is None
+    page = client.get("/").text
+    assert 'id="busy"' in page and 'hidden' in page.split('id="busy"')[1].split(">")[0]
+    main._state["running"], main._state["progress"] = True, {"phase": "scanning", "done": 3, "total": 9}
+    try:
+        page = client.get("/review").text
+        assert 'id="busy"' in page and "Working…" in page
+        assert client.get("/api/status").json()["state"]["progress"] == {"phase": "scanning", "done": 3, "total": 9}
+    finally:
+        main._state["running"], main._state["progress"] = False, None
+
+
 def test_run_is_not_started_twice(client):
     assert main._lock.acquire(blocking=False)
     try:
@@ -123,7 +146,7 @@ def test_run_is_not_started_twice(client):
 
 
 def test_run_error_is_shown_on_dashboard(client, monkeypatch):
-    monkeypatch.setattr(main.ingest, "scan", lambda cfg: 1 / 0)
+    monkeypatch.setattr(main.ingest, "scan", lambda cfg, **kw: 1 / 0)
     out = main.run_pipeline("test")
     assert "division by zero" in out["error"]
     assert "Last run failed" in client.get("/").text
