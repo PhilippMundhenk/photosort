@@ -278,6 +278,17 @@ def _name_dt(name: str) -> datetime | None:
         return None
 
 
+def _num(v) -> float | None:
+    """A number from an exiftool value, or None: malformed GPS tags come back as '' or text."""
+    if v is None or isinstance(v, bool):
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if f == f and abs(f) != float("inf") else None      # NaN/inf: no position
+
+
 def is_video(path: Path, tags: dict | None = None) -> bool:
     mime = str((tags or {}).get("MIMEType") or "")
     return mime.startswith("video/") or path.suffix.lower().lstrip(".") in VIDEO_EXTENSIONS
@@ -370,8 +381,8 @@ def _camera(tags: dict, source: str | None) -> tuple[str | None, str | None]:
 
 
 def build_record(cfg: Config, photo: Path, tags: dict, source: str | None = None) -> dict:
-    lat, lon = tags.get("GPSLatitude"), tags.get("GPSLongitude")
-    if lat is not None and lon is not None and float(lat) == 0.0 and float(lon) == 0.0:
+    lat, lon = _num(tags.get("GPSLatitude")), _num(tags.get("GPSLongitude"))
+    if lat is None or lon is None or (lat == 0.0 and lon == 0.0):
         lat = lon = None                                   # "0 0": a phone without a fix, not the Gulf of Guinea
     video = is_video(photo, tags)
     camera, camera_source = _camera(tags, source)
@@ -382,8 +393,8 @@ def build_record(cfg: Config, photo: Path, tags: dict, source: str | None = None
         "media": "video" if video else "photo",
         "ts": ts,
         "ts_source": ts_source,
-        "lat": float(lat) if lat is not None else None,
-        "lon": float(lon) if lon is not None else None,
+        "lat": lat,
+        "lon": lon,
         "camera": camera,
         "camera_source": camera_source,
         "gps_source": "exif" if lat is not None else None,
@@ -443,7 +454,12 @@ def scan(cfg: Config, force: bool = False, progress=None) -> dict:
                 stats["error"] = str(e)
                 break
             for p in chunk:
-                rec = build_record(cfg, p, tags.get(str(p), {}), source=name)
+                try:
+                    rec = build_record(cfg, p, tags.get(str(p), {}), source=name)
+                except Exception as e:  # noqa: BLE001  (one odd file must never abort the scan)
+                    log.exception("cannot index %s: %s", p, e)
+                    stats.setdefault("failed", []).append(str(p))
+                    continue
                 rec["source"] = name
                 rec["inbox"] = str(folder)
                 write_sidecar(p, rec, cfg)
