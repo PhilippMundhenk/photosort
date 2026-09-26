@@ -61,7 +61,7 @@ def test_pages_render_empty(client):
 
 def test_api_status(client):
     s = client.get("/api/status").json()
-    assert s == {"state": main._state, "pending": 0, "dry_run": True}
+    assert s == {"state": main._state, "pending": 0, "dry_run": True, "approved": 0, "applying": {}}
 
 
 def test_startup_writes_config_and_schedules_scan(client):
@@ -109,14 +109,73 @@ def test_approve_moves_photos_without_review_folder(client, library):
     _force_uncertain(local["id"])
     r = client.post(f"/proposal/{local['id']}/approve")
     assert r.status_code == 303 and r.headers["location"] == "/review"
+    assert _proposals("local")["status"] == "approved"                   # the request returns at once
+    assert client.get("/api/status").json()["approved"] == 1
+    main.wait_for_apply()
     folder = mover.target_folder(cfg, local)
     assert folder.is_dir() and not list(folder.rglob(cfg.review_dir))
-    assert _proposals("local")["status"] == "applied"
+    assert _proposals("local")["status"] == "applied" and client.get("/api/status").json()["approved"] == 0
     assert events.read(limit=1, kind="review")[0] == {**events.read(limit=1, kind="review")[0],
                                                        "action": "approve", "proposal": local["id"]}
     page = client.get("/clusters").text
     assert "Ludwigsburg" in page and "in review" not in page
     assert client.get("/api/status").json()["pending"] == 2
+
+
+def test_approve_shows_progress_and_reports_failure(client, library, monkeypatch):
+    cfg = config.load()
+    cluster.run(cfg)
+    trip = _proposals("trip")
+    seen = []
+    real = mover.apply
+
+    def slow_apply(cfg, pr, reviewed=False, progress=None):
+        m = real(cfg, pr, reviewed=reviewed, progress=lambda d, t: seen.append((d, t)))
+        return m
+    monkeypatch.setattr(mover, "apply", slow_apply)
+    client.post(f"/proposal/{trip['id']}/approve")
+    page = client.get("/review").text
+    assert "Moving (1)" in page and 'data-poll="approved"' in page and "Proposed clusters (2)" in page
+    main.wait_for_apply()
+    assert seen[-1] == (trip["n"], trip["n"]) and _proposals("trip")["status"] == "applied"
+    assert "Moving" not in client.get("/review").text
+    assert client.post(f"/proposal/{trip['id']}/approve").status_code == 303   # applied: approve is a no-op
+    assert _proposals("trip")["status"] == "applied"
+
+    # a failing move leaves the proposal approved with the error shown, and can be retried
+    local = _proposals("local")
+    monkeypatch.setattr(mover, "apply", lambda *a, **k: (_ for _ in ()).throw(OSError("share gone")))
+    client.post(f"/proposal/{local['id']}/approve")
+    main.wait_for_apply()
+    again = _proposals("local")
+    assert again["status"] == "approved" and "share gone" in again["error"]
+    page = client.get("/review").text
+    assert "failed" in page and "share gone" in page and "retry" in page
+    assert events.read(limit=1, kind="review")[0]["action"] == "apply_failed"
+    monkeypatch.setattr(mover, "apply", real)
+    main.queue_apply(local["id"])                                          # what "retry" does after a restart
+    main.wait_for_apply()
+    assert _proposals("local")["status"] == "applied" and _proposals("local")["error"] is None
+
+
+def test_rename_over_fetch_returns_json(client, library):
+    cfg = config.load()
+    cluster.run(cfg)
+    trip = _proposals("trip")
+    r = client.post(f"/proposal/{trip['id']}/rename", data={"name": "2026-06 Portugal"},
+                    headers={"X-Requested-With": "fetch"})
+    assert r.status_code == 200 and r.json()["name"] == "2026-06 Portugal"
+    client.post(f"/proposal/{trip['id']}/approve")
+    main.wait_for_apply()
+    folder = mover.target_folder(cfg, _proposals("trip"))
+    r = client.post("/cluster/rename", data={"folder": str(folder), "name": "2026-06 Lissabon"},
+                    headers={"X-Requested-With": "fetch"})
+    body = r.json()
+    assert r.status_code == 200 and body["name"] == "2026-06 Lissabon"
+    assert body["redirect"].startswith("/clusters/view?folder=")
+    assert (Path(cfg.root) / "2026-06 Lissabon").is_dir()
+    page = client.get("/review").text
+    assert "data-autosave" in page and page.count("rename</button>") == page.count("<noscript><button")
 
 
 def test_reject_rename_toggle(client, library):
@@ -157,6 +216,7 @@ def test_name_unnamed_burst_then_view_move_out_undo(client, library):
     cluster.run(cfg)
     home = _proposals("home")
     client.post(f"/proposal/{home['id']}/approve")
+    main.wait_for_apply()
     folder = mover.target_folder(cfg, home)
     page = client.get("/review").text
     assert "Bursts waiting for a name (1)" in page and "Name it" in page
@@ -188,6 +248,7 @@ def test_undo_marks_applied_proposal_rejected(client, library):
     cluster.run(cfg)
     trip = _proposals("trip")
     client.post(f"/proposal/{trip['id']}/approve")
+    main.wait_for_apply()
     folder = mover.target_folder(cfg, trip)
     assert _proposals("trip")["status"] == "applied"
     client.post("/cluster/undo", data={"folder": str(folder)})
@@ -238,6 +299,7 @@ def test_cluster_rename_remembers_place(client, library):
     cluster.run(cfg)
     trip = _proposals("trip")
     client.post(f"/proposal/{trip['id']}/approve")
+    main.wait_for_apply()
     folder = mover.target_folder(cfg, trip)
     client.post("/cluster/rename", data={"folder": str(folder), "name": "2026-06 Portugal", "remember_place": "1"})
     places = config.load().named_places

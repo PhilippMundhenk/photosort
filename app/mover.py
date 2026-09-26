@@ -101,17 +101,21 @@ def target_folder(cfg: Config, pr: dict) -> Path:
     return root / cfg.unnamed_dir / pr["name"] if pr["kind"] == "home" else root / pr["name"]
 
 
-def apply(cfg: Config, pr: dict, reviewed: bool = False) -> dict:
+def apply(cfg: Config, pr: dict, reviewed: bool = False, progress=None) -> dict:
     """Move (or copy) a proposal's photos into its folder.
 
     reviewed=True means a human approved the proposal in the UI: everything goes straight into
     the folder. Unreviewed (auto-applied) proposals put their uncertain photos into
-    <folder>/<review_dir> so they can be checked later."""
+    <folder>/<review_dir> so they can be checked later. progress(done, total) is called after
+    every file (the UI shows it; moving hundreds of files over a share takes a while)."""
     folder = target_folder(cfg, pr)
     copy = cfg.copy_instead_of_move
     excluded = set(pr.get("excluded", []))
     moved = []
-    for p in pr["photos"]:
+    total = len(pr["photos"])
+    for i, p in enumerate(pr["photos"], 1):
+        if progress:
+            progress(i - 1, total)
         src = Path(p["path"])
         if p["path"] in excluded or not src.exists():
             continue
@@ -129,6 +133,8 @@ def apply(cfg: Config, pr: dict, reviewed: bool = False) -> dict:
         moved.append({"src": p["path"], "dst": str(dst), "conf": p["conf"], "zone": p["zone"],
                       "media": p.get("media", "photo"), "source": p.get("source"), "inbox": p.get("inbox"),
                       "uncertain": bool(p.get("uncertain")), "in_review": in_review})
+    if progress:
+        progress(total, total)
     manifest = {
         "name": pr["name"], "kind": pr["kind"], "start": pr["start"], "end": pr["end"],
         "proposal_id": pr["id"], "decision": pr["decision"], "applied": _now(), "mode": _mode(cfg),

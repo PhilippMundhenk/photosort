@@ -168,6 +168,7 @@ def test_manual_cluster_can_be_approved_and_applied(client, cfg, library):
                                           "name": "2026-06-02 Spaziergang"})
     pr = next(p for p in cluster.load_proposals().values() if p.get("manual"))
     client.post(f"/proposal/{pr['id']}/approve")
+    main.wait_for_apply()
     folder = mover.target_folder(cfg, pr)
     assert folder.is_dir() and len(list(folder.rglob("*.jpg"))) == 3
     assert cluster.load_proposals()[pr["id"]]["status"] == "applied"

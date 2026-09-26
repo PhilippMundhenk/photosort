@@ -122,10 +122,12 @@ def test_full_review_flow(server, page):
     props = _proposals(data)
     trip = page.locator(f"#{props['trip']['id']}")
     expect(trip.locator("input[name=name]")).to_have_value("2026-06 Lisbon, Sevilla")
-    trip.locator("input[name=name]").fill("2026-06 Portugal & Spain")
-    trip.get_by_role("button", name="rename").click()
+    trip.locator("input[name=name]").fill("2026-06 Portugal & Spain")       # no button: saved as you type
+    expect(trip.locator(".save-state")).to_have_text("saved")
+    page.reload()
     trip = page.locator(f"#{props['trip']['id']}")
     expect(trip.locator("input[name=name]")).to_have_value("2026-06 Portugal & Spain")
+    expect(trip.get_by_role("button", name="rename")).to_have_count(0)
 
     trip.locator("details summary").click()
     page.wait_for_load_state("networkidle")                            # thumbnails loaded
@@ -152,7 +154,9 @@ def test_full_review_flow(server, page):
 
     page.locator(f"#{props['trip']['id']}").get_by_role("button", name="Approve & move").click()
     expect(page.get_by_role("heading", name="Proposed clusters (2)")).to_be_visible()
+    expect(page.get_by_role("heading", name="Moving (1)")).to_be_visible()     # files move in the background
     folder = Path(cfg.root) / "2026-06 Portugal & Spain"
+    expect(page.get_by_role("heading", name="Moving (1)")).to_be_hidden(timeout=60_000)   # page reloads when done
     assert folder.is_dir() and (folder / "manifest.json").exists()
     assert not Path(props["trip"]["photos"][0]["path"]).exists()      # toggled back in above, so it moved
     assert not list(folder.rglob(cfg.review_dir))                      # manual approval: no _review
@@ -164,6 +168,7 @@ def test_full_review_flow(server, page):
     # approve the home burst, then name it from the "waiting for a name" list
     page.wait_for_load_state("networkidle")   # Windows cannot move files the browser is still reading
     page.locator(f"#{props['home']['id']}").get_by_role("button", name="Approve & move").click()
+    expect(page.get_by_role("heading", name="Moving (1)")).to_be_hidden(timeout=60_000)
     expect(page.get_by_role("heading", name="Bursts waiting for a name (1)")).to_be_visible()
     name_box = page.get_by_placeholder("What was this?")
     name_box.fill("2026-06-30 Hannas Geburtstag")

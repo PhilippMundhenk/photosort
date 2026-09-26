@@ -23,6 +23,7 @@ label{display:block;margin:10px 0 4px;font-size:13px;color:var(--muted)}.row{dis
 .thumbs label.pick input{position:absolute;left:5px;top:5px;z-index:2;width:16px;height:16px;margin:0}
 .thumbs label.pick input:checked+img{outline:3px solid var(--accent)}
 .card.sticky{position:sticky;top:0;z-index:5}
+.save-state{min-width:60px;display:inline-block}
 .monthnav .current{font-size:20px}.monthnav .btn{text-decoration:none;color:var(--fg);background:var(--line)}
 .monthnav .months{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
 .monthnav .month{display:flex;flex-direction:column;align-items:center;min-width:76px;padding:6px 8px;border-radius:8px;background:var(--bg);border:1px solid var(--line);color:var(--fg);text-decoration:none}
