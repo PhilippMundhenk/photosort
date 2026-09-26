@@ -44,8 +44,9 @@ docker compose pull && docker compose up -d      # image from ghcr.io/philippmun
 # or build locally:  docker compose up -d --build
 ```
 
-Open `http://<host>:8080`, go to **Settings**, set home lat/lon, check the input folders, save.
-Press **Run now**. The first scan runs `exiftool` over every photo once (a few minutes for
+Open `http://<host>:8080`. A first run starts by itself; when the home location is not set
+it is detected from the photos (the spot with photos on the most different days) and can be
+corrected in **Settings**. Press **Run now** any time. The first scan runs `exiftool` over every photo once (a few minutes for
 20k files); afterwards only new files are read.
 
 - Photos are mounted, not copied. Moves are `rename()` on the same mount; keep inbox and

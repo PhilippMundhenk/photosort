@@ -157,6 +157,17 @@ def run_pipeline(trigger: str = "schedule") -> dict:
         cfg = config.load()
         cluster.busy = True                       # page requests serve a slightly stale cache meanwhile
         s1 = ingest.scan(cfg, progress=scanned)
+        if not cfg.home_lat and not cfg.home_lon:  # home unset: nothing could be clustered; detect it now
+            found = geo.detect_home(cluster.load_records(cfg)[0])
+            if found:
+                cfg.home_lat, cfg.home_lon = found["lat"], found["lon"]
+                config.save(cfg)
+                events.log("settings", changed=["home_lat", "home_lon"], detected=found, by="pipeline")
+                log.info("home detected at %s, %s (%d photos on %d days); re-zoning", found["lat"], found["lon"],
+                         found["photos"], found["days"])
+                _state["progress"] = {"phase": "scanning", "done": 0, "total": 0}
+                ingest.scan(cfg, progress=scanned)  # re-zones the records; no exiftool involved
+                s1["home_detected"] = found
         cluster.busy = False
         _state["progress"] = {"phase": "clustering", "done": 0, "total": 0}
         s2 = cluster.run(cfg)

@@ -552,18 +552,24 @@ def test_detect_home_from_photos(client, library):
     assert events.read(limit=1, kind="settings")[0]["detected"]["days"] >= 9
 
 
-def test_unset_home_is_called_out(client, library):
+def test_unset_home_is_detected_by_the_run(client, library):
     cfg = config.load()
     cfg.home_lat, cfg.home_lon = 0.0, 0.0
     config.save(cfg)
+    for d in range(40):                                                    # a normal stretch at home
+        library.photo(Path(cfg.inboxes[0]["path"]), synth.T0 + timedelta(days=40 + d, hours=19), synth.HOME)
     assert "Home location is not set" in client.get("/").text
     assert "Home location is not set" in client.get("/review").text
     ingest.scan(cfg)                                                       # re-zones the records: all unknown
     cluster.run(cfg)
     assert cluster.load_proposals() == {}                                  # unknown zone everywhere: no clusters
-    cfg.home_lat, cfg.home_lon = 48.944, 9.118
-    config.save(cfg)
+    stats = main.run_pipeline("test")
+    assert stats["ingest"]["home_detected"]["lat"] == 48.944
+    assert (config.load().home_lat, config.load().home_lon) == (48.944, 9.118)
+    assert stats["cluster"]["proposals"] == 3                              # detected, re-zoned, clustered in one run
+    assert events.read(limit=1, kind="settings")[0]["by"] == "pipeline"
     assert "Home location is not set" not in client.get("/").text
+    assert "home_detected" not in main.run_pipeline("test")["ingest"]      # set now: not detected again
 
 
 def test_detect_home_without_gps(client, tmp_path):

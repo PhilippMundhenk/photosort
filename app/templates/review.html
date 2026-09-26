@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Review queue</h1>
-{% if not cfg.home_lat and not cfg.home_lon %}<div class="warnbox"><b>Home location is not set</b> — nothing can be clustered until it is. See <a href="/settings">Settings</a>.</div>{% endif %}
+{% if not cfg.home_lat and not cfg.home_lon %}<div class="warnbox"><b>Home location is not set</b> — the next run detects it from the photos, or set it in <a href="/settings">Settings</a>.</div>{% endif %}
 {% if cfg.dry_run %}<div class="warnbox"><b>Dry-run is on: nothing is moved, copied or deleted.</b> Approving here only marks a proposal;
   {% if n_approved %}{{ n_approved }} approved proposal{{ 's' if n_approved != 1 }} wait{{ '' if n_approved != 1 else 's' }} for dry-run to be switched off in <a href="/settings">Settings</a>.{% else %}approved proposals are moved once you switch dry-run off in <a href="/settings">Settings</a>.{% endif %}</div>{% endif %}
 
