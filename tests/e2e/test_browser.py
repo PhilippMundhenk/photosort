@@ -110,7 +110,7 @@ def test_full_review_flow(server, page):
     # dashboard, run now
     page.goto(url + "/")
     expect(page.get_by_role("heading", name="Dashboard")).to_be_visible()
-    expect(page.get_by_text("dry-run")).to_be_visible()
+    expect(page.get_by_text("LIVE")).to_be_visible()                  # the e2e config runs live
     page.get_by_role("button", name="Run now").click()
     _wait_pending(url, 3)
     page.reload()
@@ -213,5 +213,5 @@ def test_settings_roundtrip(server, page):
     expect(page.locator("#copy")).to_be_checked()
     saved = yaml.safe_load((server["data"] / "config.yaml").read_text(encoding="utf-8"))
     assert saved["scan_interval_min"] == 7 and saved["copy_instead_of_move"] is True
-    expect(page.locator("#dry")).to_be_checked()                          # was ticked before, still is
+    expect(page.locator("#dry")).not_to_be_checked()                      # the e2e config runs live
     expect(page.locator("#at")).not_to_be_checked()

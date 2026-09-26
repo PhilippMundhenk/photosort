@@ -17,6 +17,18 @@ from .config import Config
 MANIFEST = "manifest.json"
 
 
+class DryRun(RuntimeError):
+    """Raised by every function that would move, copy or delete a photo while dry-run is on.
+    Dry-run means nothing moves, period: not on approve, not on auto-apply, not on undo. Every
+    path that touches a file goes through _transfer/_delete_with_sidecars, which check it, so
+    no caller can forget the check."""
+
+
+def _guard(cfg: Config) -> None:
+    if cfg.dry_run:
+        raise DryRun("dry-run is on: nothing is moved, copied or deleted (switch it off in Settings)")
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -38,6 +50,7 @@ def _unique(dst: Path) -> Path:
 
 def _transfer(cfg: Config, src: Path, dst_dir: Path, copy: bool = False) -> Path:
     """Move (or copy) a photo, its record and its .xmp into dst_dir; returns the new photo path."""
+    _guard(cfg)
     dst_dir.mkdir(parents=True, exist_ok=True)
     dst = _unique(dst_dir / src.name)
     op = shutil.copy2 if copy else shutil.move      # move = rename on same fs; copy+delete across mounts
@@ -62,6 +75,7 @@ def _settle(cfg: Config, dst: Path, update: dict | None = None) -> None:
 
 
 def _delete_with_sidecars(cfg: Config, photo: Path) -> None:
+    _guard(cfg)
     ingest.delete_sidecar(photo, cfg)
     photo.with_suffix(".xmp").unlink(missing_ok=True)
     photo.unlink(missing_ok=True)
@@ -97,8 +111,12 @@ def write_manifest(folder: Path, data: dict) -> None:
 
 
 def target_folder(cfg: Config, pr: dict) -> Path:
+    """Trips and day outs under the root; a home burst under _unnamed/ until it has a name, which
+    it has as soon as the user renamed the proposal in review."""
     root = Path(cfg.root)
-    return root / cfg.unnamed_dir / pr["name"] if pr["kind"] == "home" else root / pr["name"]
+    if pr["kind"] == "home" and not pr.get("name_edited") and not pr.get("manual"):
+        return root / cfg.unnamed_dir / pr["name"]
+    return root / pr["name"]
 
 
 def apply(cfg: Config, pr: dict, reviewed: bool = False, progress=None) -> dict:
@@ -108,6 +126,7 @@ def apply(cfg: Config, pr: dict, reviewed: bool = False, progress=None) -> dict:
     the folder. Unreviewed (auto-applied) proposals put their uncertain photos into
     <folder>/<review_dir> so they can be checked later. progress(done, total) is called after
     every file (the UI shows it; moving hundreds of files over a share takes a while)."""
+    _guard(cfg)
     folder = target_folder(cfg, pr)
     copy = cfg.copy_instead_of_move
     excluded = set(pr.get("excluded", []))
@@ -150,6 +169,7 @@ def apply_everyday(cfg: Config, min_age_days: float) -> int:
     """Move (or copy) unclustered inbox photos older than min_age_days into root/YYYY/MM."""
     if cfg.everyday_layout == "leave":
         return 0
+    _guard(cfg)
     props = cluster.load_proposals()
     clustered = {p["path"] for pr in props.values() if pr["status"] in ("pending", "ongoing", "approved")
                  for p in pr["photos"]}
@@ -179,6 +199,7 @@ def undo(cfg: Config, folder: Path) -> int:
     m = read_manifest(folder)
     if not m:
         return 0
+    _guard(cfg)
     copied = m.get("mode") == "copy"
     n = 0
     for p in m["photos"]:
@@ -203,6 +224,7 @@ def undo(cfg: Config, folder: Path) -> int:
 
 
 def rename(cfg: Config, folder: Path, new_name: str) -> Path:
+    _guard(cfg)
     new_name = cluster.sanitize(new_name)
     root = Path(cfg.root)
     # a named home burst leaves _unnamed

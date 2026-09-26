@@ -98,6 +98,17 @@
     }, 2000);
   }
 
+  // --- settings: switching dry-run off is the one action that lets files move ------------------
+  var dry = document.querySelector("[data-dry-run]");
+  if (dry) {
+    var wasOn = dry.checked;
+    dry.closest("form").addEventListener("submit", function (ev) {
+      if (wasOn && !dry.checked && !confirm("Switch dry-run OFF? Approved proposals will be moved now, and further approvals move files immediately.")) {
+        ev.preventDefault();
+      }
+    });
+  }
+
   // --- everyday page: per-day select-all and the selected counter ------------------------
   function countSelected() {
     var c = document.getElementById("selcount");

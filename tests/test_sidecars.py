@@ -94,7 +94,7 @@ def test_scan_uses_the_configured_store(tmp_path, data_dir, monkeypatch):
 
 @pytest.mark.parametrize("mode", ["central", "beside"])
 def test_record_follows_the_photo_and_is_dropped_after_sorting(cfg, mode):
-    cfg.sidecar_mode, cfg.sidecar_cleanup = mode, "after_move"
+    cfg.sidecar_mode, cfg.sidecar_cleanup, cfg.dry_run = mode, "after_move", False
     config.save(cfg)
     lib = synth.populate(cfg)
     cluster.run(cfg)
@@ -123,7 +123,7 @@ def test_record_follows_the_photo_and_is_dropped_after_sorting(cfg, mode):
 
 
 def test_cleanup_never_keeps_the_record_with_cluster_and_decision(cfg, library):
-    cfg.sidecar_cleanup = "never"
+    cfg.sidecar_cleanup, cfg.dry_run = "never", False
     config.save(cfg)
     cluster.run(cfg)
     local = next(p for p in cluster.load_proposals().values() if p["kind"] == "local")
@@ -138,7 +138,7 @@ def test_cleanup_never_keeps_the_record_with_cluster_and_decision(cfg, library):
 
 
 def test_copy_mode_keeps_source_record_in_central_index(cfg, library):
-    cfg.copy_instead_of_move = True
+    cfg.copy_instead_of_move, cfg.dry_run = True, False
     config.save(cfg)
     cluster.run(cfg)
     local = next(p for p in cluster.load_proposals().values() if p["kind"] == "local")
@@ -153,7 +153,7 @@ def test_copy_mode_keeps_source_record_in_central_index(cfg, library):
 
 
 def test_rename_and_move_out_keep_records_in_sync(cfg, library):
-    cfg.sidecar_cleanup = "never"
+    cfg.sidecar_cleanup, cfg.dry_run = "never", False
     config.save(cfg)
     cluster.run(cfg)
     home = next(p for p in cluster.load_proposals().values() if p["kind"] == "home")
@@ -192,7 +192,7 @@ def test_migrate_between_layouts_and_name_patterns(cfg, library):
 
 
 def test_purge_sorted_tree_and_orphans(cfg, library):
-    cfg.sidecar_cleanup = "never"
+    cfg.sidecar_cleanup, cfg.dry_run = "never", False
     config.save(cfg)
     cluster.run(cfg)
     local = next(p for p in cluster.load_proposals().values() if p["kind"] == "local")

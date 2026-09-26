@@ -16,7 +16,7 @@
   <a href="/log" class="{{ 'active' if page=='log' }}">Log</a>
   <a href="/settings" class="{{ 'active' if page=='settings' }}">Settings</a>
   <div class="right">
-    {% if cfg.dry_run %}<span class="badge warn">dry-run</span>{% else %}<span class="badge ok">live</span>{% endif %}
+    {% if cfg.dry_run %}<span class="badge warn" title="nothing is moved, copied or deleted">dry-run</span>{% else %}<span class="badge bad" title="approved proposals are moved">LIVE</span>{% endif %}
     {% if state.running %}<span class="badge">running…</span>{% endif %}
     <form method="post" action="/run" class="inline"><button class="small">Run now</button></form>
   </div>

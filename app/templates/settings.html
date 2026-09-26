@@ -63,7 +63,7 @@
 
 <div class="card">
   <h2 style="margin-top:0">Behaviour</h2>
-  <div class="check"><input type="checkbox" id="dry" name="dry_run" {% if cfg.dry_run %}checked{% endif %}><label for="dry"><b>Dry-run</b> — propose only, move nothing without approval</label></div>
+  <div class="check"><input type="checkbox" id="dry" name="dry_run" {% if cfg.dry_run %}checked{% endif %} data-dry-run><label for="dry"><b>Dry-run</b> — nothing is moved, copied or deleted, whatever you approve. Switch off to let approved proposals move.</label></div>
   <div class="check"><input type="checkbox" id="copy" name="copy_instead_of_move" {% if cfg.copy_instead_of_move %}checked{% endif %}><label for="copy"><b>Copy instead of move</b> — originals stay in the inbox (their sidecar notes where the copy went); undo deletes the copies</label></div>
   <div class="check"><input type="checkbox" id="at" name="auto_apply_trips" {% if cfg.auto_apply_trips %}checked{% endif %}><label for="at">Auto-apply trips (when not dry-run)</label></div>
   <div class="check"><input type="checkbox" id="al" name="auto_apply_local" {% if cfg.auto_apply_local %}checked{% endif %}><label for="al">Auto-apply local day outs</label></div>
