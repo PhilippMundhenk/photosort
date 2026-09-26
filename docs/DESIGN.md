@@ -157,7 +157,12 @@ built incrementally.
 
 ## 7. Hardware constraints and how they shaped the code
 
-- Never open an image: EXIF via `exiftool` in batches, thumbnails from the NAS's `@eaDir`.
+- EXIF via `exiftool` in batches. Thumbnails come from the NAS's `@eaDir` when present;
+  otherwise (revised September 2026, after the first real run showed mostly placeholders)
+  they are generated once into `data/thumbs`: Pillow in JPEG draft mode (decodes at 1/8
+  scale, ~30 ms per 12 MP photo), the embedded preview for RAW via exiftool, one frame via
+  ffmpeg for videos. A background thread pre-generates after each scan. This is the one
+  place the app decodes images; it is bounded and cached, and can be switched off.
 - Offline reverse geocoding with a pure-Python package (no numpy/scipy build on the T430).
 - The decision model runs as its own resident container (~1 GB); the app itself is ~60 MB.
   Ollama and Kev should not be loaded at the same time on this machine.

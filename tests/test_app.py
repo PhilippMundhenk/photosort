@@ -2,6 +2,7 @@
 form action, against the synthetic library. No browser; see tests/e2e for that."""
 from __future__ import annotations
 
+import io
 import json
 import time
 from datetime import timedelta
@@ -256,20 +257,45 @@ def test_live_mode_applies_approved_without_review_folder(client, library):
 
 # --- thumbnails ----------------------------------------------------------------------------------
 
-def test_thumb_prefers_nas_thumbnail_then_small_original_then_placeholder(client, library, tmp_path):
-    photo = library.paths[0]
+def test_thumb_nas_then_generated_then_placeholder(client, library, tmp_path):
+    from PIL import Image
+    photo = library.paths[0]                                             # fake bytes, not decodable
     r = client.get("/thumb", params={"path": str(photo)})
-    assert r.status_code == 200 and r.content == photo.read_bytes()      # small jpg served directly
+    assert r.status_code == 200 and r.headers["content-type"].startswith("image/svg+xml")
+    Image.new("RGB", (800, 600), "red").save(photo, "JPEG")             # now a real photo
+    r = client.get("/thumb", params={"path": str(photo)})
     assert r.headers["content-type"] == "image/jpeg"
+    with Image.open(io.BytesIO(r.content)) as im:
+        assert im.size == (440, 330)
     t = photo.parent / "@eaDir" / photo.name / "SYNOPHOTO_THUMB_M.jpg"
     t.parent.mkdir(parents=True)
     t.write_bytes(b"THUMB")
-    assert client.get("/thumb", params={"path": str(photo)}).content == b"THUMB"
-    r = client.get("/thumb", params={"path": str(tmp_path / "missing.dng")})
-    assert r.status_code == 200 and r.headers["content-type"].startswith("image/svg+xml")
-    big = tmp_path / "big.jpg"
-    big.write_bytes(b"\0" * 3_000_001)
-    assert client.get("/thumb", params={"path": str(big)}).headers["content-type"].startswith("image/svg+xml")
+    assert client.get("/thumb", params={"path": str(photo)}).content == b"THUMB"     # NAS wins
+    outside = tmp_path / "outside.jpg"
+    Image.new("RGB", (80, 60)).save(outside, "JPEG")
+    r = client.get("/thumb", params={"path": str(outside)})
+    assert r.headers["content-type"].startswith("image/svg+xml")                    # not under inbox/root
+    r = client.get("/thumb", params={"path": str(Path(cfg_root(client)) / "x.mp4")})
+    assert r.headers["content-type"].startswith("image/svg+xml") and b"video" in r.content.lower()
+
+
+def cfg_root(client) -> str:
+    return config.load().root
+
+
+def test_media_serves_original_or_preview(client, library, tmp_path):
+    from PIL import Image
+    photo = library.paths[0]
+    Image.new("RGB", (800, 600), "blue").save(photo, "JPEG")
+    r = client.get("/media", params={"path": str(photo)})
+    assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg" and r.content == photo.read_bytes()
+    heic_like = photo.with_suffix(".bmp")                                # not browser-native -> preview jpeg
+    Image.new("RGB", (3000, 2000), "green").save(heic_like, "BMP")
+    r = client.get("/media", params={"path": str(heic_like)})
+    assert r.status_code == 200
+    with Image.open(io.BytesIO(r.content)) as im:
+        assert im.size == (2000, 1333)
+    assert client.get("/media", params={"path": str(tmp_path / "nope.jpg")}).status_code == 404
 
 
 def test_review_page_thumbnails_are_linked(client, library):

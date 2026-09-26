@@ -14,7 +14,8 @@
   <label>Review subfolder for low-confidence photos of <i>auto-applied</i> clusters (manual approval settles them)</label><input type="text" name="review_dir" value="{{ cfg.review_dir }}">
   <div class="check"><input type="checkbox" id="sbs" name="subfolder_by_source" {% if cfg.subfolder_by_source %}checked{% endif %}><label for="sbs">Per-source subfolders (<code>2026-10 Lisbon/smartphone-a/</code>)</label></div>
   <label>Photo extensions</label><input type="text" name="photo_extensions" value="{{ extensions }}">
-  <label>Thumbnail pattern (relative to the photo, <code>{name}</code> = file name)</label><input type="text" name="thumb_pattern" value="{{ cfg.thumb_pattern }}">
+  <label>NAS thumbnail pattern (relative to the photo, <code>{name}</code> = file name)</label><input type="text" name="thumb_pattern" value="{{ cfg.thumb_pattern }}">
+  <div class="check"><input type="checkbox" id="gt" name="generate_thumbnails" {% if cfg.generate_thumbnails %}checked{% endif %}><label for="gt">Generate thumbnails when the NAS has none (cached in <code>data/thumbs</code>; videos need ffmpeg)</label></div>
 </div>
 
 <div class="card">
