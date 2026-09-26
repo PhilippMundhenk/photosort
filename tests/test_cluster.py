@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from app import cluster, config, geo
+from app import cluster, config, geo, ingest
 from app.kev import Decider
 from tests.synth import HOME, LISBON, LUDWIGSBURG, SEVILLE, T0
 
@@ -93,8 +93,14 @@ def test_excursion_split_needs_long_gap_and_distance():
     assert len(cluster.find_excursions(cfg, far_slow)) == 2
     near_home = [rec(t, Z.ZONE_LOCAL, LUDWIGSBURG), rec(t + timedelta(days=10), Z.ZONE_LOCAL, LUDWIGSBURG)]
     assert len(cluster.find_excursions(cfg, near_home)) == 2              # long gap near home: two outings
-    near_short = [rec(t, Z.ZONE_LOCAL, LUDWIGSBURG), rec(t + timedelta(days=2), Z.ZONE_LOCAL, LUDWIGSBURG)]
-    assert len(cluster.find_excursions(cfg, near_short)) == 1
+    two_days = [rec(t, Z.ZONE_LOCAL, LUDWIGSBURG), rec(t + timedelta(days=2), Z.ZONE_LOCAL, LUDWIGSBURG)]
+    assert len(cluster.find_excursions(cfg, two_days)) == 2               # two evenings, no home photo between
+    overnight = [rec(t, Z.ZONE_AWAY, LISBON), rec(t + h(20), Z.ZONE_LOCAL, HOME)]
+    assert len(cluster.find_excursions(cfg, overnight)) == 2              # day out, then a clip near home next day
+    evening = [rec(t, Z.ZONE_LOCAL, LUDWIGSBURG), rec(t + h(11), Z.ZONE_LOCAL, LUDWIGSBURG)]
+    assert len(cluster.find_excursions(cfg, evening)) == 1                # a long day out stays one
+    far_night = [rec(t, Z.ZONE_AWAY, LISBON), rec(t + h(20), Z.ZONE_AWAY, LISBON)]
+    assert len(cluster.find_excursions(cfg, far_night)) == 1              # away from home, nights do not split
 
 
 def test_trip_proposal_confidences_and_ongoing():
@@ -197,6 +203,25 @@ def test_run_uses_decider_answer_and_applied_history(cfg, library):
             return {"id": "x", "by": "kev", "answer": "busy_day", "probs": {}, "conf": 0.9}
     cluster.run(cfg, Busy(cfg))
     assert "home" not in {p["kind"] for p in cluster.load_proposals().values()}
+
+
+def test_load_records_is_cached_until_a_record_changes(cfg, library, monkeypatch):
+    calls = []
+    real = cluster._load_records
+    monkeypatch.setattr(cluster, "_load_records", lambda c: calls.append(1) or real(c))
+    a, _ = cluster.load_records(cfg)
+    b, _ = cluster.load_records(cfg)
+    assert calls == [1] and a == b and a[0] is not b[0]                  # cached, copies
+    a[0]["zone"] = "mutated"
+    assert cluster.load_records(cfg)[0][0]["zone"] != "mutated"
+    ingest.write_sidecar(library.paths[0], {**ingest.read_sidecar(library.paths[0], cfg), "ts": None}, cfg)
+    assert cluster.load_records(cfg)[1] and calls == [1, 1]              # a write invalidates
+    cfg.home_lat += 1
+    cluster.load_records(cfg)
+    assert calls == [1, 1, 1]                                            # so does a config change
+    ingest.scan(cfg)
+    cluster.load_records(cfg)
+    assert calls == [1, 1, 1, 1]                                         # and a scan
 
 
 def test_run_records_without_timestamp_are_counted(cfg, library):

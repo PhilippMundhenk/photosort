@@ -40,6 +40,7 @@ class Config:
     trip_min_hours: float = 20.0           # run spans at least this long -> trip (multi-day); shorter -> day out
     trip_min_photos: int = 3               # located photos a trip needs
     dayout_min_photos: int = 8             # photos a day out needs (keeps the school run out)
+    local_gap_hours: float = 12.0          # near home (local zone) a photo-less gap longer than this ends the outing
     trip_gap_days: float = 4.0             # gap without photos > this AND different area -> split
     trip_split_distance_km: float = 300.0  # "different area" if runs are further apart than this
     max_places_in_name: int = 4

@@ -27,6 +27,15 @@ SIDECAR_VERSION = 1
 INDEX_DIR = DATA_DIR / "index"
 log = logging.getLogger("photosort.ingest")
 
+# Bumped whenever a record is written, moved or deleted, or a scan ran: the record cache in
+# cluster.load_records keys on it (reading 800 small files through a bind mount costs seconds).
+generation = 0
+
+
+def _bump() -> None:
+    global generation
+    generation += 1
+
 
 class ExifToolMissing(RuntimeError):
     """exiftool is not on PATH; the scan skips new photos instead of writing empty sidecars."""
@@ -92,6 +101,7 @@ def write_sidecar(photo: Path, rec: dict, cfg: Config | None = None) -> None:
     tmp = sp.with_name(sp.name + ".tmp")
     tmp.write_text(json.dumps(rec, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(sp)
+    _bump()
 
 
 def delete_sidecar(photo: Path, cfg: Config | None = None) -> bool:
@@ -100,6 +110,7 @@ def delete_sidecar(photo: Path, cfg: Config | None = None) -> bool:
         return False
     sp.unlink()
     _prune_empty(sp.parent)
+    _bump()
     return True
 
 
@@ -169,6 +180,7 @@ def migrate_sidecars(cfg: Config) -> dict:
                     _prune_empty(cand.parent)
                     stats["moved"] += 1
                     break
+    _bump()
     return stats
 
 
@@ -194,6 +206,7 @@ def purge_sidecars(cfg: Config, sorted_tree: bool = True, orphans: bool = True) 
                 f.unlink()
                 _prune_empty(f.parent)
                 stats["orphans"] += 1
+    _bump()
     return stats
 
 
@@ -383,6 +396,7 @@ def scan(cfg: Config, force: bool = False) -> dict:
                 write_sidecar(p, rec, cfg)
         stats["new"] += len(todo)
         stats["total"] += len(photos)
+    _bump()                                   # files may have appeared or vanished
     return stats
 
 
