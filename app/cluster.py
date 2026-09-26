@@ -3,8 +3,9 @@
   zone per photo      home < home_radius < local < local_radius < away (local/away is a label only)
   no GPS              take the nearest photo in time that has GPS
   excursion           maximal run of photos not at home; ends at any home photo; GPS-less photos
-                      inside the run ride along. A photo-less gap splits the run only if it is
-                      long AND (the two sides are in different areas OR one side is near home).
+                      inside the run ride along. A photo-less gap splits the run if it is long AND
+                      the two sides are in different areas, or if it exceeds local_gap_hours while
+                      either side is near home (you sleep at home, so a night ends the outing).
     trip              the run spans >= trip_min_hours (an overnight stay)  -> "YYYY-MM-DD..DD Places"
     day out           shorter, with >= dayout_min_photos photos           -> "YYYY-MM-DD Place"
   home burst          photos at home closer than burst_gap_hours, above baseline -> Kev: occasion / busy_day
@@ -57,9 +58,27 @@ def _dt(s: str, tz=None) -> datetime:
     return d if d.tzinfo else d.replace(tzinfo=tz or timezone.utc)
 
 
+_records_cache: dict = {"key": None, "value": None}
+
+
+def _records_key(cfg: Config) -> tuple:
+    return (ingest.generation, json.dumps(cfg.inboxes, sort_keys=True), cfg.sidecar_mode, cfg.sidecar_name,
+            cfg.timezone, cfg.home_lat, cfg.home_lon, cfg.home_radius_km, cfg.local_radius_km,
+            tuple(cfg.photo_extensions))
+
+
 def load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
     """Sidecars from all inboxes, merged into one timeline. Returns (records, skipped_without_ts).
-    Originals already copied into the sorted tree (sidecar `copied_to`, copy mode) are left out."""
+    Originals already copied into the sorted tree (sidecar `copied_to`, copy mode) are left out.
+    Cached until a record changes or a scan runs (ingest.generation); callers get copies."""
+    key = _records_key(cfg)
+    if _records_cache["key"] != key:
+        _records_cache["key"], _records_cache["value"] = key, _load_records(cfg)
+    recs, skipped = _records_cache["value"]
+    return [dict(r) for r in recs], [dict(r) for r in skipped]
+
+
+def _load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
     recs, skipped = [], []
     tz = tzinfo(cfg)
     for name, folder in inbox_dirs(cfg):
@@ -135,8 +154,9 @@ def find_excursions(cfg: Config, recs: list[dict]) -> list[list[dict]]:
             far = False
             if prev.get("lat") is not None and nxt.get("lat") is not None:     # GPS-less photos never split
                 far = geo.haversine_km(prev["lat"], prev["lon"], nxt["lat"], nxt["lon"]) > cfg.trip_split_distance_km
-            near_home = geo.ZONE_LOCAL in (prev["zone"], nxt["zone"])   # you sleep at home: no 2-week trip 10 km away
-            if gap_days > cfg.trip_gap_days and (far or near_home):
+            # near home you sleep at home: a gap over a night ends the outing even without a home photo
+            near_home = geo.ZONE_LOCAL in (prev["zone"], nxt["zone"])
+            if (gap_days > cfg.trip_gap_days and far) or (near_home and gap_days * 24 > cfg.local_gap_hours):
                 out.append(part)
                 part = []
             part.append(nxt)

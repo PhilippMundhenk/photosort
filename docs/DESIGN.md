@@ -72,7 +72,10 @@ mechanics, which are unchanged.
   photo). They are not needed to define the trip; they must not break it either.
 - A photo-less gap splits a run only if it is long (`trip_gap_days`) **and** the two sides are
   far apart. "Same area → same trip" was the user's rule for gaps; a model question was
-  considered and dropped.
+  considered and dropped. Near home (local zone) the assumption is reversed: you sleep at
+  home, so a gap longer than `local_gap_hours` (12 h) ends the outing even when no photo was
+  taken at home in between (added after two evenings two days apart, and a day out plus a
+  video the next morning, were merged into one "trip").
 - Photos without GPS inherit the nearest GPS'd photo in time (within 48 h). Also the user's
   rule; simpler than asking the model.
 - A run whose last photo is recent is marked *ongoing* (the home photo may not have synced
