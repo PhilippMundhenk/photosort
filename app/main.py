@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import logging
+import mimetypes
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -212,16 +213,30 @@ def cluster_move_out(folder: str = Form(...), photo: str = Form(...)):
     return RedirectResponse(f"/clusters/view?folder={folder}", status_code=303)
 
 
+def _read_small(p: Path, limit: int = 3_000_000) -> bytes | None:
+    """Whole small file in one go (photos may be moved by a review action while the page still
+    loads thumbnails; an open FileResponse would 500 or, on Windows, block the move)."""
+    try:
+        if p.stat().st_size >= limit:
+            return None
+        return p.read_bytes()
+    except OSError:
+        return None
+
+
 @app.get("/thumb")
 def thumb(path: str):
     """Serve the NAS thumbnail for a photo if one exists; the original is never decoded here."""
     cfg = config.load()
     p = Path(path)
     t = mover.thumb_for(cfg, p)
-    if t:
-        return FileResponse(t)
-    if p.suffix.lower() in (".jpg", ".jpeg", ".png") and p.exists() and p.stat().st_size < 3_000_000:
-        return FileResponse(p)  # small originals only
+    data = _read_small(t) if t else None
+    if data is not None:
+        return Response(data, media_type=mimetypes.guess_type(t.name)[0] or "image/jpeg")
+    if p.suffix.lower() in (".jpg", ".jpeg", ".png"):
+        data = _read_small(p)                                 # small originals only
+        if data is not None:
+            return Response(data, media_type=mimetypes.guess_type(p.name)[0] or "image/jpeg")
     return FileResponse(BASE / "static" / "nothumb.svg", media_type="image/svg+xml")
 
 
