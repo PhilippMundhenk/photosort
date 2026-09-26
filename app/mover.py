@@ -123,7 +123,7 @@ def apply(cfg: Config, pr: dict, reviewed: bool = False) -> dict:
         if cfg.write_xmp_sidecar:
             ingest.write_xmp_keywords(dst, [f"zone/{p['zone']}", f"cluster/{pr['name']}"])
         moved.append({"src": p["path"], "dst": str(dst), "conf": p["conf"], "zone": p["zone"],
-                      "source": p.get("source"), "inbox": p.get("inbox"),
+                      "media": p.get("media", "photo"), "source": p.get("source"), "inbox": p.get("inbox"),
                       "uncertain": bool(p.get("uncertain")), "in_review": in_review})
     manifest = {
         "name": pr["name"], "kind": pr["kind"], "start": pr["start"], "end": pr["end"],

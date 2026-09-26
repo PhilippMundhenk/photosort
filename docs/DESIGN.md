@@ -185,6 +185,14 @@ match. This is the actual learning objective of the project: does "0.8" mean 0.8
   side.
 - Devices without GPS whose neighbours are all from another leg will land in the wrong leg;
   corrections catch it.
-- Time zones: EXIF `OffsetTimeOriginal` is used when present; otherwise timestamps are
-  treated as naive and sorted as-is, which is fine within one trip but can misorder a
-  same-hour photo from two devices in different zones.
+- Time zones (revised September 2026 when videos were added): the config has a home zone
+  (`timezone`, seeded from `TZ`). Photo times with `OffsetTimeOriginal` are exact; naive EXIF
+  times are read as wall time in the home zone. Video times are exact when the file has
+  iPhone's `Keys:CreationDate` (with offset); otherwise QuickTime `CreateDate` is UTC by spec
+  and is converted to the home zone. Remaining error: a naive photo taken abroad is off by the
+  difference between the trip's zone and home (0-2 h in Europe), which cannot misorder it by
+  more than that. Some Android builds write local time into `CreateDate` against the spec;
+  those videos are then off by the UTC offset. No fix without per-device rules.
+- Devices: `Make`/`Model` from EXIF (photos, iPhone videos) or the Android QuickTime keys;
+  a file without any device metadata (typical Android video) takes the inbox name and, when
+  counting devices for the home-burst question, merges with the inbox's single named device.

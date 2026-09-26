@@ -20,10 +20,14 @@ inbox/camera/**.dng  ─┘                              sorted/_unnamed/2026-06
                                                      sorted/2026/06/                          ← everything else
 ```
 
-1. **Scan** (every N minutes): every photo in every input folder (recursive) gets a JSON
-   sidecar `<file>.photosort.json` with timestamp, GPS, offline reverse-geocoded place and its
-   *zone* relative to your home: `home` (< 0.5 km), `local` (< 20 km), `away` (beyond).
+1. **Scan** (every N minutes): every photo and video in every input folder (recursive) gets a
+   JSON sidecar `<file>.photosort.json` with timestamp, GPS, offline reverse-geocoded place and
+   its *zone* relative to your home: `home` (< 0.5 km), `local` (< 20 km), `away` (beyond).
    Photos without GPS take the position of the nearest photo in time that has one.
+   Videos (iPhone and Android MP4/MOV) are read the same way: GPS from the QuickTime keys,
+   the timestamp from `CreationDate` (iPhone, with offset) or the spec-UTC `CreateDate`
+   converted to your home time zone (`TZ` / Settings), the device from the metadata or, when
+   the video carries none (Android), from the inbox name.
 2. **Cluster** (deterministic):
    - **Trip** = a run of `away` photos. Any `home` photo ends it, no matter how short the stay.
      Local/no-GPS photos inside the run ride along. Lisbon → Seville → Lisbon is one trip.

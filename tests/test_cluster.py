@@ -116,8 +116,8 @@ def test_home_state_summary():
     t = datetime(2026, 6, 29, 14, 0, tzinfo=timezone.utc)                    # a Monday
     burst = [{**rec(t + h(i * 0.15), Z.ZONE_HOME, HOME), "camera": "a" if i % 2 else "b"} for i in range(25)]
     st = cluster.home_state(cfg, burst, threshold=12)
-    assert st == {"photos": 25, "duration_h": 3.6, "weekday": "Monday", "start_hour": 14, "end_hour": 17,
-                  "devices": 2, "burst_ratio": 2.08, "date": "2026-06-29"}
+    assert st == {"photos": 25, "videos": 0, "duration_h": 3.6, "weekday": "Monday", "start_hour": 14,
+                  "end_hour": 17, "devices": 2, "burst_ratio": 2.08, "date": "2026-06-29"}
 
 
 # --- run() -----------------------------------------------------------------------------

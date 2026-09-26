@@ -10,6 +10,7 @@ services:
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:
       PHOTOSORT_DATA: /data
+      TZ: ${TZ:-UTC}                                  # home zone: naive photo times, video UTC conversion
       # default decision-model URL (base URL; the app appends /v1/systemone). Settings in the UI win.
       PHOTOSORT_KEV_URL: ${PHOTOSORT_KEV_URL:-http://laya:8000}
     volumes:

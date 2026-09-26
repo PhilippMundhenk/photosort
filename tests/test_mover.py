@@ -286,4 +286,4 @@ def test_manifest_json_is_valid_and_complete(cfg, library):
     folder = mover.target_folder(cfg, kinds["local"])
     m = json.loads((folder / mover.MANIFEST).read_text(encoding="utf-8"))
     assert set(m) >= {"name", "kind", "start", "end", "proposal_id", "decision", "applied", "label", "photos", "mode"}
-    assert set(m["photos"][0]) == {"src", "dst", "conf", "zone", "source", "inbox", "uncertain", "in_review"}
+    assert set(m["photos"][0]) == {"src", "dst", "conf", "zone", "media", "source", "inbox", "uncertain", "in_review"}

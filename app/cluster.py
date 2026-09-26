@@ -19,9 +19,10 @@ import re
 import statistics
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from . import geo, ingest
-from .config import DATA_DIR, Config, inbox_dirs
+from .config import DATA_DIR, Config, inbox_dirs, tzinfo
 from .kev import Decider
 
 PROPOSALS_PATH = DATA_DIR / "proposals.json"
@@ -48,15 +49,17 @@ def save_proposals(props: dict[str, dict]) -> None:
 
 # --- records -------------------------------------------------------------------
 
-def _dt(s: str) -> datetime:
+def _dt(s: str, tz=None) -> datetime:
+    """Sidecar timestamp -> aware datetime. Naive values are local wall time in the home zone."""
     d = datetime.fromisoformat(s)
-    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    return d if d.tzinfo else d.replace(tzinfo=tz or timezone.utc)
 
 
 def load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
     """Sidecars from all inboxes, merged into one timeline. Returns (records, skipped_without_ts).
     Originals already copied into the sorted tree (sidecar `copied_to`, copy mode) are left out."""
     recs, skipped = [], []
+    tz = tzinfo(cfg)
     for name, folder in inbox_dirs(cfg):
         if not folder.exists():
             continue
@@ -73,7 +76,7 @@ def load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
             if not rec.get("ts"):
                 skipped.append(rec)
                 continue
-            rec["_t"] = _dt(rec["ts"])
+            rec["_t"] = _dt(rec["ts"], tz)
             recs.append(rec)
     recs.sort(key=lambda r: r["_t"])
     return recs, skipped
@@ -176,6 +179,7 @@ def sanitize(name: str) -> str:
 
 def _photo_entry(r: dict, conf: float) -> dict:
     return {"path": r["path"], "file": r["file"], "ts": r["ts"], "zone": r["zone"],
+            "media": r.get("media") or ("video" if ingest.is_video(Path(r["path"])) else "photo"),
             "source": r.get("source"), "inbox": r.get("inbox"),
             "place": (r.get("place") or {}).get("place"), "gps_source": r.get("gps_source"),
             "conf": round(conf, 2), "uncertain": conf < UNCERTAIN_BELOW}
@@ -250,14 +254,43 @@ HOME_BURST_CRITERIA = {
 }
 
 
+def count_devices(recs: list[dict]) -> int:
+    """Distinct devices. A record whose device name is only the inbox name (no metadata, e.g. an
+    Android video) counts as the inbox's metadata-named device when that inbox has exactly one."""
+    named: dict[str | None, set[str]] = {}
+    for r in recs:
+        if r.get("camera") and r.get("camera_source") != "inbox":
+            named.setdefault(r.get("source"), set()).add(r["camera"])
+    keys = set()
+    for r in recs:
+        cam, src = r.get("camera"), r.get("source")
+        if cam and r.get("camera_source") != "inbox":
+            keys.add(("cam", cam))
+        elif len(named.get(src, ())) == 1:
+            keys.add(("cam", next(iter(named[src]))))
+        else:
+            keys.add(("inbox", src))
+    return len(keys)
+
+
+def media_label(recs: list[dict]) -> str:
+    videos = sum(1 for r in recs if r.get("media") == "video")
+    photos = len(recs) - videos
+    parts = [f"{photos} Fotos"] if photos or not videos else []
+    if videos:
+        parts.append(f"{videos} Videos")
+    return ", ".join(parts)
+
+
 def home_state(cfg: Config, burst: list[dict], threshold: float) -> dict:
     a, b = _span(burst)
     return {
         "photos": len(burst),
+        "videos": sum(1 for r in burst if r.get("media") == "video"),
         "duration_h": round((b - a).total_seconds() / 3600, 1),
         "weekday": a.strftime("%A"),
         "start_hour": a.hour, "end_hour": b.hour,
-        "devices": len({r.get("camera") for r in burst}),
+        "devices": count_devices(burst),
         "burst_ratio": round(len(burst) / threshold, 2),
         "date": a.strftime("%Y-%m-%d"),
     }
@@ -267,7 +300,7 @@ def home_proposal(cfg: Config, burst: list[dict], decision: dict) -> dict:
     a, b = _span(burst)
     photos = [_photo_entry(r, 1.0) for r in burst]
     return {"id": _pid("home", burst), "kind": "home",
-            "name": sanitize(f"{span_label(a, b)} ({len(burst)} Fotos)"),
+            "name": sanitize(f"{span_label(a, b)} ({media_label(burst)})"),
             "start": a.isoformat(), "end": b.isoformat(), "photos": photos, "n": len(photos),
             "n_uncertain": 0, "status": "pending",
             "decision": {"by": decision["by"], "conf": round(decision["conf"], 3), "id": decision["id"],
