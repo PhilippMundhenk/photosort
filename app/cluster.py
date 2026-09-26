@@ -55,7 +55,8 @@ def _dt(s: str) -> datetime:
 
 
 def load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
-    """Sidecars from all inboxes, merged into one timeline. Returns (records, skipped_without_ts)."""
+    """Sidecars from all inboxes, merged into one timeline. Returns (records, skipped_without_ts).
+    Originals already copied into the sorted tree (sidecar `copied_to`, copy mode) are left out."""
     recs, skipped = [], []
     for name, folder in inbox_dirs(cfg):
         if not folder.exists():
@@ -63,6 +64,8 @@ def load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
         for p in ingest.list_photos(cfg, folder):
             rec = ingest.read_sidecar(p)
             if rec is None:
+                continue
+            if rec.get("copied_to"):          # copy mode: the original was already sorted
                 continue
             rec = dict(rec)
             rec["path"] = str(p)

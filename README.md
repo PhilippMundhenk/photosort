@@ -51,7 +51,9 @@ Press **Run now**. The first scan runs `exiftool` over every photo once (a few m
 20k files); afterwards only new files are read.
 
 - Photos are mounted, not copied. Moves are `rename()` on the same mount; keep inbox and
-  target on the same share.
+  target on the same share. **Copy instead of move** (Settings → Behaviour) copies into the
+  sorted tree and leaves the originals in the inbox; their sidecar records `copied_to`, so they
+  are not proposed again. Undo and "move out" then delete the copy and clear that mark.
 - Config lives in `data/config.yaml`, decisions in `data/events.jsonl`, current proposals in
   `data/proposals.json`. Losing `data/` loses history and pending proposals, never photos.
 - Behind Traefik/Authelia: uncomment the labels in `docker-compose.yml`. There is no

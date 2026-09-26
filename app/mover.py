@@ -1,6 +1,8 @@
-"""Moving files. Everything is a rename() on the same mount (no copy), every move is
-recorded in the target folder's manifest.json so it can be undone and later serves as
-the eval set."""
+"""Moving files. By default everything is a rename() on the same mount (no copy); with
+cfg.copy_instead_of_move the photo is copied and the original stays in the inbox, its sidecar
+recording where the copy went (copied_to) so it is never proposed again. Every transfer is
+recorded in the target folder's manifest.json so it can be undone and later serves as the
+eval set."""
 from __future__ import annotations
 
 import json
@@ -18,6 +20,10 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _mode(cfg: Config) -> str:
+    return "copy" if cfg.copy_instead_of_move else "move"
+
+
 def _unique(dst: Path) -> Path:
     if not dst.exists():
         return dst
@@ -29,15 +35,41 @@ def _unique(dst: Path) -> Path:
         i += 1
 
 
-def _move_with_sidecars(src: Path, dst_dir: Path) -> Path:
+def _companions(photo: Path, dst: Path) -> list[tuple[Path, str]]:
+    """(existing companion file of `photo`, its file name next to `dst`)."""
+    return [(extra, newname) for extra, newname in
+            ((ingest.sidecar_path(photo), dst.name + ingest.SIDECAR_SUFFIX),
+             (photo.with_suffix(".xmp"), dst.stem + ".xmp")) if extra.exists()]
+
+
+def _transfer(src: Path, dst_dir: Path, copy: bool = False) -> Path:
+    """Move (or copy) a photo plus its sidecars into dst_dir; returns the new photo path."""
     dst_dir.mkdir(parents=True, exist_ok=True)
     dst = _unique(dst_dir / src.name)
-    shutil.move(str(src), str(dst))          # rename on same fs; copy+delete across mounts
-    for extra, newname in ((ingest.sidecar_path(src), dst.name + ingest.SIDECAR_SUFFIX),
-                           (src.with_suffix(".xmp"), dst.stem + ".xmp")):
-        if extra.exists():
-            shutil.move(str(extra), str(dst_dir / newname))
+    op = shutil.copy2 if copy else shutil.move      # move = rename on same fs; copy+delete across mounts
+    op(str(src), str(dst))
+    for extra, newname in _companions(src, dst):
+        op(str(extra), str(dst_dir / newname))
     return dst
+
+
+def _delete_with_sidecars(photo: Path) -> None:
+    for extra, _ in _companions(photo, photo):
+        extra.unlink(missing_ok=True)
+    photo.unlink(missing_ok=True)
+
+
+def _mark_source(src: Path, copied_to: Path | None, cluster_name: str | None) -> None:
+    """In copy mode the original's sidecar says where its copy lives (None clears the mark)."""
+    rec = ingest.read_sidecar(src)
+    if rec is None:
+        return
+    if copied_to is None:
+        rec.pop("copied_to", None)
+    else:
+        rec["copied_to"] = str(copied_to)
+    rec["cluster"] = cluster_name
+    ingest.write_sidecar(src, rec)
 
 
 def read_manifest(folder: Path) -> dict | None:
@@ -45,14 +77,14 @@ def read_manifest(folder: Path) -> dict | None:
     if not mp.exists():
         return None
     try:
-        return json.loads(mp.read_text())
+        return json.loads(mp.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return None
 
 
 def write_manifest(folder: Path, data: dict) -> None:
     tmp = folder / (MANIFEST + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1))
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(folder / MANIFEST)
 
 
@@ -62,8 +94,9 @@ def target_folder(cfg: Config, pr: dict) -> Path:
 
 
 def apply(cfg: Config, pr: dict) -> dict:
-    """Move a proposal's photos into its folder; uncertain ones into <folder>/_review."""
+    """Move (or copy) a proposal's photos into its folder; uncertain ones into <folder>/_review."""
     folder = target_folder(cfg, pr)
+    copy = cfg.copy_instead_of_move
     excluded = set(pr.get("excluded", []))
     moved = []
     for p in pr["photos"]:
@@ -73,11 +106,14 @@ def apply(cfg: Config, pr: dict) -> dict:
         dst_dir = folder / p["source"] if (cfg.subfolder_by_source and p.get("source")) else folder
         if p.get("uncertain"):
             dst_dir = dst_dir / cfg.review_dir
-        dst = _move_with_sidecars(src, dst_dir)
+        dst = _transfer(src, dst_dir, copy)
         rec = ingest.read_sidecar(dst) or {}
+        rec.pop("copied_to", None)
         rec["cluster"] = pr["name"]
         rec["decision"] = {"by": pr["decision"]["by"], "conf": p["conf"], "kind": pr["kind"]}
         ingest.write_sidecar(dst, rec)
+        if copy:
+            _mark_source(src, dst, pr["name"])
         if cfg.write_xmp_sidecar:
             ingest.write_xmp_keywords(dst, [f"zone/{p['zone']}", f"cluster/{pr['name']}"])
         moved.append({"src": p["path"], "dst": str(dst), "conf": p["conf"], "zone": p["zone"],
@@ -85,17 +121,17 @@ def apply(cfg: Config, pr: dict) -> dict:
                       "uncertain": bool(p.get("uncertain"))})
     manifest = {
         "name": pr["name"], "kind": pr["kind"], "start": pr["start"], "end": pr["end"],
-        "proposal_id": pr["id"], "decision": pr["decision"], "applied": _now(),
+        "proposal_id": pr["id"], "decision": pr["decision"], "applied": _now(), "mode": _mode(cfg),
         "label": None, "photos": moved,
     }
     write_manifest(folder, manifest)
     events.log("apply", proposal=pr["id"], cluster_kind=pr["kind"], name=pr["name"], n=len(moved),
-               decision_id=pr["decision"].get("id"))
+               mode=_mode(cfg), decision_id=pr["decision"].get("id"))
     return manifest
 
 
 def apply_everyday(cfg: Config, min_age_days: float) -> int:
-    """Move unclustered inbox photos older than min_age_days into root/YYYY/MM."""
+    """Move (or copy) unclustered inbox photos older than min_age_days into root/YYYY/MM."""
     if cfg.everyday_layout == "leave":
         return 0
     props = cluster.load_proposals()
@@ -111,24 +147,33 @@ def apply_everyday(cfg: Config, min_age_days: float) -> int:
         dst_dir = Path(cfg.root) / sub
         if cfg.subfolder_by_source and r.get("source"):
             dst_dir = dst_dir / r["source"]
-        _move_with_sidecars(Path(r["path"]), dst_dir)
+        dst = _transfer(Path(r["path"]), dst_dir, cfg.copy_instead_of_move)
+        if cfg.copy_instead_of_move:
+            _mark_source(Path(r["path"]), dst, sub)
         n += 1
     if n:
-        events.log("apply_everyday", n=n)
+        events.log("apply_everyday", n=n, mode=_mode(cfg))
     return n
 
 
 def undo(cfg: Config, folder: Path) -> int:
-    """Move every photo listed in the manifest back to where it came from."""
+    """Move every photo listed in the manifest back to where it came from (copy mode: delete
+    the copies and clear the originals' marks)."""
     m = read_manifest(folder)
     if not m:
         return 0
+    copied = m.get("mode") == "copy"
     n = 0
     for p in m["photos"]:
-        dst = Path(p["dst"])
-        if dst.exists():
-            _move_with_sidecars(dst, Path(p["src"]).parent)
-            n += 1
+        dst, src = Path(p["dst"]), Path(p["src"])
+        if not dst.exists():
+            continue
+        if copied:
+            _delete_with_sidecars(dst)
+            _mark_source(src, None, None)
+        else:
+            _transfer(dst, src.parent)
+        n += 1
     (folder / MANIFEST).unlink(missing_ok=True)
     for sub in sorted(folder.rglob("*"), key=lambda x: -len(x.parts)):
         if sub.is_dir():
@@ -140,7 +185,7 @@ def undo(cfg: Config, folder: Path) -> int:
         folder.rmdir()
     except OSError:
         pass
-    events.log("undo", name=m["name"], n=n, proposal=m.get("proposal_id"))
+    events.log("undo", name=m["name"], n=n, proposal=m.get("proposal_id"), mode=m.get("mode", "move"))
     return n
 
 
@@ -164,18 +209,25 @@ def rename(cfg: Config, folder: Path, new_name: str) -> Path:
             if rec:
                 rec["cluster"] = new_name
                 ingest.write_sidecar(Path(p["dst"]), rec)
+            if m.get("mode") == "copy":
+                _mark_source(Path(p["src"]), Path(p["dst"]), new_name)
         events.log("label", old=old, new=new_name, proposal=m.get("proposal_id"),
                    decision_id=m.get("decision", {}).get("id"))
     return dst
 
 
 def move_out(cfg: Config, folder: Path, photo: Path) -> None:
-    """User says a photo does not belong: back to inbox, logged as a correction."""
+    """User says a photo does not belong: back to inbox (copy mode: delete the copy, unmark the
+    original), logged as a correction."""
     m = read_manifest(folder)
     entry = next((p for p in (m or {}).get("photos", []) if p["dst"] == str(photo)), None)
     rec = ingest.read_sidecar(photo) or {}
-    back = Path((entry or {}).get("inbox") or rec.get("inbox") or cfg.inboxes[0]["path"])
-    _move_with_sidecars(photo, back)
+    if m and m.get("mode") == "copy" and entry:
+        _delete_with_sidecars(photo)
+        _mark_source(Path(entry["src"]), None, None)
+    else:
+        back = Path((entry or {}).get("inbox") or rec.get("inbox") or cfg.inboxes[0]["path"])
+        _transfer(photo, back)
     if m and entry:
         m["photos"].remove(entry)
         entry["corrected"] = _now()
