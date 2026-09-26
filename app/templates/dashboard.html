@@ -2,7 +2,7 @@
 {% block content %}
 <h1>Dashboard</h1>
 {% if state.error %}<div class="warnbox">Last run failed: {{ state.error }}</div>{% endif %}
-{% if not cfg.home_lat and not cfg.home_lon %}<div class="warnbox"><b>Home location is not set.</b> Every photo is in the "unknown" zone, so no trips, day outs or occasions can be found and everything lands under Everyday. Set it in <a href="/settings">Settings</a> (there is a "Detect home from photos" button once a scan has run), then press Run now.</div>{% endif %}
+{% if not cfg.home_lat and not cfg.home_lon %}<div class="warnbox"><b>Home location is not set.</b> The next run detects it from the photos (where they were taken on the most different days) and clusters right away; you can also set it in <a href="/settings">Settings</a>.</div>{% endif %}
 <div class="grid">
   <div class="card"><div class="muted small">Open proposals</div><div class="stat">{{ pending|length }}</div>
     <div class="small"><a href="/review">review →</a></div></div>
