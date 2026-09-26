@@ -39,7 +39,7 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the rules and why they were chosen.
 
 ```bash
 git clone … photosort && cd photosort
-cp .env.example .env          # set PUID/PGID (the NAS user) and the three mount paths
+cp .env.example .env          # set PUID/PGID (the NAS user), the inbox root and the target root
 docker compose pull && docker compose up -d      # image from ghcr.io/philippmundhenk/photosort
 # or build locally:  docker compose up -d --build
 ```
@@ -62,9 +62,12 @@ Press **Run now**. The first scan runs `exiftool` over every photo once (a few m
 
 ### Input folders
 
-`Settings → Input folders`, one per line, `name=/path`. Each is scanned recursively. With
-**Per-source subfolders** on, a trip folder gets one subfolder per input
-(`2026-10 Lisbon/phone-a/`, `2026-10 Lisbon/phone-b/`); the everyday tree does the same.
+Mount the inbox root at `/photos/inbox` (`PHOTOS_INBOX` in `.env`). Every subfolder in it is an
+input named after the folder: `hans/` becomes `hans=/photos/inbox/hans`, discovered on every
+scan, so a new device folder needs no configuration. Settings shows what was found; the
+override box takes explicit `name=/path` lines when the layout is different. Each input is
+scanned recursively. With **Per-source subfolders** on, a trip folder gets one subfolder per
+input (`2026-10 Lisbon/hans/`, `2026-10 Lisbon/phone-b/`); the everyday tree does the same.
 
 ### Home occasions
 

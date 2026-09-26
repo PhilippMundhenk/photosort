@@ -60,6 +60,25 @@ def test_named_places_parsing_and_text():
     assert config.parse_named_places(config.named_places_text(cfg)) == places      # round trip
 
 
+def test_inputs_are_discovered_from_the_inbox_root(tmp_path):
+    root = tmp_path / "inbox"
+    root.mkdir()
+    cfg = config.Config(inbox_root=str(root), root=str(tmp_path / "sorted"))
+    assert config.inbox_dirs(cfg) == []                                   # empty root: nothing yet
+    for name in ("hans", "phone-b", ".hidden", "@eaDir"):
+        (root / name).mkdir()
+    (tmp_path / "sorted").mkdir()
+    assert config.inbox_dirs(cfg) == [("hans", root / "hans"), ("phone-b", root / "phone-b")]
+    assert config.inboxes_text(cfg) == ""
+    cfg.inboxes = [{"path": str(root / "hans"), "name": "Hans"}]        # explicit lines win
+    assert config.inbox_dirs(cfg) == [("Hans", root / "hans")]
+    flat = tmp_path / "flat"
+    flat.mkdir()
+    (flat / "a.jpg").write_bytes(b"x")
+    assert config.inbox_dirs(config.Config(inbox_root=str(flat))) == [("flat", flat)]   # files, no subfolders
+    assert config.inbox_dirs(config.Config(inbox_root=str(tmp_path / "nope"))) == []
+
+
 def test_inbox_helpers():
     cfg = config.Config(inboxes=[{"path": "/p/a", "name": "A"}, {"path": "/p/b"}])
     dirs = config.inbox_dirs(cfg)

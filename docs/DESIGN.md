@@ -175,6 +175,15 @@ Explicit requirement: databases get lost and break. So:
 - `data/` (config.yaml, proposals.json, events.jsonl) is the only non-photo state and only
   costs history if lost.
 
+### Inputs are discovered
+
+Input folders were fixed in the config (`phone-a=/photos/inbox/phone-a`, `phone-b=...`) and
+thus had to be edited for every device. Since September 2026 the container mounts one inbox
+root and every direct subfolder is an input named after the folder, re-read on each scan; the
+config only holds an optional override. The folder name is the device name that appears in
+per-source subfolders and in the records (`source`), so naming the folders after their owners
+("hans", "maria") gives readable trees.
+
 ## 5. Triggers
 
 Originally: a Matrix message like "2026-10 Uruguay" seeds the trip, the model grows the edges.

@@ -10,8 +10,10 @@
 
 <div class="card">
   <h2 style="margin-top:0">Folders</h2>
-  <label>Input folders (one per line, <code>name=/path</code>; scanned recursively)</label>
-  <textarea name="inboxes" rows="4">{{ inboxes_text }}</textarea>
+  <label>Inbox root (one subfolder per device; each becomes an input named after it)</label><input type="text" name="inbox_root" value="{{ cfg.inbox_root }}">
+  <div class="muted small">Found now: {% for name, path in discovered %}<code>{{ name }}={{ path }}</code>{{ ", " if not loop.last }}{% else %}nothing (no subfolders or files in {{ cfg.inbox_root }}){% endfor %}</div>
+  <label>Input folders override (optional, one per line, <code>name=/path</code>; empty = use the folders found above)</label>
+  <textarea name="inboxes" rows="3" placeholder="{% for name, path in discovered %}{{ name }}={{ path }}&#10;{% endfor %}">{{ inboxes_text }}</textarea>
   <label>Target root</label><input type="text" name="root" value="{{ cfg.root }}">
   <label>Everyday layout (<code>YYYY/MM</code> or <code>leave</code>)</label><input type="text" name="everyday_layout" value="{{ cfg.everyday_layout }}">
   <label>Unnamed-bursts folder (inside root)</label><input type="text" name="unnamed_dir" value="{{ cfg.unnamed_dir }}">

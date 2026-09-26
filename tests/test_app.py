@@ -69,6 +69,20 @@ def test_api_status(client):
     assert s == {"state": main._state, "pending": 0, "dry_run": False, "approved": 0, "applying": {}}
 
 
+def test_new_device_folder_is_picked_up_without_configuration(client, tmp_path):
+    root = tmp_path / "inbox"
+    (root / "hans").mkdir(parents=True)
+    cfg = config.load()
+    cfg.inboxes, cfg.inbox_root = [], str(root)
+    config.save(cfg)
+    page = client.get("/settings").text
+    assert f"hans={root / 'hans'}" in page and 'name="inbox_root"' in page
+    assert "hans" in client.get("/").text
+    (root / "maria").mkdir()
+    assert [n for n, _ in config.inbox_dirs(config.load())] == ["hans", "maria"]   # next scan sees it
+    assert "maria" in client.get("/settings").text
+
+
 def test_startup_writes_config_and_schedules_scan(client):
     assert config.CONFIG_PATH.exists()
     for _ in range(100):                                                    # the warm-up thread fills the cache
