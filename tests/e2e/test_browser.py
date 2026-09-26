@@ -131,17 +131,31 @@ def test_full_review_flow(server, page):
     trip.locator("details summary").click()
     page.wait_for_load_state("networkidle")                            # thumbnails loaded
     first_fig = trip.locator("figure").first
-    first_fig.locator("button").click()
-    page.wait_for_url(f"**/review#{props['trip']['id']}")
-    page.wait_for_load_state("networkidle")
+    first_fig.locator("button.pick").click()
     expect(page.locator(f"#{props['trip']['id']} figure").first).to_have_class(re.compile(r"(^|\s)excluded(\s|$)"))
+    expect(page.locator(f"#{props['trip']['id']} details")).to_have_attribute("open", "")   # no reload, stays open
+    assert page.url.endswith("/review")                                                    # no navigation happened
     assert _proposals(data)["trip"]["excluded"] == [props["trip"]["photos"][0]["path"]]
+    first_fig.locator("button.pick").click()                                               # and back in
+    expect(page.locator(f"#{props['trip']['id']} figure").first).not_to_have_class(re.compile(r"excluded"))
+    assert _proposals(data)["trip"]["excluded"] == []
+
+    # full-size viewer: opens on the eye button, arrows navigate, Esc closes
+    trip.locator("figure").first.hover()
+    trip.locator("button.view").first.click()
+    expect(page.locator(".viewer")).to_be_visible()
+    expect(page.locator(".viewer img")).to_have_attribute("src", re.compile(r"^/media\?path="))
+    expect(page.locator(".viewer .v-caption")).to_contain_text("(1/")
+    page.keyboard.press("ArrowRight")
+    expect(page.locator(".viewer .v-caption")).to_contain_text("(2/")
+    page.keyboard.press("Escape")
+    expect(page.locator(".viewer")).to_be_hidden()
 
     page.locator(f"#{props['trip']['id']}").get_by_role("button", name="Approve & move").click()
     expect(page.get_by_role("heading", name="Proposed clusters (2)")).to_be_visible()
     folder = Path(cfg.root) / "2026-06 Portugal & Spain"
     assert folder.is_dir() and (folder / "manifest.json").exists()
-    assert Path(props["trip"]["photos"][0]["path"]).exists()          # the excluded one stayed
+    assert not Path(props["trip"]["photos"][0]["path"]).exists()      # toggled back in above, so it moved
     assert not list(folder.rglob(cfg.review_dir))                      # manual approval: no _review
 
     # reject the day out

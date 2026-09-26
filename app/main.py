@@ -9,7 +9,7 @@ from pathlib import Path
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -108,11 +108,11 @@ def dashboard(request: Request):
 
 
 @app.get("/review", response_class=HTMLResponse)
-def review(request: Request):
+def review(request: Request, open: str = ""):
     cfg = config.load()
     props = cluster.load_proposals()
     unnamed = [c for c in mover.list_clusters(cfg) if c["unnamed"]]
-    return render(request, "review.html", pending=_pending(props), unnamed=unnamed)
+    return render(request, "review.html", pending=_pending(props), unnamed=unnamed, open_id=open)
 
 
 @app.get("/clusters", response_class=HTMLResponse)
@@ -187,6 +187,9 @@ async def proposal_action(pid: str, action: str, request: Request):
         events.log("review", proposal=pid, action="toggle", photo=Path(path).name,
                    excluded=path in ex, decision_id=pr["decision"].get("id"))
     cluster.save_proposals(props)
+    if request.headers.get("x-requested-with") == "fetch":            # ui.js: no page reload
+        return JSONResponse({"ok": True, "status": pr["status"], "name": pr["name"],
+                             "excluded": form.get("path", "") in set(pr.get("excluded", []))})
     return RedirectResponse(form.get("back", "/review"), status_code=303)
 
 

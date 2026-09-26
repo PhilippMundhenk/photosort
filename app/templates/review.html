@@ -17,19 +17,20 @@
       · {{ p.decision.by }} {{ '%.2f'|format(p.decision.conf) }}{% if p.decision.answer %} ({{ p.decision.answer }}){% endif %}
       · {{ p.start[:16].replace('T',' ') }} → {{ p.end[:16].replace('T',' ') }}</span>
   </div>
-  <details {% if p.n_uncertain or p.kind=='home' %}open{% endif %}>
+  <details {% if p.n_uncertain or p.kind=='home' or p.id == open_id %}open{% endif %}>
     <summary>photos</summary>
     <div class="thumbs">
     {% for ph in p.photos %}
       <figure class="{{ 'excluded' if ph.path in p.excluded }} {{ 'uncertain' if ph.uncertain }}">
-        <form method="post" action="/proposal/{{ p.id }}/toggle"><input type="hidden" name="path" value="{{ ph.path }}">
-          <input type="hidden" name="back" value="/review#{{ p.id }}">
-          <button style="padding:0;border:0;background:none"><img src="/thumb?path={{ ph.path|urlencode }}" loading="lazy" title="{{ ph.file }} · {{ ph.zone }} · {{ ph.place or '' }} · conf {{ ph.conf }} · click to toggle"></button></form>
+        <form method="post" action="/proposal/{{ p.id }}/toggle" data-toggle><input type="hidden" name="path" value="{{ ph.path }}">
+          <input type="hidden" name="back" value="/review?open={{ p.id }}#{{ p.id }}">
+          <button class="pick" title="{{ ph.file }} · {{ ph.zone }} · {{ ph.place or '' }} · conf {{ ph.conf }} · click to exclude/include"><img src="/thumb?path={{ ph.path|urlencode }}" loading="lazy" alt=""></button></form>
+        <button class="view" data-view="/media?path={{ ph.path|urlencode }}" data-type="{{ ph.media }}" data-title="{{ ph.file }} · {{ ph.ts[:16].replace('T',' ') }} · {{ ph.place or ph.zone }}" title="view full size">&#x2921;</button>
         <figcaption>{% if ph.media == 'video' %}<span class="badge">video</span> {% endif %}{{ ph.ts[5:16].replace('T',' ') }} {{ ph.zone }}{% if ph.source %} · {{ ph.source }}{% endif %}</figcaption>
       </figure>
     {% endfor %}
     </div>
-    <div class="muted small">Click a photo to exclude/include it (greyed = excluded, orange = low confidence — approving here settles them; only auto-applied clusters park them in {{ cfg.review_dir }}/).</div>
+    <div class="muted small">Click a photo to exclude/include it (greyed = excluded, orange = low confidence — approving here settles them; only auto-applied clusters park them in {{ cfg.review_dir }}/). ⤡ opens the full-size photo or video.</div>
   </details>
   <div class="row" style="margin-top:8px">
     {% if p.status != 'ongoing' %}<form method="post" action="/proposal/{{ p.id }}/approve" class="inline"><button>Approve &amp; move</button></form>{% endif %}
@@ -42,7 +43,7 @@
 {% for c in unnamed %}
 <div class="card">
   <div class="row"><b>{{ c.name }}</b> <span class="muted small">{{ c.n }} photos · {{ c.start[:16].replace('T',' ') }}</span></div>
-  <div class="thumbs">{% for ph in c.photos[:8] %}<figure><img src="/thumb?path={{ ph.dst|urlencode }}" loading="lazy"></figure>{% endfor %}</div>
+  <div class="thumbs">{% for ph in c.photos[:8] %}<figure><img src="/thumb?path={{ ph.dst|urlencode }}" loading="lazy" alt=""><button class="view" data-view="/media?path={{ ph.dst|urlencode }}" data-type="{{ ph.media or 'photo' }}" data-title="{{ ph.dst.rsplit('/',1)[-1].rsplit('\\',1)[-1] }}" title="view full size">&#x2921;</button></figure>{% endfor %}</div>
   <form method="post" action="/cluster/rename" class="row">
     <input type="hidden" name="folder" value="{{ c.folder }}">
     <input type="text" name="name" placeholder="What was this? e.g. 2026-09-14 Hannas Geburtstag" style="width:380px" value="{{ c.start[:10] }} ">

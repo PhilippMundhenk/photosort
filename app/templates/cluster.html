@@ -16,7 +16,8 @@
   <div class="thumbs">
   {% for p in m.photos %}
     <figure class="{{ 'uncertain' if p.uncertain }}">
-      <img src="/thumb?path={{ p.dst|urlencode }}" loading="lazy" title="{{ p.dst }} · conf {{ p.conf }}">
+      <img src="/thumb?path={{ p.dst|urlencode }}" loading="lazy" title="{{ p.dst }} · conf {{ p.conf }}" alt="">
+      <button class="view" data-view="/media?path={{ p.dst|urlencode }}" data-type="{{ p.media or 'photo' }}" data-title="{{ p.dst.rsplit('/',1)[-1].rsplit('\\',1)[-1] }} · conf {{ p.conf }}" title="view full size">&#x2921;</button>
       <figcaption>{% if p.media == 'video' %}<span class="badge">video</span> {% endif %}{{ p.zone }} {{ p.conf }}{% if p.source %} · {{ p.source }}{% endif %}</figcaption>
       <form method="post" action="/cluster/move_out" class="inline">
         <input type="hidden" name="folder" value="{{ folder }}"><input type="hidden" name="photo" value="{{ p.dst }}">

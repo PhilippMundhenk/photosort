@@ -17,7 +17,17 @@ form.inline{display:inline}input[type=text],input[type=number],textarea,select{b
 label{display:block;margin:10px 0 4px;font-size:13px;color:var(--muted)}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .thumbs{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.thumbs figure{margin:0;width:110px}.thumbs img{width:110px;height:82px;object-fit:cover;border-radius:6px;background:var(--line);display:block}
 .thumbs figcaption{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.thumbs figure.excluded img{opacity:.35}.thumbs figure.uncertain img{outline:2px solid var(--warn)}
+.thumbs figure{position:relative}.thumbs figure.excluded img{opacity:.35}.thumbs figure.uncertain img{outline:2px solid var(--warn)}
+.thumbs button.pick{padding:0;border:0;background:none;display:block;cursor:pointer}
+.thumbs button.view{position:absolute;top:4px;right:4px;padding:0 5px;font-size:13px;line-height:18px;background:rgba(0,0,0,.55);color:#fff;border-radius:5px;opacity:0}
+.thumbs figure:hover button.view,.thumbs button.view:focus{opacity:1}
+.viewer[hidden]{display:none}
+.viewer{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:100;display:flex;align-items:center;justify-content:center}
+.viewer .v-body{max-width:96vw;max-height:90vh;display:flex;align-items:center;justify-content:center}
+.viewer img,.viewer video{max-width:96vw;max-height:88vh;object-fit:contain;border-radius:4px}
+.viewer button{position:absolute;background:rgba(255,255,255,.12);color:#fff;font-size:28px;line-height:1;padding:8px 14px;border-radius:8px}
+.viewer .v-close{top:14px;right:16px}.viewer .v-prev{left:14px;top:50%;transform:translateY(-50%)}.viewer .v-next{right:14px;top:50%;transform:translateY(-50%)}
+.viewer .v-caption{position:absolute;bottom:12px;left:0;right:0;text-align:center;color:#ddd;font-size:13px}
 table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-weight:500}
 code{font-size:12px;background:var(--line);padding:1px 5px;border-radius:4px}details summary{cursor:pointer;color:var(--muted)}
 .settings-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px 24px}
