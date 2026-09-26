@@ -144,9 +144,11 @@ def test_reject_rename_toggle(client, library):
     client.post(f"/proposal/{home['id']}/reject")
     assert _proposals("home")["status"] == "rejected"
     assert client.get("/api/status").json()["pending"] == 2                # trip + local remain
-    # rename survives the next run; rejected photos become everyday
+    # rename and toggled-out photos survive the next run; rejected photos become everyday
+    client.post(f"/proposal/{trip['id']}/toggle", data={"path": path})
     cluster.run(cfg, Decider(cfg))
     assert _proposals("trip")["name"] == "2026-06 Portugal- -Sommer-"
+    assert _proposals("trip")["excluded"] == [path]
     assert _proposals("home")["status"] == "rejected"
     assert client.post("/proposal/nope/approve").headers["location"] == "/review"
 

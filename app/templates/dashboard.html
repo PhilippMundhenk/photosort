@@ -8,7 +8,7 @@
   <div class="card"><div class="muted small">Bursts waiting for a name</div><div class="stat">{{ unnamed|length }}</div></div>
   <div class="card"><div class="muted small">Photos in inboxes</div>
     <div class="stat">{{ state.last_stats.get('cluster',{}).get('photos','–') }}</div>
-    <div class="small muted">{{ state.last_stats.get('ingest',{}).get('new','–') }} new last run · {{ state.last_stats.get('cluster',{}).get('everyday','–') }} everyday</div></div>
+    <div class="small muted">{{ state.last_stats.get('ingest',{}).get('new','–') }} new last run · <a href="/everyday">{{ state.last_stats.get('cluster',{}).get('everyday','–') }} everyday</a></div></div>
   <div class="card"><div class="muted small">Decision backend</div>
     <div class="stat" style="font-size:18px">{{ kev.backend }} <span class="badge {{ 'ok' if kev.ok else 'bad' }}">{{ 'ok' if kev.ok else 'down' }}</span></div>
     <div class="small muted">{{ kev.detail }}</div></div>

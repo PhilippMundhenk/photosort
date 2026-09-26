@@ -15,6 +15,20 @@
       .catch(function () { form.submit(); });               // fall back to the full round trip
   });
 
+  // --- everyday page: per-day select-all and the selected counter ------------------------
+  function countSelected() {
+    var c = document.getElementById("selcount");
+    if (c) c.textContent = document.querySelectorAll("input[name=paths]:checked").length;
+  }
+  document.addEventListener("change", function (ev) {
+    var t = ev.target;
+    if (t.matches("[data-select-all]")) {
+      t.closest(".card").querySelectorAll("input[name=paths]").forEach(function (cb) { cb.checked = t.checked; });
+    }
+    if (t.matches("[data-select-all], input[name=paths]")) countSelected();
+  });
+  countSelected();
+
   // --- viewer ---------------------------------------------------------------------------
   var box = document.createElement("div");
   box.className = "viewer";

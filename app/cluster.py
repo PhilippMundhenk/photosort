@@ -18,6 +18,7 @@ import hashlib
 import json
 import re
 import statistics
+import uuid
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -327,6 +328,59 @@ def home_proposal(cfg: Config, burst: list[dict], decision: dict) -> dict:
                          "answer": decision["answer"], "note": "home burst judged by " + decision["by"]}}
 
 
+# --- manual clusters (Everyday page) ---------------------------------------------
+
+def _span_fields(pr: dict) -> None:
+    ts = sorted(p["ts"] for p in pr["photos"])
+    pr["start"], pr["end"], pr["n"] = ts[0], ts[-1], len(pr["photos"])
+    pr["n_uncertain"] = sum(p.get("uncertain", False) for p in pr["photos"])
+
+
+def create_manual(kind: str, name: str, recs: list[dict]) -> dict:
+    """A proposal the user assembled by hand. `paths` is the source of truth across runs."""
+    if kind not in ("trip", "local", "home") or not recs:
+        raise ValueError("kind must be trip/local/home and at least one photo is needed")
+    recs = sorted(recs, key=lambda r: r["_t"])
+    a, b = _span(recs)
+    if kind == "home":
+        where = f"({media_label(recs)})"
+    else:                                             # most common place, home photos included
+        places = Counter((r.get("place") or {}).get("place") for r in recs if r.get("place"))
+        where = places.most_common(1)[0][0] if places else "Unknown"
+    default = f"{span_label(a, b)} {where}"
+    pr = {"id": "m" + uuid.uuid4().hex[:10], "kind": kind, "manual": True,
+          "name": sanitize(name.strip() or default), "name_edited": bool(name.strip()),
+          "paths": [r["path"] for r in recs], "photos": [_photo_entry(r, 1.0) for r in recs],
+          "status": "pending", "excluded": [],
+          "decision": {"by": "user", "conf": 1.0, "note": "assembled by hand"}}
+    _span_fields(pr)
+    return pr
+
+
+def add_to_proposal(pr: dict, recs: list[dict]) -> int:
+    """Attach photos to an existing proposal; remembered in `added` (or `paths` for manual ones)
+    so the next automatic run keeps them. Returns how many were new."""
+    have = {p["path"] for p in pr["photos"]}
+    new = [r for r in recs if r["path"] not in have]
+    for r in new:
+        pr["photos"].append(_photo_entry(r, 1.0))
+    key = "paths" if pr.get("manual") else "added"
+    pr[key] = sorted(set(pr.get(key, [])) | {r["path"] for r in new})
+    pr["photos"].sort(key=lambda p: p["ts"])
+    _span_fields(pr)
+    return len(new)
+
+
+def everyday_records(cfg: Config, props: dict | None = None) -> list[dict]:
+    """Records in no live proposal (pending/ongoing/approved/applied): what the Everyday page shows."""
+    props = load_proposals() if props is None else props
+    taken = {p["path"] for pr in props.values() if pr["status"] in ("pending", "ongoing", "approved", "applied")
+             for p in pr["photos"]}
+    recs, _ = load_records(cfg)
+    fill_gps_from_neighbours(cfg, recs)
+    return [r for r in recs if r["path"] not in taken]
+
+
 # --- driver --------------------------------------------------------------------
 
 def run(cfg: Config, decider: Decider | None = None) -> dict:
@@ -340,11 +394,29 @@ def run(cfg: Config, decider: Decider | None = None) -> dict:
     # photos the user rejected from a cluster stay out of clustering (they become everyday)
     rejected = {p["path"] for pr in old.values() if pr["status"] == "rejected" for p in pr["photos"]}
     recs = [r for r in recs if r["path"] not in rejected]
+    by_path = {r["path"]: r for r in recs}
 
     new: dict[str, dict] = {}
     taken: set[str] = set()
 
-    for run_ in find_excursions(cfg, recs):
+    # photos the user placed by hand (manual clusters, additions) are never re-clustered
+    live = ("pending", "ongoing", "approved")
+    manual = {pid: pr for pid, pr in old.items() if pr.get("manual") and pr["status"] in live}
+    additions = {pid: [p for p in pr.get("added", []) if p in by_path]
+                 for pid, pr in old.items() if pr.get("added") and pr["status"] in live}
+    for pid, pr in manual.items():
+        present = [by_path[p] for p in pr["paths"] if p in by_path]
+        if not present:
+            continue                                    # all photos gone (moved elsewhere): drop it
+        pr = dict(pr, photos=[_photo_entry(r, 1.0) for r in present], paths=[r["path"] for r in present])
+        _span_fields(pr)
+        new[pid] = pr
+        taken.update(pr["paths"])
+    for paths in additions.values():
+        taken.update(paths)
+    auto_recs = [r for r in recs if r["path"] not in taken]
+
+    for run_ in find_excursions(cfg, auto_recs):
         kind = excursion_kind(cfg, run_)
         if kind is None:
             continue
@@ -352,7 +424,7 @@ def run(cfg: Config, decider: Decider | None = None) -> dict:
         new[pr["id"]] = pr
         taken.update(p["path"] for p in pr["photos"])
 
-    rest = [r for r in recs if r["path"] not in taken]
+    rest = [r for r in auto_recs if r["path"] not in taken]
     baseline = home_baseline(recs)
     threshold = max(cfg.burst_min_photos, baseline * cfg.burst_baseline_factor)
     for burst in group_bursts(cfg, rest):
@@ -377,18 +449,22 @@ def run(cfg: Config, decider: Decider | None = None) -> dict:
         new[pr["id"]] = pr
         taken.update(p["path"] for p in pr["photos"])
 
-    # carry over review state
+    # photos added by hand to automatic proposals
+    for pid, paths in additions.items():
+        if pid in new and not new[pid].get("manual"):
+            add_to_proposal(new[pid], [by_path[p] for p in paths])
+    # carry over review state: status, an edited name, and toggled-out photos
     for pid, pr in new.items():
         prev = old.get(pid)
+        if pr.get("manual"):
+            continue                                    # already carries its own state
         if prev and prev["status"] in ("approved", "rejected", "applied"):
             pr["status"] = prev["status"]
             pr["name"] = prev.get("name", pr["name"])
-            pr["excluded"] = prev.get("excluded", [])
         elif prev and prev.get("name_edited"):
             pr["name"], pr["name_edited"] = prev["name"], True
-            pr["excluded"] = prev.get("excluded", [])
-        else:
-            pr.setdefault("excluded", [])
+        have = {p["path"] for p in pr["photos"]}
+        pr["excluded"] = sorted(p for p in (prev or {}).get("excluded", []) if p in have)
     # keep applied/rejected proposals whose photos are gone from the inbox (history)
     for pid, pr in old.items():
         if pid not in new and pr["status"] in ("applied", "rejected"):
