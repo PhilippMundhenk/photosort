@@ -396,6 +396,29 @@ def _remember_place(cfg: config.Config, folder_name: str, points: list) -> dict 
     return entry
 
 
+@app.post("/proposals/approve_all")
+async def approve_all(request: Request):
+    """Approve every pending proposal on the review page in one go (ongoing ones wait for their
+    home photo). Names edited on the page arrive as name_<id>, like the single approve."""
+    form = dict(await request.form())
+    with _props_lock:
+        cfg = config.load()
+        props = cluster.load_proposals()
+        queued = []
+        for pid, pr in props.items():
+            if pr["status"] != "pending":
+                continue
+            if form.get(f"name_{pid}") is not None:
+                _rename(cfg, pid, pr, str(form[f"name_{pid}"]), bool(form.get(f"remember_place_{pid}")))
+            pr["status"], pr["error"] = "approved", None
+            events.log("review", proposal=pid, action="approve", name=pr["name"])
+            queued.append(pid)
+        cluster.save_proposals(props)
+    for pid in queued:
+        queue_apply(pid)
+    return RedirectResponse("/review", status_code=303)
+
+
 @app.post("/cluster/rename")
 def cluster_rename(request: Request, folder: str = Form(...), name: str = Form(...), remember_place: str = Form("")):
     cfg = config.load()

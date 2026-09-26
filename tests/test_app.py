@@ -203,6 +203,32 @@ def test_concurrent_edits_do_not_lose_updates(client, library):
     main.wait_for_apply()
 
 
+def test_approve_all_queues_every_pending_proposal(client, library):
+    cfg = config.load()
+    cluster.run(cfg)
+    props = cluster.load_proposals()
+    trip = next(p for p in props.values() if p["kind"] == "trip")
+    props[trip["id"]]["status"] = "ongoing"                                # waiting for a home photo: not touched
+    cluster.save_proposals(props)
+    local = _proposals("local")
+    page = client.get("/review").text
+    assert "Approve &amp; move all (2)" in page and 'action="/proposals/approve_all"' in page
+    r = client.post("/proposals/approve_all", data={f"name_{local['id']}": "2026-06-27 Barock",
+                                                    f"remember_place_{local['id']}": "1"})
+    assert r.status_code == 303 and r.headers["location"] == "/review"
+    now = _proposals()
+    assert now["trip"]["status"] == "ongoing"
+    assert now["local"]["status"] == "approved" and now["home"]["status"] == "approved"
+    assert now["local"]["name"] == "2026-06-27 Barock" and [p["name"] for p in config.load().named_places] == ["Barock"]
+    assert client.get("/api/status").json()["approved"] == 2
+    main.wait_for_apply()
+    now = _proposals()
+    assert now["local"]["status"] == "applied" and now["home"]["status"] == "applied"
+    assert (Path(cfg.root) / "2026-06-27 Barock").is_dir()
+    assert "Approve &amp; move all" not in client.get("/review").text     # nothing pending any more
+    assert client.post("/proposals/approve_all").status_code == 303        # idempotent
+
+
 def test_rename_over_fetch_returns_json(client, library):
     cfg = config.load()
     cluster.run(cfg)

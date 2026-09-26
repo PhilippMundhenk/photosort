@@ -60,24 +60,72 @@ def _dt(s: str, tz=None) -> datetime:
     return d if d.tzinfo else d.replace(tzinfo=tz or timezone.utc)
 
 
-_records_cache: dict = {"key": None, "value": None}
+_records_cache: dict = {"key": None, "recs": None, "skipped": None, "filled": None}
 
 
 def _records_key(cfg: Config) -> tuple:
-    return (ingest.generation, json.dumps(cfg.inboxes, sort_keys=True), cfg.sidecar_mode, cfg.sidecar_name,
+    return (json.dumps(cfg.inboxes, sort_keys=True), cfg.sidecar_mode, cfg.sidecar_name,
             cfg.timezone, cfg.home_lat, cfg.home_lon, cfg.home_radius_km, cfg.local_radius_km,
             tuple(cfg.photo_extensions))
+
+
+def _record_for(cfg: Config, path: str) -> dict | None:
+    """One record as load_records would build it, or None if it is gone or not sortable."""
+    p = Path(path)
+    if not p.exists():
+        return None
+    hit = next(((n, f) for n, f in inbox_dirs(cfg) if p.is_relative_to(f)), None)
+    if hit is None:
+        return None
+    name, folder = hit
+    rec = ingest.read_sidecar(p, cfg)
+    if rec is None or rec.get("copied_to"):
+        return None
+    rec = dict(rec)
+    rec["path"] = path
+    rec.setdefault("source", name)
+    rec.setdefault("inbox", str(folder))
+    if rec.get("ts"):
+        rec["_t"] = _dt(rec["ts"], tzinfo(cfg))
+    return rec
 
 
 def load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
     """Sidecars from all inboxes, merged into one timeline. Returns (records, skipped_without_ts).
     Originals already copied into the sorted tree (sidecar `copied_to`, copy mode) are left out.
-    Cached until a record changes or a scan runs (ingest.generation); callers get copies."""
+
+    Cached: a full read only when the config changed or ingest says everything changed; a
+    changed record (ingest.changed paths: written, moved, deleted, vanished) is re-read on its
+    own. Callers get copies."""
     key = _records_key(cfg)
-    if _records_cache["key"] != key:
-        _records_cache["key"], _records_cache["value"] = key, _load_records(cfg)
-    recs, skipped = _records_cache["value"]
-    return [dict(r) for r in recs], [dict(r) for r in skipped]
+    ch = ingest.changed
+    if _records_cache["key"] != key or ch["all"]:
+        recs, skipped = _load_records(cfg)
+        _records_cache.update(key=key, recs=recs, skipped=skipped, filled=None)
+        ch["all"], ch["paths"] = False, set()
+    elif ch["paths"]:
+        paths = set(ch["paths"])
+        ch["paths"] = set()
+        recs = [r for r in _records_cache["recs"] if r["path"] not in paths]
+        skipped = [r for r in _records_cache["skipped"] if r["path"] not in paths]
+        for path in paths:
+            rec = _record_for(cfg, path)
+            if rec is None:
+                continue
+            (recs if rec.get("ts") else skipped).append(rec)
+        recs.sort(key=lambda r: r["_t"])
+        borrow_video_offsets(recs)
+        _records_cache.update(recs=recs, skipped=skipped, filled=None)
+    return [dict(r) for r in _records_cache["recs"]], [dict(r) for r in _records_cache["skipped"]]
+
+
+def records_filled(cfg: Config) -> list[dict]:
+    """load_records plus the neighbour GPS fill, cached the same way (the fill costs ~0.5 s)."""
+    recs, _ = load_records(cfg)
+    if _records_cache["filled"] is None:
+        fill_gps_from_neighbours(cfg, recs)
+        _records_cache["filled"] = recs
+    return [dict(r) for r in _records_cache["filled"]]
 
 
 def _load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
@@ -421,9 +469,7 @@ def everyday_records(cfg: Config, props: dict | None = None) -> list[dict]:
     props = load_proposals() if props is None else props
     taken = {p["path"] for pr in props.values() if pr["status"] in ("pending", "ongoing", "approved", "applied")
              for p in pr["photos"]}
-    recs, _ = load_records(cfg)
-    fill_gps_from_neighbours(cfg, recs)
-    return [r for r in recs if r["path"] not in taken]
+    return [r for r in records_filled(cfg) if r["path"] not in taken]
 
 
 # --- driver --------------------------------------------------------------------
@@ -432,8 +478,8 @@ def run(cfg: Config) -> dict:
     """Recompute proposals from the inbox, keeping the status of ones already reviewed."""
     now = datetime.now(timezone.utc)
     old = load_proposals()
-    recs, skipped = load_records(cfg)
-    fill_gps_from_neighbours(cfg, recs)
+    _, skipped = load_records(cfg)
+    recs = records_filled(cfg)
 
     # photos the user rejected from a cluster stay out of clustering (they become everyday)
     rejected = {p["path"] for pr in old.values() if pr["status"] == "rejected" for p in pr["photos"]}
