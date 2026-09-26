@@ -222,7 +222,8 @@ def test_iphone_mov_real_exiftool(tmp_path):
            "-Keys:GPSCoordinates=38.72 -9.14", "-Keys:Make=Apple", "-Keys:Model=iPhone 15")
     cfg = config.Config(home_lat=HOME[0], home_lon=HOME[1], timezone="Europe/Berlin")
     rec = ingest.build_record(cfg, p, ingest.exif_batch([p])[str(p)], source="phone-a")
-    assert rec["media"] == "video" and rec["ts"] == "2026-06-04T09:00:00+02:00"
+    assert rec["media"] == "video" and rec["ts"] == "2026-06-04T08:00:00+01:00"   # exact offset kept
+    assert rec["ts_source"] == "exif+offset"
     assert abs(rec["lat"] - 38.72) < 1e-4 and abs(rec["lon"] + 9.14) < 1e-4
     assert rec["zone"] == geo.ZONE_AWAY and rec["place"]["place"] == "Lisbon"
     assert rec["camera"] == "Apple iPhone 15" and rec["camera_source"] == "exif"
