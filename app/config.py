@@ -67,8 +67,10 @@ class Config:
     kev_timeout_s: float = 20.0
     kev_batch_size: int = 20
 
-    # Thumbnails: Synology @eaDir, otherwise none
+    # Thumbnails: the NAS's own (Synology @eaDir pattern) are used when present; otherwise they are
+    # generated into <data>/thumbs (Pillow; exiftool preview for RAW; one ffmpeg frame for videos)
     thumb_pattern: str = "@eaDir/{name}/SYNOPHOTO_THUMB_M.jpg"
+    generate_thumbnails: bool = True
 
     def as_dict(self) -> dict:
         return asdict(self)

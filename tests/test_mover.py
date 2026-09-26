@@ -42,6 +42,8 @@ def test_thumb_for(cfg, tmp_path):
     t.parent.mkdir(parents=True)
     t.write_bytes(b"x")
     assert mover.thumb_for(cfg, photo) == t
+    from app import thumbs
+    assert thumbs.nas_thumb(cfg, photo) == t
 
 
 def test_manifest_roundtrip_and_corruption(tmp_path):

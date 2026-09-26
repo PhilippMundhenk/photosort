@@ -1,6 +1,7 @@
 # --- shared base: python + exiftool + runtime deps ------------------------------------------
 FROM python:3.12-slim AS base
-RUN apt-get update && apt-get install -y --no-install-recommends libimage-exiftool-perl \
+# exiftool: metadata; ffmpeg: one frame per video for thumbnails (no other video work)
+RUN apt-get update && apt-get install -y --no-install-recommends libimage-exiftool-perl ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /srv
 COPY requirements.txt .

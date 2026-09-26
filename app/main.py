@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import cluster, config, events, ingest, mover
+from . import cluster, config, events, ingest, mover, thumbs
 from .kev import Decider
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -38,6 +38,9 @@ def run_pipeline(trigger: str = "schedule") -> dict:
         cfg = config.load()
         s1 = ingest.scan(cfg)
         s2 = cluster.run(cfg, Decider(cfg))
+        if s1.get("new"):
+            thumbs.prefetch(cfg, [p for _, folder in config.inbox_dirs(cfg) if folder.exists()
+                                  for p in ingest.list_photos(cfg, folder)])
         applied = 0
         if not cfg.dry_run:
             props = cluster.load_proposals()
@@ -213,6 +216,22 @@ def cluster_move_out(folder: str = Form(...), photo: str = Form(...)):
     return RedirectResponse(f"/clusters/view?folder={folder}", status_code=303)
 
 
+def _allowed(cfg: config.Config, p: Path) -> bool:
+    """Only files under an inbox or the sorted root are served."""
+    try:
+        rp = p.resolve()
+    except OSError:
+        return False
+    roots = [Path(cfg.root)] + [folder for _, folder in config.inbox_dirs(cfg)]
+    for r in roots:
+        try:
+            if rp.is_relative_to(r.resolve()):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def _read_small(p: Path, limit: int = 3_000_000) -> bytes | None:
     """Whole small file in one go (photos may be moved by a review action while the page still
     loads thumbnails; an open FileResponse would 500 or, on Windows, block the move)."""
@@ -224,20 +243,36 @@ def _read_small(p: Path, limit: int = 3_000_000) -> bytes | None:
         return None
 
 
+_PLACEHOLDER = {"image": "nothumb.svg", "raw": "nothumb.svg", "video": "novideo.svg"}
+
+
 @app.get("/thumb")
 def thumb(path: str):
-    """Serve the NAS thumbnail for a photo if one exists; the original is never decoded here."""
+    """Thumbnail: NAS thumbnail, cached/generated one, else a placeholder. Never an error."""
     cfg = config.load()
     p = Path(path)
-    t = mover.thumb_for(cfg, p)
+    t = thumbs.get(cfg, p) if _allowed(cfg, p) else None
     data = _read_small(t) if t else None
     if data is not None:
-        return Response(data, media_type=mimetypes.guess_type(t.name)[0] or "image/jpeg")
-    if p.suffix.lower() in (".jpg", ".jpeg", ".png"):
-        data = _read_small(p)                                 # small originals only
-        if data is not None:
-            return Response(data, media_type=mimetypes.guess_type(p.name)[0] or "image/jpeg")
-    return FileResponse(BASE / "static" / "nothumb.svg", media_type="image/svg+xml")
+        return Response(data, media_type=mimetypes.guess_type(t.name)[0] or "image/jpeg",
+                        headers={"Cache-Control": "private, max-age=86400"})
+    return FileResponse(BASE / "static" / _PLACEHOLDER.get(thumbs.kind(p), "nothumb.svg"), media_type="image/svg+xml")
+
+
+@app.get("/media")
+def media(path: str):
+    """Full-size view: the original for formats browsers show natively (JPEG, PNG, MP4, ...),
+    otherwise a large JPEG preview (HEIC, RAW)."""
+    cfg = config.load()
+    p = Path(path)
+    if not _allowed(cfg, p) or not p.exists():
+        return Response(status_code=404)
+    if thumbs.browser_native(p):
+        return FileResponse(p, media_type=mimetypes.guess_type(p.name)[0] or "application/octet-stream")
+    prev = thumbs.get(cfg, p, variant="p")
+    if prev:
+        return FileResponse(prev, media_type="image/jpeg")
+    return Response(status_code=404)
 
 
 @app.get("/api/status")
