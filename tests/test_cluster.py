@@ -269,6 +269,25 @@ def test_load_records_cache_is_patched_per_record(cfg, library, monkeypatch):
     assert calls == [1, 1, 1]
 
 
+def test_cache_is_throttled_while_the_pipeline_is_busy(cfg, library, monkeypatch):
+    cluster.load_records(cfg)
+    first = library.paths[0]
+    try:
+        cluster.busy = True
+        ingest.write_sidecar(first, {**ingest.read_sidecar(first, cfg), "ts": None}, cfg)
+        recs, skipped = cluster.load_records(cfg)
+        assert not skipped and ingest.changed["paths"]                    # served stale, change kept pending
+        monkeypatch.setattr(cluster.time, "time", lambda: cluster._records_cache["built"] + 10)
+        recs, skipped = cluster.load_records(cfg)
+        assert len(skipped) == 1 and not ingest.changed["paths"]           # old enough: patched
+    finally:
+        cluster.busy = False
+    monkeypatch.undo()
+    ingest.write_sidecar(first, {**ingest.read_sidecar(first, cfg), "ts": "2026-06-01T10:00:00"}, cfg)
+    recs, skipped = cluster.load_records(cfg)
+    assert not skipped                                                     # not busy: patched at once
+
+
 def test_records_filled_is_cached_and_patched(cfg, library, monkeypatch):
     calls = []
     real = cluster.fill_gps_from_neighbours

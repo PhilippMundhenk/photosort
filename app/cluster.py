@@ -23,6 +23,7 @@ import json
 import re
 import statistics
 import threading
+import time
 import uuid
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -68,7 +69,9 @@ def _dt(s: str, tz=None) -> datetime:
     return d if d.tzinfo else d.replace(tzinfo=tz or timezone.utc)
 
 
-_records_cache: dict = {"key": None, "recs": None, "skipped": None, "filled": None}
+_records_cache: dict = {"key": None, "recs": None, "skipped": None, "filled": None, "built": 0.0}
+busy = False                    # set by the pipeline while it scans: page requests then accept a
+REFRESH_WHILE_BUSY_S = 5.0      # cache that is up to this many seconds old instead of re-patching
 
 
 def _records_key(cfg: Config) -> tuple:
@@ -107,11 +110,13 @@ def load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
     own. Callers get copies."""
     key = _records_key(cfg)
     ch = ingest.changed
+    stale_ok = (busy and _records_cache["key"] == key and not ch["all"]
+                and time.time() - _records_cache["built"] < REFRESH_WHILE_BUSY_S)
     if _records_cache["key"] != key or ch["all"]:
         recs, skipped = _load_records(cfg)
-        _records_cache.update(key=key, recs=recs, skipped=skipped, filled=None)
+        _records_cache.update(key=key, recs=recs, skipped=skipped, filled=None, built=time.time())
         ch["all"], ch["paths"] = False, set()
-    elif ch["paths"]:
+    elif ch["paths"] and not stale_ok:
         paths = set(ch["paths"])
         ch["paths"] = set()
         recs = [r for r in _records_cache["recs"] if r["path"] not in paths]
@@ -123,7 +128,7 @@ def load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
             (recs if rec.get("ts") else skipped).append(rec)
         recs.sort(key=lambda r: r["_t"])
         borrow_video_offsets(recs)
-        _records_cache.update(recs=recs, skipped=skipped, filled=None)
+        _records_cache.update(recs=recs, skipped=skipped, filled=None, built=time.time())
     return [dict(r) for r in _records_cache["recs"]], [dict(r) for r in _records_cache["skipped"]]
 
 
@@ -520,6 +525,8 @@ def _reconcile_corrections(cfg: Config, props: dict) -> None:
 
 def run(cfg: Config) -> dict:
     """Recompute proposals from the inbox, keeping the status of ones already reviewed."""
+    global busy
+    busy = False                                  # the pipeline itself always sees fresh records
     now = datetime.now(timezone.utc)
     old = load_proposals()
     _, skipped = load_records(cfg)

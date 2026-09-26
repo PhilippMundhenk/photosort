@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import json
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote, unquote
 
@@ -92,6 +92,7 @@ def test_startup_writes_config_and_schedules_scan(client):
     assert len(cluster._records_cache["filled"]) > 0
     job = main.scheduler.get_job("scan")
     assert job is not None and job.trigger.interval.total_seconds() == config.load().scan_interval_min * 60
+    assert (job.next_run_time.replace(tzinfo=None) - datetime.now()).total_seconds() < 20   # first run right away
 
 
 # --- run & review ---------------------------------------------------------------------------
@@ -549,6 +550,19 @@ def test_detect_home_from_photos(client, library):
     assert (new.home_lat, new.home_lon) == (48.944, 9.118)
     assert "Home set to 48.9440" in client.get(r.headers["location"]).text
     assert events.read(limit=1, kind="settings")[0]["detected"]["days"] >= 9
+
+
+def test_unset_home_is_called_out(client, library):
+    cfg = config.load()
+    cfg.home_lat, cfg.home_lon = 0.0, 0.0
+    config.save(cfg)
+    assert "Home location is not set" in client.get("/").text
+    assert "Home location is not set" in client.get("/review").text
+    cluster.run(cfg)
+    assert cluster.load_proposals() == {}                                  # unknown zone everywhere: no clusters
+    cfg.home_lat, cfg.home_lon = 48.944, 9.118
+    config.save(cfg)
+    assert "Home location is not set" not in client.get("/").text
 
 
 def test_detect_home_without_gps(client, tmp_path):
