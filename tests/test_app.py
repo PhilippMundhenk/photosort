@@ -558,6 +558,7 @@ def test_unset_home_is_called_out(client, library):
     config.save(cfg)
     assert "Home location is not set" in client.get("/").text
     assert "Home location is not set" in client.get("/review").text
+    ingest.scan(cfg)                                                       # re-zones the records: all unknown
     cluster.run(cfg)
     assert cluster.load_proposals() == {}                                  # unknown zone everywhere: no clusters
     cfg.home_lat, cfg.home_lon = 48.944, 9.118
