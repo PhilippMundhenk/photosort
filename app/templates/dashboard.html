@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Dashboard</h1>
+{% if state.error %}<div class="warnbox">Last run failed: {{ state.error }}</div>{% endif %}
+<div class="grid">
+  <div class="card"><div class="muted small">Open proposals</div><div class="stat">{{ pending|length }}</div>
+    <div class="small"><a href="/review">review →</a></div></div>
+  <div class="card"><div class="muted small">Bursts waiting for a name</div><div class="stat">{{ unnamed|length }}</div></div>
+  <div class="card"><div class="muted small">Photos in inboxes</div>
+    <div class="stat">{{ state.last_stats.get('cluster',{}).get('photos','–') }}</div>
+    <div class="small muted">{{ state.last_stats.get('ingest',{}).get('new','–') }} new last run · {{ state.last_stats.get('cluster',{}).get('everyday','–') }} everyday</div></div>
+  <div class="card"><div class="muted small">Decision backend</div>
+    <div class="stat" style="font-size:18px">{{ kev.backend }} <span class="badge {{ 'ok' if kev.ok else 'bad' }}">{{ 'ok' if kev.ok else 'down' }}</span></div>
+    <div class="small muted">{{ kev.detail }}</div></div>
+  <div class="card"><div class="muted small">Last run</div><div class="stat" style="font-size:16px">{{ state.last_run or 'not yet' }}</div>
+    <div class="small muted">every {{ cfg.scan_interval_min }} min · {{ state.last_stats.get('applied',0) }} moved</div></div>
+</div>
+{% if state.last_stats.get('ingest',{}).get('missing') %}
+<div class="warnbox">Inbox folders not found: {{ state.last_stats.ingest.missing|join(', ') }}</div>{% endif %}
+
+<h2>Recent activity</h2>
+<div class="card">
+<table>{% for ev in recent %}<tr><td class="muted small" style="white-space:nowrap">{{ ev.ts[:16].replace('T',' ') }}</td>
+<td><span class="badge">{{ ev.kind }}</span></td>
+<td class="small">{% for k,v in ev.items() if k not in ('ts','kind','state','probs') %}<code>{{k}}={{v}}</code> {% endfor %}</td></tr>
+{% else %}<tr><td class="muted">Nothing yet — press “Run now”.</td></tr>{% endfor %}</table>
+</div>
+{% endblock %}

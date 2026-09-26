@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Clusters</h1>
+<div class="card">
+<table>
+<tr><th>Folder</th><th>Kind</th><th>Span</th><th>Photos</th><th>Decision</th><th></th></tr>
+{% for c in clusters %}
+<tr>
+  <td><a href="/clusters/view?folder={{ c.folder|urlencode }}">{{ c.rel }}</a>{% if c.unnamed %} <span class="badge warn">unnamed</span>{% endif %}</td>
+  <td><span class="badge {{ c.kind }}">{{ c.kind }}</span></td>
+  <td class="small">{{ c.start[:10] }} → {{ c.end[:10] }}</td>
+  <td>{{ c.n }}{% if c.n_review %} <span class="muted small">({{ c.n_review }} in review)</span>{% endif %}</td>
+  <td class="small">{{ c.decision.by }} {{ '%.2f'|format(c.decision.conf) }}</td>
+  <td><form method="post" action="/cluster/undo" class="inline" onsubmit="return confirm('Move all photos back to their inbox?')">
+      <input type="hidden" name="folder" value="{{ c.folder }}"><button class="secondary small">undo</button></form></td>
+</tr>
+{% else %}<tr><td class="muted" colspan="6">No clusters applied yet.</td></tr>{% endfor %}
+</table>
+</div>
+{% endblock %}

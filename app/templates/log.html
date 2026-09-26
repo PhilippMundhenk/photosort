@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Log</h1>
+<div class="card">
+  <div class="row">
+    <span class="muted small">filter:</span>
+    {% for k in ['', 'run', 'decision', 'review', 'apply', 'label', 'correction', 'settings'] %}
+      <a class="badge {{ 'ok' if k==kind }}" href="/log?kind={{ k }}">{{ k or 'all' }}</a>{% endfor %}
+  </div>
+</div>
+<h2>Calibration (Kev decisions vs. your corrections)</h2>
+<div class="card">
+<table><tr><th>confidence</th><th>decisions</th><th>corrected</th><th>accuracy</th></tr>
+{% for b in calibration %}<tr><td>{{ '%.1f'|format(b.lo) }}–{{ '%.1f'|format(b.hi) }}</td><td>{{ b.n }}</td><td>{{ b.wrong }}</td>
+<td>{% if b.acc is not none %}{{ b.acc }}{% else %}<span class="muted">–</span>{% endif %}</td></tr>{% endfor %}
+</table>
+<div class="muted small">A calibrated model has accuracy ≈ confidence in every row. Rule-based decisions are not counted.</div>
+</div>
+<div class="card">
+<table>
+{% for ev in rows %}
+<tr><td class="muted small" style="white-space:nowrap">{{ ev.ts[:19].replace('T',' ') }}</td>
+<td><span class="badge">{{ ev.kind }}</span></td>
+<td class="small">{% for k,v in ev.items() if k not in ('ts','kind') %}<code>{{k}}={{v}}</code> {% endfor %}</td></tr>
+{% else %}<tr><td class="muted">empty</td></tr>{% endfor %}
+</table>
+</div>
+{% endblock %}
