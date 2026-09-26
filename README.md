@@ -2,55 +2,37 @@
 
 [![CI](https://github.com/PhilippMundhenk/photosort/actions/workflows/ci.yml/badge.svg)](https://github.com/PhilippMundhenk/photosort/actions/workflows/ci.yml)
 
-Sorts incoming photos from phones and cameras into a folder tree by **trip**, **day out** and
-**occasion at home**, fully locally, on weak hardware (built for a CPU-only ThinkPad T430).
-The filesystem is the only state, the rules are the whole logic, and a web UI reviews every
-move. (A "System One" decision model was tried for the one judgment call the rules cannot
-make and dropped again; see [docs/DESIGN.md](docs/DESIGN.md) section 10.)
-
-See [docs/DESIGN.md](docs/DESIGN.md) for scope, the rules and why they were chosen.
+Sorts the photos and videos from your phones into a folder tree of trips, day outs and
+occasions, by rules alone, fully offline, on weak hardware, with a web UI that reviews every move.
 
 ## What it does
 
 ```
-inbox/phone-a/**.jpg ─┐                              sorted/2026-06 Lisbon, Sevilla/
-inbox/phone-b/**.jpg ─┼─ scan ─ zone ─ cluster ─►    sorted/2026-06-27 Ludwigsburg/
-inbox/camera/**.dng  ─┘                              sorted/_unnamed/2026-06-30 (25 Fotos)/   ← you name it
-                                                     sorted/2026/06/                          ← everything else
+inbox/phone-a/**.jpg ─┐                          sorted/2026-06 Lisbon, Sevilla/
+inbox/phone-b/**.jpg ─┼─ scan ─ zone ─ cluster ─► sorted/2026-06-27 Ludwigsburg/
+inbox/camera/**.dng  ─┘                          sorted/_unnamed/2026-06-30 (25 Fotos)/ ← name it
+                                                 sorted/2026/06/                        ← the rest
 ```
 
-1. **Scan** (every N minutes): every photo and video in every input folder (recursive) gets a
-   JSON record (by default in `data/index/`, optionally as a sidecar next to the file; see
-   Settings → Sidecars) with timestamp, GPS, offline reverse-geocoded place and
-   its *zone* relative to your home: `home` (< 0.5 km), `local` (< 20 km), `away` (beyond).
-   Photos without GPS take the position of the nearest photo in time that has one.
-   Videos (iPhone and Android MP4/MOV) are read the same way: GPS from the QuickTime keys,
-   the timestamp from `CreationDate` (iPhone, with offset) or the spec-UTC `CreateDate`
-   converted to your home time zone (`TZ` / Settings), the device from the metadata or, when
-   the video carries none (Android), from the inbox name.
-2. **Cluster** (deterministic):
-   - **Trip** = a run of photos away from home spanning at least 20 hours. Any `home` photo
-     ends it, no matter how short the stay. No-GPS photos inside the run ride along.
-     Lisbon → Seville → Lisbon is one trip. Name: `YYYY-MM Place, Place` when the trip stays
-     within one month, `YYYY-MM-DD..MM-DD` otherwise (places in order of first appearance;
-     countries if more than four; "Multiple" beyond that). Places
-     are your own named places (Settings, or "remember this place" when renaming), else the
-     town from the offline geocoder.
-   - **Day out** = a run of not-at-home photos shorter than 20 hours: `YYYY-MM-DD Place`.
-     (Trip and day out are the same rule; only the duration differs.)
-   - **Occasion at home** = a burst at home well above your normal photos/day. Every such burst
-     is proposed and goes to `_unnamed/` until you name it (`2026-06-30 Hannas Geburtstag`) or
-     reject it (then it stays everyday).
-   - Everything else → `YYYY/MM/`.
-3. **Review** in the web UI: approve, reject, rename, toggle single photos, name unnamed
-   bursts, undo whole clusters, move single photos back out. **Everyday** lists every photo
-   that is in no cluster, by month and day; tick photos to add them to a pending proposal or
-   to create a cluster by hand (kept across runs, marked "by hand"). Every action is logged and every
-   folder gets a `manifest.json` (source paths, confidences, corrections). Approving in the
-   UI settles every photo; only auto-applied clusters park their low-confidence photos in
-   `<folder>/_review/` for a later look.
+## Key features
 
-**Dry-run is on by default.** Nothing moves until you approve it or switch a rule to auto-apply.
+- **Rules, not a database.** Where a photo was taken relative to home and when decides
+  everything; the folder tree is the result and other tools keep working on it.
+- **Trips, day outs and occasions from plain observation.** A run of photos away from home is a
+  trip if it spans a night and a day out otherwise; a dense burst at home is an occasion for you
+  to name. No dates or hints to type in.
+- **Review before anything moves.** Dry-run is the default. Approve, rename, exclude single
+  photos, name bursts, undo whole folders; the Everyday page shows what was not clustered and
+  lets you build clusters by hand.
+- **Videos included.** iPhone and Android MP4/MOV get correct local timestamps (UTC converted
+  to your home zone), GPS from the QuickTime metadata and a thumbnail frame.
+- **Readable names.** `2026-06 Lisbon, Sevilla`; your own place names ("Black Forest") beat
+  the offline geocoder and are learned when you rename a cluster.
+- **Thumbnails without a NAS.** Generated once and cached; RAW previews and video frames too.
+- **Move or copy.** Moves are renames on the same share; copy mode leaves originals untouched.
+- **One small container.** Runs on a CPU-only laptop; the whole test suite runs in Docker.
+
+See [docs/DESIGN.md](docs/DESIGN.md) for the rules and why they were chosen.
 
 ## Deploy
 
@@ -89,6 +71,41 @@ A burst at home is proposed when it has at least `burst_min_photos` files and ex
 median photos/day by `burst_baseline_factor`. Nothing judges whether it *was* an occasion:
 metadata cannot tell a birthday from twenty shots of the same thing, and neither could the
 decision model that was tried for exactly this (DESIGN.md, section 10). You name it or reject it.
+
+## How it works
+
+1. **Scan** (every N minutes): every photo and video in every input folder (recursive) gets a
+   JSON record (by default in `data/index/`, optionally as a sidecar next to the file; see
+   Settings → Sidecars) with timestamp, GPS, offline reverse-geocoded place and
+   its *zone* relative to your home: `home` (< 0.5 km), `local` (< 20 km), `away` (beyond).
+   Photos without GPS take the position of the nearest photo in time that has one.
+   Videos (iPhone and Android MP4/MOV) are read the same way: GPS from the QuickTime keys,
+   the timestamp from `CreationDate` (iPhone, with offset) or the spec-UTC `CreateDate`
+   converted to your home time zone (`TZ` / Settings), the device from the metadata or, when
+   the video carries none (Android), from the inbox name.
+2. **Cluster** (deterministic):
+   - **Trip** = a run of photos away from home spanning at least 20 hours. Any `home` photo
+     ends it, no matter how short the stay. No-GPS photos inside the run ride along.
+     Lisbon → Seville → Lisbon is one trip. Name: `YYYY-MM Place, Place` when the trip stays
+     within one month, `YYYY-MM-DD..MM-DD` otherwise (places in order of first appearance;
+     countries if more than four; "Multiple" beyond that). Places
+     are your own named places (Settings, or "remember this place" when renaming), else the
+     town from the offline geocoder.
+   - **Day out** = a run of not-at-home photos shorter than 20 hours: `YYYY-MM-DD Place`.
+     (Trip and day out are the same rule; only the duration differs.)
+   - **Occasion at home** = a burst at home well above your normal photos/day. Every such burst
+     is proposed and goes to `_unnamed/` until you name it (`2026-06-30 Hannas Geburtstag`) or
+     reject it (then it stays everyday).
+   - Everything else → `YYYY/MM/`.
+3. **Review** in the web UI: approve, reject, rename, toggle single photos, name unnamed
+   bursts, undo whole clusters, move single photos back out. **Everyday** lists every photo
+   that is in no cluster, by month and day; tick photos to add them to a pending proposal or
+   to create a cluster by hand (kept across runs, marked "by hand"). Every action is logged and every
+   folder gets a `manifest.json` (source paths, confidences, corrections). Approving in the
+   UI settles every photo; only auto-applied clusters park their low-confidence photos in
+   `<folder>/_review/` for a later look.
+
+**Dry-run is on by default.** Nothing moves until you approve it or switch a rule to auto-apply.
 
 ## Layout
 
