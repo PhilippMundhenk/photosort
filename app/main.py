@@ -163,6 +163,16 @@ def _start():
         threading.Thread(target=_apply_worker, name="apply", daemon=True).start()
     if not cfg.dry_run:
         queue_approved()                                       # approved before a restart: finish them
+    threading.Thread(target=_warm_cache, name="warm", daemon=True).start()
+
+
+def _warm_cache() -> None:
+    """Read the records once at startup so the first page does not pay for it (a thousand small
+    files through a bind mount take seconds)."""
+    try:
+        cluster.records_filled(config.load())
+    except Exception:  # noqa: BLE001
+        log.exception("cache warm-up failed")
 
 
 @app.on_event("shutdown")
@@ -451,7 +461,13 @@ async def approve_all(request: Request):
 @app.post("/cluster/rename")
 def cluster_rename(request: Request, folder: str = Form(...), name: str = Form(...), remember_place: str = Form("")):
     cfg = config.load()
-    dst = mover.rename(cfg, Path(folder), name)
+    try:
+        dst = mover.rename(cfg, Path(folder), name)
+    except mover.FolderInUse as e:
+        if request.headers.get("x-requested-with") == "fetch":
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=423)
+        back = f"/clusters/view?folder={quote(folder)}"
+        return HTMLResponse(f"<h1>Not renamed</h1><p>{e}</p><p><a href='{back}'>back</a></p>", status_code=423)
     if remember_place:
         m = mover.read_manifest(dst) or {}
         pr = cluster.load_proposals().get(m.get("proposal_id") or "", {})

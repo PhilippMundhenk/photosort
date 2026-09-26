@@ -18,8 +18,13 @@ from tests import synth  # noqa: E402
 
 @pytest.fixture
 def data_dir() -> Path:
+    import threading
+
     from app import thumbs
     thumbs.wait()                          # a prefetch from the previous test must not write into the wiped dir
+    for t in threading.enumerate():        # nor may the startup cache warm-up still be reading it
+        if t.name == "warm":
+            t.join(60)
     d = config.DATA_DIR
     if d.exists():
         shutil.rmtree(d)

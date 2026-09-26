@@ -142,7 +142,9 @@ def _load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
     for name, folder in inbox_dirs(cfg):
         if not folder.exists():
             continue
-        for p in ingest.list_photos(cfg, folder):
+        photos = ingest.list_photos(cfg, folder)
+        ingest.known_files(folder, photos)        # the next scan diffs against this instead of reloading
+        for p in photos:
             rec = ingest.read_sidecar(p, cfg)
             if rec is None:
                 continue

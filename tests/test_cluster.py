@@ -205,6 +205,21 @@ def test_every_dense_home_burst_is_proposed(cfg, library):
     assert "home" not in {p["kind"] for p in cluster.load_proposals().values()}
 
 
+def test_first_scan_after_a_load_does_not_reload(cfg, library, monkeypatch):
+    ingest._known.clear()
+    calls = []
+    real = cluster._load_records
+    monkeypatch.setattr(cluster, "_load_records", lambda c: calls.append(1) or real(c))
+    cluster.load_records(cfg)                                            # e.g. the warm-up at startup
+    ingest.scan(cfg)                                                     # first scan: knows what the load saw
+    cluster.load_records(cfg)
+    assert calls == [1]
+    ingest._known.clear()
+    ingest.scan(cfg)                                                     # a scan with no prior knowledge reloads
+    cluster.load_records(cfg)
+    assert calls == [1, 1]
+
+
 def test_load_records_cache_is_patched_per_record(cfg, library, monkeypatch):
     ingest.scan(cfg)                                                     # the first scan in a process reloads once
     calls = []

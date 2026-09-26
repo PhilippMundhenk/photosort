@@ -44,7 +44,12 @@ def _bump(path: Path | None = None) -> None:
         changed["paths"].add(str(path))
 
 
-_known: dict[str, set[str]] = {}          # inbox folder -> photo paths seen by the last scan
+_known: dict[str, set[str]] = {}          # inbox folder -> photo paths seen by the last scan or load
+
+
+def known_files(folder: Path, photos: list[Path]) -> None:
+    """Record which files a full load saw, so the following scan only marks differences."""
+    _known[str(folder)] = {str(p) for p in photos}
 
 
 class ExifToolMissing(RuntimeError):
