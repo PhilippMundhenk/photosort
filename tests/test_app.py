@@ -287,13 +287,15 @@ def test_settings_save_coerces_and_reschedules(client):
     assert status["backend"] == "kev" and status["ok"] is False           # nothing listening
 
 
-def test_live_mode_auto_applies_trips_with_review_folder(client, library):
+def test_live_mode_auto_applies_trips_with_review_folder(client, library, monkeypatch):
     cfg = config.load()
     cfg.dry_run, cfg.auto_apply_trips = False, True
     config.save(cfg)
     cluster.run(cfg, Decider(cfg))
     trip = _proposals("trip")
-    _force_uncertain(trip["id"])
+    doubtful = trip["photos"][5]["file"]                                  # recomputed by the pipeline run:
+    real = cluster._gps_conf                                              # make one photo low-confidence for real
+    monkeypatch.setattr(cluster, "_gps_conf", lambda r: 0.6 if r["file"] == doubtful else real(r))
 
     stats = main.run_pipeline("test")
     assert stats["applied"] == 1 + 10                                      # trip + everyday photos
