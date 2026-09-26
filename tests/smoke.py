@@ -26,7 +26,8 @@ stats = cluster.run(cfg, Decider(cfg))
 props = cluster.load_proposals()
 print("stats:", stats)
 for p in props.values():
-    print(f"  [{p['kind']:5}] {p['name']:45} n={p['n']:3} uncertain={p['n_uncertain']} status={p['status']} by={p['decision']['by']} conf={p['decision']['conf']}")
+    print(f"  [{p['kind']:5}] {p['name']:45} n={p['n']:3} uncertain={p['n_uncertain']} "
+          f"status={p['status']} by={p['decision']['by']} conf={p['decision']['conf']}")
 
 kinds = {p["kind"] for p in props.values()}
 assert kinds == {"trip", "local", "home"}, kinds
@@ -59,6 +60,6 @@ assert not folder.exists()
 assert len(list(inboxA.rglob("*.jpg"))) + len(list(inboxB.rglob("*.jpg"))) == n - 25
 
 ev = (tmp / "data" / "events.jsonl").read_text().splitlines()
-print("events:", len(ev), "kinds:", sorted({json.loads(l)['kind'] for l in ev}))
+print("events:", len(ev), "kinds:", sorted({json.loads(line)["kind"] for line in ev}))
 shutil.rmtree(tmp)
 print("SMOKE OK")

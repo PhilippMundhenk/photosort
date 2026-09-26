@@ -19,7 +19,6 @@ import re
 import statistics
 from collections import Counter
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from . import geo, ingest
 from .config import DATA_DIR, Config, inbox_dirs
@@ -87,7 +86,7 @@ def fill_gps_from_neighbours(cfg: Config, recs: list[dict], max_hours: float = 4
         return
     import bisect
     times = [recs[i]["_t"] for i in with_gps]
-    for i, r in enumerate(recs):
+    for r in recs:
         if r.get("lat") is not None:
             continue
         k = bisect.bisect_left(times, r["_t"])
@@ -110,9 +109,7 @@ def find_trip_runs(cfg: Config, recs: list[dict]) -> list[list[dict]]:
             if cur:
                 runs.append(cur)
             cur = []
-        elif z == geo.ZONE_AWAY:
-            cur.append(r)
-        elif cur:                       # local/unknown inside an open run: transit
+        elif z == geo.ZONE_AWAY or cur:
             cur.append(r)
     if cur:
         runs.append(cur)
@@ -126,7 +123,7 @@ def find_trip_runs(cfg: Config, recs: list[dict]) -> list[list[dict]]:
         if not run:
             continue
         part = [run[0]]
-        for prev, nxt in zip(run, run[1:]):
+        for prev, nxt in zip(run, run[1:], strict=False):
             gap_days = (nxt["_t"] - prev["_t"]).total_seconds() / 86400
             far = False
             if prev.get("lat") is not None and nxt.get("lat") is not None:     # GPS-less photos never split
@@ -230,7 +227,8 @@ def home_baseline(recs: list[dict]) -> float:
 
 def local_proposal(cfg: Config, burst: list[dict]) -> dict:
     a, b = _span(burst)
-    place = Counter((r.get("place") or {}).get("place") for r in burst if r["zone"] == geo.ZONE_LOCAL and r.get("place"))
+    place = Counter((r.get("place") or {}).get("place")
+                    for r in burst if r["zone"] == geo.ZONE_LOCAL and r.get("place"))
     name = place.most_common(1)[0][0] if place else "Ausflug"
     photos = [_photo_entry(r, 1.0 if r["zone"] == geo.ZONE_LOCAL else 0.6) for r in burst]
     return {"id": _pid("local", burst), "kind": "local", "name": sanitize(f"{span_label(a, b)} {name}"),
@@ -315,8 +313,8 @@ def run(cfg: Config, decider: Decider | None = None) -> dict:
                 decision = {"id": prev["decision"]["id"], "by": prev["decision"]["by"],
                             "conf": prev["decision"]["conf"], "answer": prev["decision"]["answer"]}
             else:
-                decision = decider.choice("home_burst", home_state(cfg, burst, threshold), HOME_BURST_OPTIONS,
-                                          HOME_BURST_INSTRUCTIONS, HOME_BURST_CRITERIA)
+                decision = decider.choice("home_burst", home_state(cfg, burst, threshold),
+                                          HOME_BURST_OPTIONS, HOME_BURST_INSTRUCTIONS, HOME_BURST_CRITERIA)
             if decision["answer"] != "occasion" or decision["conf"] < cfg.occasion_confidence_min:
                 continue
             pr = home_proposal(cfg, burst, decision)

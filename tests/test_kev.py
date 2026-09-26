@@ -88,7 +88,8 @@ def test_wire_format_and_parsing():
 
 def test_fallback_to_rules_when_server_down():
     srv, url = _serve()
-    srv.shutdown(); srv.server_close()                      # port is now closed
+    srv.shutdown()
+    srv.server_close()                                      # port is now closed
     cfg = config.Config(kev_url=url, kev_timeout_s=2)
     d = Decider(cfg)
     assert d.status()["ok"] is False
