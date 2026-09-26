@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
@@ -25,6 +26,9 @@ class Config:
     review_dir: str = "_review"            # uncertain photos inside a cluster folder
 
     # Home & zones
+    # IANA zone of the home; naive EXIF times are read in it and video UTC times are converted to it.
+    # Seeded from TZ; a value saved from the UI wins.
+    timezone: str = field(default_factory=lambda: os.environ.get("TZ") or "UTC")
     home_lat: float = 0.0
     home_lon: float = 0.0
     home_radius_km: float = 0.5            # < this: "home"
@@ -68,6 +72,13 @@ class Config:
 
     def as_dict(self) -> dict:
         return asdict(self)
+
+
+def tzinfo(cfg: Config) -> ZoneInfo:
+    try:
+        return ZoneInfo(cfg.timezone or "UTC")
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo("UTC")
 
 
 def load() -> Config:

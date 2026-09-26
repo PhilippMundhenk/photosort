@@ -23,7 +23,7 @@ T0 = datetime(2026, 6, 1, 10, 0, tzinfo=timezone.utc)
 def make_config(base: Path, **overrides) -> config.Config:
     kw = dict(inboxes=[{"path": str(base / "phone-a"), "name": "phone-a"},
                        {"path": str(base / "phone-b"), "name": "phone-b"}],
-              root=str(base / "sorted"), home_lat=HOME[0], home_lon=HOME[1],
+              root=str(base / "sorted"), home_lat=HOME[0], home_lon=HOME[1], timezone="UTC",
               write_xmp_sidecar=False, subfolder_by_source=True, kev_url="")
     kw.update(overrides)
     return config.Config(**kw)
@@ -43,7 +43,28 @@ class Library:
         tags = {"DateTimeOriginal": when.strftime("%Y:%m:%d %H:%M:%S"), "Model": cam}
         if pos:
             tags["GPSLatitude"], tags["GPSLongitude"] = pos
-        rec = {**ingest.build_record(self.cfg, p, tags), "source": inbox.name, "inbox": str(inbox)}
+        rec = {**ingest.build_record(self.cfg, p, tags, source=inbox.name), "source": inbox.name, "inbox": str(inbox)}
+        ingest.write_sidecar(p, rec)
+        self.paths.append(p)
+        return p
+
+    def video(self, inbox: Path, when: datetime, pos=None, kind: str = "android") -> Path:
+        """A fake MP4 with the tags exiftool would report for that phone family. `when` is the
+        instant (aware); Android files carry it as spec-UTC CreateDate only, iPhone files also as
+        Keys:CreationDate with an offset plus Make/Model."""
+        self.n += 1
+        p = inbox / f"VID_{self.n:04d}.mp4"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"\0\0\0\x18ftypisom")
+        utc = when.astimezone(timezone.utc)
+        tags = {"MIMEType": "video/mp4", "CreateDate": utc.strftime("%Y:%m:%d %H:%M:%S"),
+                "MediaCreateDate": utc.strftime("%Y:%m:%d %H:%M:%S")}
+        if kind == "iphone":
+            tags.update({"CreationDate": when.strftime("%Y:%m:%d %H:%M:%S%z")[:-2] + ":" + when.strftime("%z")[-2:],
+                         "Make": "Apple", "Model": "iPhone 15"})
+        if pos:
+            tags["GPSLatitude"], tags["GPSLongitude"] = pos
+        rec = {**ingest.build_record(self.cfg, p, tags, source=inbox.name), "source": inbox.name, "inbox": str(inbox)}
         ingest.write_sidecar(p, rec)
         self.paths.append(p)
         return p

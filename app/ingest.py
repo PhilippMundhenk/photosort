@@ -9,11 +9,11 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import geo
-from .config import Config, inbox_dirs
+from .config import Config, inbox_dirs, tzinfo
 
 SIDECAR_SUFFIX = ".photosort.json"
 SIDECAR_VERSION = 1
@@ -56,8 +56,14 @@ def write_sidecar(photo: Path, rec: dict) -> None:
 
 # --- exiftool -----------------------------------------------------------------
 
-_EXIF_TAGS = ["-DateTimeOriginal", "-CreateDate", "-MediaCreateDate", "-FileModifyDate",
-              "-GPSLatitude", "-GPSLongitude", "-Model", "-Make", "-OffsetTimeOriginal"]
+# Photos: EXIF DateTimeOriginal is local wall time, OffsetTimeOriginal (if any) its zone.
+# Videos (QuickTime/MP4, iPhone and Android): CreateDate/MediaCreateDate are UTC by spec;
+# iPhones also write Keys:CreationDate with the local offset, which is exact. GPS comes from
+# EXIF or from QuickTime Keys:GPSCoordinates; exiftool folds both into GPSLatitude/Longitude.
+_EXIF_TAGS = ["-DateTimeOriginal", "-OffsetTimeOriginal", "-Keys:CreationDate", "-CreateDate",
+              "-MediaCreateDate", "-FileModifyDate", "-MIMEType",
+              "-GPSLatitude", "-GPSLongitude", "-Make", "-Model", "-AndroidManufacturer", "-AndroidModel"]
+VIDEO_EXTENSIONS = {"mp4", "mov", "m4v", "3gp", "mkv", "avi", "webm", "mts", "m2ts"}
 
 
 def exif_batch(paths: list[Path]) -> dict[str, dict]:
@@ -80,38 +86,75 @@ def exif_batch(paths: list[Path]) -> dict[str, dict]:
     return out
 
 
-def _parse_dt(tags: dict) -> str | None:
-    for key in ("DateTimeOriginal", "CreateDate", "MediaCreateDate", "FileModifyDate"):
+def is_video(path: Path, tags: dict | None = None) -> bool:
+    mime = str((tags or {}).get("MIMEType") or "")
+    return mime.startswith("video/") or path.suffix.lower().lstrip(".") in VIDEO_EXTENSIONS
+
+
+def _exif_dt(s: str, offset: str = "") -> datetime | None:
+    """'2026:10:03 14:22:31', optionally followed by (or given) '+02:00'/'Z'. Naive if no offset."""
+    try:
+        dt = datetime.strptime(s[:19].replace(":", "-", 2), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+    off = offset or s[19:].strip()
+    if off == "Z":
+        return dt.replace(tzinfo=timezone.utc)
+    if off and off[0] in "+-" and len(off) >= 6 and off[1:3].isdigit() and off[4:6].isdigit():
+        sign = 1 if off[0] == "+" else -1
+        return dt.replace(tzinfo=timezone(sign * timedelta(hours=int(off[1:3]), minutes=int(off[4:6]))))
+    return dt
+
+
+def _parse_dt(tags: dict, video: bool = False, tz=None) -> str | None:
+    """Best timestamp from the tags, as ISO text. Photos keep their (naive) local wall time plus
+    the EXIF offset when there is one. Videos are always returned zone-aware, in the home zone:
+    Keys:CreationDate (iPhone, has an offset) wins; QuickTime CreateDate/MediaCreateDate are
+    UTC by spec (Android, iPhone) and are converted."""
+    tz = tz or timezone.utc
+    order = (("CreationDate", "local"), ("CreateDate", "utc"), ("MediaCreateDate", "utc"),
+             ("FileModifyDate", "local")) if video else \
+            (("DateTimeOriginal", "local"), ("CreateDate", "local"), ("MediaCreateDate", "local"),
+             ("FileModifyDate", "local"))
+    for key, kind in order:
         v = tags.get(key)
         if not v or str(v).startswith("0000"):
             continue
-        s = str(v)
-        # "2026:10:03 14:22:31" or with offset "+02:00"
-        try:
-            base = s[:19].replace(":", "-", 2)
-            dt = datetime.strptime(base, "%Y-%m-%d %H:%M:%S")
-            off = tags.get("OffsetTimeOriginal") or (s[19:] if len(s) > 19 else "")
-            if off and off[0] in "+-" and len(off) >= 6:
-                sign = 1 if off[0] == "+" else -1
-                hh, mm = int(off[1:3]), int(off[4:6])
-                from datetime import timedelta
-                tz = timezone(sign * timedelta(hours=hh, minutes=mm))
-                dt = dt.replace(tzinfo=tz)
-            return dt.isoformat()
-        except ValueError:
+        offset = str(tags.get("OffsetTimeOriginal") or "") if key == "DateTimeOriginal" else ""
+        dt = _exif_dt(str(v), offset)
+        if dt is None:
             continue
+        if video:
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc if kind == "utc" else tz)
+            dt = dt.astimezone(tz)
+        return dt.isoformat()
     return None
 
 
-def build_record(cfg: Config, photo: Path, tags: dict) -> dict:
+def _camera(tags: dict, source: str | None) -> tuple[str | None, str | None]:
+    """(device name, where it came from). EXIF Make/Model (photos, iPhone videos), the Android
+    QuickTime keys, else the inbox name: one inbox is one device in this setup."""
+    for keys, how in ((("Make", "Model"), "exif"), (("AndroidManufacturer", "AndroidModel"), "exif")):
+        name = " ".join(str(tags[k]).strip() for k in keys if tags.get(k))
+        if name:
+            return name, how
+    return (source, "inbox") if source else (None, None)
+
+
+def build_record(cfg: Config, photo: Path, tags: dict, source: str | None = None) -> dict:
     lat, lon = tags.get("GPSLatitude"), tags.get("GPSLongitude")
+    video = is_video(photo, tags)
+    camera, camera_source = _camera(tags, source)
     rec = {
         "v": SIDECAR_VERSION,
         "file": photo.name,
-        "ts": _parse_dt(tags),
+        "media": "video" if video else "photo",
+        "ts": _parse_dt(tags, video=video, tz=tzinfo(cfg)),
         "lat": float(lat) if lat is not None else None,
         "lon": float(lon) if lon is not None else None,
-        "camera": " ".join(x for x in (tags.get("Make"), tags.get("Model")) if x) or None,
+        "camera": camera,
+        "camera_source": camera_source,
         "gps_source": "exif" if lat is not None else None,
         "dist_km": None,
         "zone": geo.ZONE_UNKNOWN,
@@ -151,7 +194,7 @@ def scan(cfg: Config, force: bool = False) -> dict:
             todo = []
             tags = {}
         for p in todo:
-            rec = build_record(cfg, p, tags.get(str(p), {}))
+            rec = build_record(cfg, p, tags.get(str(p), {}), source=name)
             rec["source"] = name
             rec["inbox"] = str(folder)
             write_sidecar(p, rec)

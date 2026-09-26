@@ -19,6 +19,7 @@
 
 <div class="card">
   <h2 style="margin-top:0">Home &amp; zones</h2>
+  <label>Home time zone (IANA name; photo times without an offset are read in it, video times are converted to it)</label><input type="text" name="timezone" value="{{ cfg.timezone }}" placeholder="Europe/Berlin">
   <div class="row"><div style="flex:1"><label>Home latitude</label><input type="number" step="0.000001" name="home_lat" value="{{ cfg.home_lat }}"></div>
     <div style="flex:1"><label>Home longitude</label><input type="number" step="0.000001" name="home_lon" value="{{ cfg.home_lon }}"></div></div>
   <label>Home radius km (below: <b>home</b>)</label><input type="number" step="0.1" name="home_radius_km" value="{{ cfg.home_radius_km }}">
