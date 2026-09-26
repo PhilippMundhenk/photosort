@@ -3,15 +3,32 @@
 <h1>Review queue</h1>
 {% if cfg.dry_run %}<div class="warnbox">Dry-run: nothing moves until you approve here. Turn it off in Settings once you trust a rule.</div>{% endif %}
 
+{% if applying %}
+<h2>Moving ({{ applying|length }})</h2>
+<div data-poll="approved">
+{% for p in applying %}
+<div class="card" id="{{ p.id }}">
+  <div class="row">
+    <span class="badge {{ p.kind }}">{{ p.kind }}</span> <b>{{ p.name }}</b>
+    {% if p.error %}<span class="badge bad">failed</span> <span class="small">{{ p.error }}</span>
+      <form method="post" action="/proposal/{{ p.id }}/approve" class="inline"><button class="small">retry</button></form>
+    {% elif p.progress %}<span class="badge warn">moving</span> <span class="small" data-progress="{{ p.id }}">{{ p.progress.done }} / {{ p.progress.total }}</span>
+    {% else %}<span class="badge">queued</span> <span class="small" data-progress="{{ p.id }}">0 / {{ p.n }}</span>{% endif %}
+  </div>
+</div>
+{% endfor %}
+</div>
+{% endif %}
+
 <h2>Proposed clusters ({{ pending|length }})</h2>
 {% for p in pending %}
 <div class="card" id="{{ p.id }}">
   <div class="row">
     <span class="badge {{ p.kind }}">{{ p.kind }}</span>{% if p.manual %}<span class="badge">by hand</span>{% endif %}
     {% if p.status == 'ongoing' %}<span class="badge warn">ongoing – waiting for a home photo</span>{% endif %}
-    <form method="post" action="/proposal/{{ p.id }}/rename" class="inline row">
-      <input type="text" name="name" value="{{ p.name }}" style="width:340px">
-      <button class="secondary small">rename</button>
+    <form method="post" action="/proposal/{{ p.id }}/rename" class="inline row" data-autosave>
+      <input type="text" name="name" value="{{ p.name }}" style="width:340px" title="edits are saved as you type">
+      <noscript><button class="secondary small">rename</button></noscript><span class="save-state small muted"></span>
       {% if p.kind != 'home' %}<label class="small" style="margin:0;display:inline"><input type="checkbox" name="remember_place" value="1"> remember this place</label>{% endif %}
     </form>
     <span class="muted small">{{ p.n }} photos{% if p.n_uncertain %}, {{ p.n_uncertain }} uncertain{% endif %}

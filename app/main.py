@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+import queue
 import re
 import threading
 from collections import Counter
@@ -28,6 +29,57 @@ tpl = Jinja2Templates(directory=BASE / "templates")
 
 _lock = threading.Lock()
 _state = {"last_run": None, "last_stats": {}, "running": False, "error": None}
+
+# Approving a proposal only marks it "approved"; this worker moves the files (hundreds of them
+# over a share take a while) so the request returns at once. Progress is shown on the review page.
+_apply_queue: queue.Queue = queue.Queue()
+_applying: dict[str, dict] = {}
+
+
+def _apply_one(pid: str) -> None:
+    with _lock:                                   # never while a scan rewrites the proposals
+        cfg = config.load()
+        pr = cluster.load_proposals().get(pid)
+        if not pr or pr["status"] != "approved":
+            return
+        _applying[pid] = {"done": 0, "total": pr["n"], "name": pr["name"]}
+        update: dict = {}
+        try:
+            mover.apply(cfg, pr, reviewed=True,           # a human looked at it: nothing goes to _review
+                        progress=lambda done, total: _applying[pid].update(done=done, total=total))
+            update = {"status": "applied", "error": None}
+        except Exception as e:  # noqa: BLE001
+            log.exception("apply failed for %s", pid)
+            update = {"error": f"{type(e).__name__}: {e}"}
+            events.log("review", proposal=pid, action="apply_failed", name=pr["name"], error=update["error"])
+        finally:
+            _applying.pop(pid, None)
+        props = cluster.load_proposals()              # re-read: the UI may have edited others meanwhile
+        if pid in props:
+            props[pid].update(update)
+            cluster.save_proposals(props)
+
+
+def _apply_worker() -> None:
+    while True:
+        pid = _apply_queue.get()
+        try:
+            _apply_one(pid)
+        except Exception:  # noqa: BLE001
+            log.exception("apply worker")
+        finally:
+            _apply_queue.task_done()
+
+
+def queue_apply(pid: str) -> None:
+    _apply_queue.put(pid)
+
+
+def wait_for_apply(timeout: float = 120) -> None:
+    """Block until every queued apply is done (tests)."""
+    deadline = threading.Event()
+    threading.Thread(target=lambda: (_apply_queue.join(), deadline.set()), daemon=True).start()
+    deadline.wait(timeout)
 
 
 # --- pipeline -------------------------------------------------------------------
@@ -77,6 +129,11 @@ def _start():
     scheduler.add_job(run_pipeline, "interval", minutes=max(1, cfg.scan_interval_min), id="scan",
                       replace_existing=True)
     scheduler.start()
+    if not any(t.name == "apply" for t in threading.enumerate()):
+        threading.Thread(target=_apply_worker, name="apply", daemon=True).start()
+    for pid, pr in cluster.load_proposals().items():           # approved before a restart: finish them
+        if pr["status"] == "approved":
+            queue_apply(pid)
 
 
 @app.on_event("shutdown")
@@ -113,7 +170,9 @@ def review(request: Request, open: str = ""):
     cfg = config.load()
     props = cluster.load_proposals()
     unnamed = [c for c in mover.list_clusters(cfg) if c["unnamed"]]
-    return render(request, "review.html", pending=_pending(props), unnamed=unnamed, open_id=open)
+    applying = [dict(p, progress=_applying.get(p["id"])) for p in props.values() if p["status"] == "approved"]
+    return render(request, "review.html", pending=_pending(props), unnamed=unnamed, open_id=open,
+                  applying=sorted(applying, key=lambda p: p["start"], reverse=True))
 
 
 def _month_key(ts: str) -> str:
@@ -263,10 +322,11 @@ async def proposal_action(pid: str, action: str, request: Request):
     if not pr:
         return RedirectResponse("/review", status_code=303)
     form = dict(await request.form())
-    if action == "approve":
-        mover.apply(cfg, pr, reviewed=True)          # a human looked at it: nothing goes to _review
-        pr["status"] = "applied"
+    if action == "approve" and pr["status"] in ("pending", "ongoing"):
+        pr["status"], pr["error"] = "approved", None  # the apply worker moves the files
         events.log("review", proposal=pid, action="approve", name=pr["name"])
+        cluster.save_proposals(props)
+        queue_apply(pid)
     elif action == "reject":
         pr["status"] = "rejected"
         events.log("review", proposal=pid, action="reject", name=pr["name"], cluster_kind=pr["kind"])
@@ -304,7 +364,7 @@ def _remember_place(cfg: config.Config, folder_name: str, points: list) -> dict 
 
 
 @app.post("/cluster/rename")
-def cluster_rename(folder: str = Form(...), name: str = Form(...), remember_place: str = Form("")):
+def cluster_rename(request: Request, folder: str = Form(...), name: str = Form(...), remember_place: str = Form("")):
     cfg = config.load()
     dst = mover.rename(cfg, Path(folder), name)
     if remember_place:
@@ -317,6 +377,9 @@ def cluster_rename(folder: str = Form(...), name: str = Form(...), remember_plac
                 rec = ingest.read_sidecar(Path(p["dst"]), cfg) or {}
                 pts.append((rec.get("lat"), rec.get("lon")))
         _remember_place(cfg, dst.name, pts)
+    if request.headers.get("x-requested-with") == "fetch":
+        return JSONResponse({"ok": True, "name": dst.name, "folder": str(dst),
+                             "redirect": f"/clusters/view?folder={quote(str(dst))}"})
     return RedirectResponse(f"/clusters/view?folder={dst}", status_code=303)
 
 
@@ -402,4 +465,6 @@ def media(path: str):
 def api_status():
     cfg = config.load()
     props = cluster.load_proposals()
-    return {"state": _state, "pending": len(_pending(props)), "dry_run": cfg.dry_run}
+    approved = [p["id"] for p in props.values() if p["status"] == "approved"]
+    return {"state": _state, "pending": len(_pending(props)), "dry_run": cfg.dry_run,
+            "approved": len(approved), "applying": dict(_applying)}

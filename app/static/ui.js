@@ -15,6 +15,48 @@
       .catch(function () { form.submit(); });               // fall back to the full round trip
   });
 
+  // --- rename without a button: saved as you type (proposals) or when the field is left (folders)
+  function saveName(form) {
+    var input = form.querySelector("input[name=name]");
+    var state = form.querySelector(".save-state");
+    if (!input || input.value === form.dataset.saved) return;
+    if (state) state.textContent = "saving…";
+    fetch(form.action, {method: "POST", body: new FormData(form), headers: {"X-Requested-With": "fetch"}})
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+      .then(function (d) {
+        form.dataset.saved = input.value;
+        if (d.redirect) { location.replace(d.redirect); return; }
+        if (d.name && d.name !== input.value && document.activeElement !== input) input.value = d.name;
+        if (state) { state.textContent = "saved"; setTimeout(function () { if (state.textContent === "saved") state.textContent = ""; }, 1500); }
+      })
+      .catch(function () { if (state) state.textContent = "not saved"; });
+  }
+  document.querySelectorAll("form[data-autosave]").forEach(function (form) {
+    var input = form.querySelector("input[name=name]");
+    if (!input) return;
+    form.dataset.saved = input.value;
+    var timer = null;
+    if (!form.hasAttribute("data-reload")) {                       // proposals: while typing, debounced
+      input.addEventListener("input", function () { clearTimeout(timer); timer = setTimeout(function () { saveName(form); }, 700); });
+    }
+    input.addEventListener("change", function () { clearTimeout(timer); saveName(form); });   // field left / Enter
+    form.addEventListener("submit", function (ev) { ev.preventDefault(); clearTimeout(timer); saveName(form); });
+  });
+
+  // --- moving in the background: refresh progress, reload when done -------------------------
+  if (document.querySelector("[data-poll]")) {
+    var poll = setInterval(function () {
+      fetch("/api/status").then(function (r) { return r.json(); }).then(function (s) {
+        Object.keys(s.applying || {}).forEach(function (pid) {
+          var el = document.querySelector('[data-progress="' + pid + '"]');
+          if (el) el.textContent = s.applying[pid].done + " / " + s.applying[pid].total;
+        });
+        var shown = document.querySelectorAll("[data-poll] .card").length;
+        if (s.approved < shown) { clearInterval(poll); location.reload(); }
+      }).catch(function () {});
+    }, 2000);
+  }
+
   // --- everyday page: per-day select-all and the selected counter ------------------------
   function countSelected() {
     var c = document.getElementById("selcount");
