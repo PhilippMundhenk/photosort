@@ -392,8 +392,14 @@ def test_name_unnamed_burst_then_view_move_out_undo(client, library):
 def test_everyday_photos_move_on_request_with_progress(client, library):
     cfg = config.load()
     cluster.run(cfg)
-    n = len(mover.everyday_movable(cfg, cfg.trip_gap_days))
-    assert n == 10
+    n = len(mover.everyday_movable(cfg, cfg.everyday_keep_days))
+    assert n == 10 and cfg.everyday_keep_days == 4.0
+    cfg.everyday_keep_days = 10_000                                         # keep everything: nothing movable
+    config.save(cfg)
+    assert "Nothing to move" in client.get("/everyday").text
+    assert mover.everyday_movable(cfg, cfg.everyday_keep_days) == []
+    cfg.everyday_keep_days = 4.0
+    config.save(cfg)
     page = client.get("/everyday").text
     assert f"Move {n} everyday photos into YYYY/MM/" in page
     assert client.get("/api/status").json()["applying"] == {}
