@@ -120,8 +120,25 @@ def test_scan_indexes_only_new_files_and_rezones(tmp_path, monkeypatch):
     # home moved onto the photos: existing sidecars are re-zoned without exiftool
     cfg.home_lon = HOME[1] + 0.05
     stats = ingest.scan(cfg)
-    assert stats["new"] == 0 and calls[-1] == []
+    assert stats["new"] == 0 and len(calls) == 2                            # nothing new: exiftool not called
     assert ingest.read_sidecar(a, cfg)["zone"] == geo.ZONE_HOME
+
+
+def test_scan_reports_progress_per_chunk(tmp_path, monkeypatch):
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    for i in range(5):
+        (inbox / f"{i}.jpg").write_bytes(b"x")
+    cfg = config.Config(inboxes=[{"path": str(inbox), "name": "cam"}])
+    monkeypatch.setattr(ingest, "exif_batch", lambda paths: {str(p): {"DateTimeOriginal": "2026:06:04 09:00:00"}
+                                                            for p in paths})
+    monkeypatch.setattr(ingest, "SCAN_CHUNK", 2)
+    seen = []
+    assert ingest.scan(cfg, progress=lambda d, t: seen.append((d, t)))["new"] == 5
+    assert seen == [(0, 5), (2, 5), (4, 5), (5, 5)]
+    seen.clear()
+    ingest.scan(cfg, progress=lambda d, t: seen.append((d, t)))
+    assert seen == [(0, 0)]                                                # nothing new: one call, done
 
 
 def test_scan_reports_missing_inbox(tmp_path):

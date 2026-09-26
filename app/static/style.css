@@ -24,6 +24,12 @@ label{display:block;margin:10px 0 4px;font-size:13px;color:var(--muted)}.row{dis
 .thumbs label.pick input:checked+img{outline:3px solid var(--accent)}
 .card.sticky{position:sticky;top:0;z-index:5}
 .save-state{min-width:60px;display:inline-block}
+.busy{position:sticky;top:0;z-index:20;display:flex;gap:12px;align-items:center;padding:10px 20px;font-weight:600;color:#1a1d24;
+  background:repeating-linear-gradient(-45deg,#f5b84c 0 14px,#ffd27a 14px 28px);background-size:200% 100%;animation:busy-stripes 1.2s linear infinite}
+.busy[hidden]{display:none}
+@keyframes busy-stripes{from{background-position:0 0}to{background-position:40px 0}}
+.spinner{width:16px;height:16px;border:3px solid rgba(0,0,0,.25);border-top-color:#1a1d24;border-radius:50%;animation:spin .8s linear infinite;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
 .monthnav .current{font-size:20px}.monthnav .btn{text-decoration:none;color:var(--fg);background:var(--line)}
 .monthnav .months{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
 .monthnav .month{display:flex;flex-direction:column;align-items:center;min-width:76px;padding:6px 8px;border-radius:8px;background:var(--bg);border:1px solid var(--line);color:var(--fg);text-decoration:none}

@@ -43,7 +43,7 @@ def _static_version() -> str:
 STATIC_VERSION = _static_version()
 
 _lock = threading.Lock()
-_state = {"last_run": None, "last_stats": {}, "running": False, "error": None}
+_state = {"last_run": None, "last_stats": {}, "running": False, "error": None, "progress": None}
 
 # Approving a proposal only marks it "approved"; this worker moves the files (hundreds of them
 # over a share take a while) so the request returns at once. Progress is shown on the review page.
@@ -149,9 +149,14 @@ def run_pipeline(trigger: str = "schedule") -> dict:
     if not _lock.acquire(blocking=False):
         return {"skipped": "already running"}
     _state["running"], _state["error"] = True, None
+    _state["progress"] = {"phase": "scanning", "done": 0, "total": 0}
+
+    def scanned(done: int, total: int) -> None:
+        _state["progress"] = {"phase": "scanning", "done": done, "total": total}
     try:
         cfg = config.load()
-        s1 = ingest.scan(cfg)
+        s1 = ingest.scan(cfg, progress=scanned)
+        _state["progress"] = {"phase": "clustering", "done": 0, "total": 0}
         s2 = cluster.run(cfg)
         thumbs.prefetch(cfg, [p for _, folder in config.inbox_dirs(cfg) if folder.exists()
                               for p in ingest.list_photos(cfg, folder)])
@@ -176,7 +181,7 @@ def run_pipeline(trigger: str = "schedule") -> dict:
         _state["error"] = str(e)
         return {"error": str(e)}
     finally:
-        _state["running"] = False
+        _state["running"], _state["progress"] = False, None
         _lock.release()
 
 

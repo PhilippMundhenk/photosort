@@ -87,6 +87,37 @@
     });
   }, true);
 
+  // --- busy banner: scanning, clustering or moving, on every page ------------------------------
+  var busy = document.getElementById("busy");
+  if (busy) {
+    var wasBusy = !busy.hidden, text = document.getElementById("busy-text");
+    function describe(s) {
+      var parts = [];
+      if (s.state && s.state.running) {
+        var p = s.state.progress || {};
+        if (p.phase === "scanning") parts.push("Scanning inbox… " + (p.total ? p.done + " / " + p.total + " new files" : "listing files"));
+        else if (p.phase === "clustering") parts.push("Clustering…");
+        else parts.push("Working…");
+      }
+      Object.keys(s.applying || {}).forEach(function (k) {
+        var a = s.applying[k], c = a.current;
+        parts.push("Moving " + a.name + ": " + a.done + " / " + a.total + (c ? " · " + c.file + " (" + Math.round(c.bytes / 1048576) + " MB, " + c.seconds + " s)" : ""));
+      });
+      if (s.approved && !Object.keys(s.applying || {}).length && !s.dry_run) parts.push(s.approved + " approved, queued");
+      return parts.join(" · ");
+    }
+    setInterval(function () {
+      fetch("/api/status").then(function (r) { return r.json(); }).then(function (s) {
+        var msg = describe(s), isBusy = !!msg;
+        busy.hidden = !isBusy;
+        if (isBusy) text.textContent = msg;
+        var page = busy.getAttribute("data-page");
+        if (wasBusy && !isBusy && page !== "settings" && page !== "everyday") location.reload();   // fresh counts
+        wasBusy = isBusy;
+      }).catch(function () {});
+    }, 2000);
+  }
+
   // --- moving in the background: refresh progress, reload when done -------------------------
   if (document.querySelector("[data-poll]")) {
     var poll = setInterval(function () {

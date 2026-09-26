@@ -21,6 +21,10 @@
     <form method="post" action="/run" class="inline"><button class="small">Run now</button></form>
   </div>
 </header>
+<div id="busy" class="busy" data-page="{{ page }}" {% if not state.running %}hidden{% endif %}>
+  <span class="spinner" aria-hidden="true"></span>
+  <span id="busy-text">{% if state.running %}Working…{% endif %}</span>
+</div>
 <main>
 {% block content %}{% endblock %}
 </main>
