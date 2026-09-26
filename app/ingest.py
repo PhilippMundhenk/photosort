@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -67,23 +68,44 @@ VIDEO_EXTENSIONS = {"mp4", "mov", "m4v", "3gp", "mkv", "avi", "webm", "mts", "m2
 
 
 def exif_batch(paths: list[Path]) -> dict[str, dict]:
-    """Run exiftool once over many files; returns {path: tags}."""
+    """Run exiftool once over many files; returns {path: tags}.
+
+    Photos are read with -fast2 (header only). Videos are not: phones write the moov atom with
+    all metadata *after* the media data, and -fast2 stops before it on large files, returning
+    no date and no GPS at all."""
     if not paths:
         return {}
     out: dict[str, dict] = {}
-    # exiftool handles long arg lists fine, but keep batches moderate for the T430's RAM
-    for i in range(0, len(paths), 200):
-        chunk = paths[i:i + 200]
-        cmd = ["exiftool", "-json", "-n", "-q", "-fast2", "-c", "%.6f", *_EXIF_TAGS, *map(str, chunk)]
-        try:
-            res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
-        except FileNotFoundError as e:
-            raise ExifToolMissing("exiftool not found on PATH") from e
-        if res.returncode not in (0, 1) or not res.stdout.strip():
-            continue
-        for item in json.loads(res.stdout):
-            out[item.get("SourceFile", "")] = item
+    groups = ((["-fast2"], [p for p in paths if not is_video(p)]), ([], [p for p in paths if is_video(p)]))
+    for fast, group in groups:
+        # exiftool handles long arg lists fine, but keep batches moderate for the T430's RAM
+        for i in range(0, len(group), 200):
+            chunk = group[i:i + 200]
+            cmd = ["exiftool", "-json", "-n", "-q", *fast, "-c", "%.6f", *_EXIF_TAGS, *map(str, chunk)]
+            try:
+                res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+            except FileNotFoundError as e:
+                raise ExifToolMissing("exiftool not found on PATH") from e
+            if res.returncode not in (0, 1) or not res.stdout.strip():
+                continue
+            for item in json.loads(res.stdout):
+                out[item.get("SourceFile", "")] = item
     return out
+
+
+# 20260101_000025.jpg, IMG_20260101_000025.jpg, PXL_20260101_000025123.mp4, VID_20260101_000025.mp4
+_NAME_TS = re.compile(r"(?<!\d)(20\d{2})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})(?!\d{3,}\d)")
+
+
+def _name_dt(name: str) -> datetime | None:
+    """Phones name files after the local capture time; last resort before the file mtime."""
+    m = _NAME_TS.search(name)
+    if not m:
+        return None
+    try:
+        return datetime(*map(int, m.groups()))
+    except ValueError:
+        return None
 
 
 def is_video(path: Path, tags: dict | None = None) -> bool:
@@ -106,24 +128,30 @@ def _exif_dt(s: str, offset: str = "") -> datetime | None:
     return dt
 
 
-def _parse_dt(tags: dict, video: bool = False, tz=None) -> str | None:
+def _parse_dt(tags: dict, video: bool = False, tz=None, name: str = "") -> str | None:
     """Best timestamp from the tags, as ISO text. Photos keep their (naive) local wall time plus
     the EXIF offset when there is one. Videos are always returned zone-aware, in the home zone:
     Keys:CreationDate (iPhone, has an offset) wins; QuickTime CreateDate/MediaCreateDate are
-    UTC by spec (Android, iPhone) and are converted."""
+    UTC by spec (Android, iPhone) and are converted. A capture time in the file name beats the
+    file modification time, which copies and syncs rewrite."""
     tz = tz or timezone.utc
     order = (("CreationDate", "local"), ("CreateDate", "utc"), ("MediaCreateDate", "utc"),
-             ("FileModifyDate", "local")) if video else \
+             ("@name", "local"), ("FileModifyDate", "local")) if video else \
             (("DateTimeOriginal", "local"), ("CreateDate", "local"), ("MediaCreateDate", "local"),
-             ("FileModifyDate", "local"))
+             ("@name", "local"), ("FileModifyDate", "local"))
     for key, kind in order:
-        v = tags.get(key)
-        if not v or str(v).startswith("0000"):
-            continue
-        offset = str(tags.get("OffsetTimeOriginal") or "") if key == "DateTimeOriginal" else ""
-        dt = _exif_dt(str(v), offset)
-        if dt is None:
-            continue
+        if key == "@name":
+            dt = _name_dt(name)
+            if dt is None:
+                continue
+        else:
+            v = tags.get(key)
+            if not v or str(v).startswith("0000"):
+                continue
+            offset = str(tags.get("OffsetTimeOriginal") or "") if key == "DateTimeOriginal" else ""
+            dt = _exif_dt(str(v), offset)
+            if dt is None:
+                continue
         if video:
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc if kind == "utc" else tz)
@@ -150,7 +178,7 @@ def build_record(cfg: Config, photo: Path, tags: dict, source: str | None = None
         "v": SIDECAR_VERSION,
         "file": photo.name,
         "media": "video" if video else "photo",
-        "ts": _parse_dt(tags, video=video, tz=tzinfo(cfg)),
+        "ts": _parse_dt(tags, video=video, tz=tzinfo(cfg), name=photo.name),
         "lat": float(lat) if lat is not None else None,
         "lon": float(lon) if lon is not None else None,
         "camera": camera,
