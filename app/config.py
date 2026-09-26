@@ -45,6 +45,8 @@ class Config:
 
     # Behaviour
     dry_run: bool = True                   # proposals only, nothing moves until approved in the UI
+    copy_instead_of_move: bool = False     # copy into the sorted tree; originals stay in the inbox and
+                                           # their sidecar records where the copy went (copied_to)
     auto_apply_trips: bool = False         # when not dry_run: apply trip proposals without review
     auto_apply_local: bool = False
     auto_apply_home: bool = False
