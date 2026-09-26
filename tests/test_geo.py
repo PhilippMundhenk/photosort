@@ -30,6 +30,15 @@ def test_reverse_geocode_cities():
     assert lb["place"] == "Ludwigsburg" and lb["country"] == "Germany"
 
 
+def test_city_districts_resolve_to_their_city():
+    cfg = config.Config()
+    assert geo.reverse(cfg, 38.72, -9.14)["place"] == "Lisbon"            # "Intendente" in geonames
+    assert geo.reverse(cfg, 1.33, 103.74)["place"] == "Singapore"          # "Jurong Town", 15 km from the centre
+    assert geo.reverse(cfg, 1.29, 103.80)["place"] == "Singapore"          # "Bukit Merah Estate"
+    assert geo.reverse(cfg, 1.46, 103.76)["place"] == "Johor Bahru"        # across the strait: not Singapore
+    assert geo.reverse(cfg, 48.897, 9.192)["place"] == "Ludwigsburg"       # 12 km from Stuttgart: keeps its name
+
+
 def test_reverse_small_places_fall_back_to_region():
     village = (47.5, 11.1)                                              # Alpine village, a few thousand people
     assert geo.reverse(config.Config(), *village)["place"] == geo.reverse(config.Config(), *village)["city"]

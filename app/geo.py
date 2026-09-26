@@ -32,20 +32,25 @@ def zone_for(cfg: Config, dist_km: float | None) -> str:
 
 def _town_radius_km(population: int) -> float:
     """How far from its centre a town still 'is' that town: 2 km for 50k people, scaling with
-    the square root (Lisbon ~6 km, a 5k village ~1 km), clamped to 1-15 km."""
-    return max(1.0, min(15.0, 2.0 * (max(population, 1) / 50_000) ** 0.5))
+    the square root (Lisbon ~6 km, Singapore ~21 km, a 5k village ~1 km), clamped to 1-25 km."""
+    return max(1.0, min(25.0, 2.0 * (max(population, 1) / 50_000) ** 0.5))
 
 
 @lru_cache(maxsize=50000)
 def _lookup(lat3: float, lon3: float) -> dict:
     """Nearest geonames place, except that a bigger town whose radius covers the spot wins:
     the geonames list contains city districts as separate 'cities' (central Lisbon resolves to
-    'Intendente'), and a district must be labelled with its city, while a small town next to a
-    big one must keep its own name. Cached on 3-decimal coordinates (~100 m)."""
+    'Intendente', western Singapore to 'Jurong Town'), and a district must be labelled with its
+    city, while a small town next to a big one must keep its own name. Candidates are the 15
+    nearest entries plus everything within ~25 km, because a megacity's centre point can be far
+    down the nearest list. Cached on 3-decimal coordinates (~100 m)."""
     try:
         data = reverse_geocode.GeocodeData()
-        _, idx = data._tree.query([(lat3, lon3)], k=15)
-        cands = [dict(data._locations[i]) for i in idx[0] if i < len(data._locations)]
+        _, idx = data._tree.query([(lat3, lon3)], k=15)                       # sparse areas
+        near = data._tree.query_ball_point([(lat3, lon3)], r=0.25)[0]        # ~25 km: big cities' centres
+        seen: set[int] = set()
+        cands = [dict(data._locations[i]) for i in [*idx[0], *near]
+                 if i < len(data._locations) and not (i in seen or seen.add(i))]
         for c in cands:
             c["country"] = data._countries.get(c["country_code"], "")
             c["distance_km"] = haversine_km(lat3, lon3, c["latitude"], c["longitude"])

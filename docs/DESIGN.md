@@ -200,8 +200,8 @@ built incrementally.
   ffmpeg for videos. A background thread pre-generates after each scan. This is the one
   place the app decodes images; it is bounded and cached, and can be switched off.
 - Offline reverse geocoding with a pure-Python package (no numpy/scipy build on the T430).
-- The decision model runs as its own resident container (~1 GB); the app itself is ~60 MB.
-  Ollama and Kev should not be loaded at the same time on this machine.
+- The app is one ~60 MB container; the decision-model container that was planned next to it
+  (~1 GB resident) is gone with the model (section 10).
 - No JS build, no CDN: server-rendered Jinja templates and plain forms.
 - Moves are `rename()` on the same mount; inbox and target must share it.
 
@@ -214,16 +214,9 @@ match. This is the actual learning objective of the project: does "0.8" mean 0.8
 
 ## 9. Open points
 
-- ~~Kev/Laya wire formats differ between reproductions~~ Resolved (September 2026): the open
-  reproductions converged on TypeSafe's `/v1/systemone` contract (`questions` keyed by id with
-  `type/instructions/criteria`, answers with `choice/probabilities/confidence`). `HttpBackend`
-  speaks it; Laya (laya-server) is the bundled default because it is the only one that fits the
-  T430 (421M encoder, CPU, ~2 GB). Kev/SemIf need a Qwen-class model on a GPU.
-- Laya's English checkpoint has a 512-token context; the burst summary is ~60 tokens, so the
-  instructions and option descriptions can grow but must stay short.
-- Home radius vs. transit: a photo at the local station on the way out ends a trip before it
-  starts. Tune the radius, or (later) let the model judge home photos with < 6 h on either
-  side.
+- Home radius vs. transit: a photo in town on the way out is "local", so it starts the run
+  early (the run then carries a few in-town photos); a photo *inside* the home radius ends
+  it. A larger home radius for a small town is the tuning knob.
 - Devices without GPS whose neighbours are all from another leg will land in the wrong leg;
   corrections catch it.
 - Time zones (revised September 2026 when videos were added): the config has a home zone
@@ -236,7 +229,7 @@ match. This is the actual learning objective of the project: does "0.8" mean 0.8
   those videos are then off by the UTC offset. No fix without per-device rules.
 - Devices: `Make`/`Model` from EXIF (photos, iPhone videos) or the Android QuickTime keys;
   a file without any device metadata (typical Android video) takes the inbox name and, when
-  counting devices for the home-burst question, merges with the inbox's single named device.
+  counting devices for the home-burst note, merges with the inbox's single named device.
 
 ## 10. The decision model, tried and dropped (September 2026)
 
@@ -259,9 +252,20 @@ text-classification model trained on tickets, routing and moderation has no way 
 handful of counts and hours, and the metadata itself carries no feature that separates a
 birthday from twenty shots of the same thing. The rule-based fallback gave the same verdicts.
 
-Decision: drop the model from the pipeline. Every burst above the size gate is proposed and
-the user names or rejects it, which is what the review queue is for. The adapter, the Laya
-container, the calibration view and the settings were removed rather than left as dead
-weight; they are in the git history (commits up to 1a02926) should a better question turn up.
-What would make a model useful here: image content (rejected for this hardware), or a few
-hundred reviewed bursts to fine-tune on, which the review queue now collects as manifests.
+**Decision (2026-09-26, user):** drop the model from the pipeline. Every burst above the size
+gate is proposed and the user names or rejects it, which is what the review queue is for. The
+adapter (`app/kev.py`), the Laya container, the calibration view, the model settings and the
+model tests were removed rather than left as dead weight; they are in the git history (last
+commit with them: 1a02926) should a better question turn up.
+
+Consequences:
+
+- The pipeline is fully deterministic and needs no second container; a run costs no model
+  calls. The rules in section 3 are the whole logic.
+- The review queue is the only judge of home occasions. Its cost is more proposals to reject
+  (on the first real library: four small bursts of 13-18 photos next to one real 57-photo
+  event). `burst_min_photos` and `burst_baseline_factor` set that trade-off.
+- Section 2's argument for a *small* model share stands; its conclusion that one question
+  would be load-bearing did not survive contact with data. What would make a model useful
+  here: image content (rejected for this hardware), or a few hundred reviewed bursts to
+  fine-tune on, which the review queue now collects as manifests.
