@@ -11,7 +11,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import cluster, config, events, ingest, main, mover
-from app.kev import Decider
 from tests import synth
 
 
@@ -98,7 +97,7 @@ def test_record_follows_the_photo_and_is_dropped_after_sorting(cfg, mode):
     cfg.sidecar_mode, cfg.sidecar_cleanup = mode, "after_move"
     config.save(cfg)
     lib = synth.populate(cfg)
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     props = cluster.load_proposals()
     local = next(p for p in props.values() if p["kind"] == "local")
     m = mover.apply(cfg, local, reviewed=True)
@@ -126,7 +125,7 @@ def test_record_follows_the_photo_and_is_dropped_after_sorting(cfg, mode):
 def test_cleanup_never_keeps_the_record_with_cluster_and_decision(cfg, library):
     cfg.sidecar_cleanup = "never"
     config.save(cfg)
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     local = next(p for p in cluster.load_proposals().values() if p["kind"] == "local")
     m = mover.apply(cfg, local)
     rec = ingest.read_sidecar(Path(m["photos"][0]["dst"]), cfg)
@@ -141,7 +140,7 @@ def test_cleanup_never_keeps_the_record_with_cluster_and_decision(cfg, library):
 def test_copy_mode_keeps_source_record_in_central_index(cfg, library):
     cfg.copy_instead_of_move = True
     config.save(cfg)
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     local = next(p for p in cluster.load_proposals().values() if p["kind"] == "local")
     m = mover.apply(cfg, local)
     src, dst = Path(m["photos"][0]["src"]), Path(m["photos"][0]["dst"])
@@ -156,7 +155,7 @@ def test_copy_mode_keeps_source_record_in_central_index(cfg, library):
 def test_rename_and_move_out_keep_records_in_sync(cfg, library):
     cfg.sidecar_cleanup = "never"
     config.save(cfg)
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     home = next(p for p in cluster.load_proposals().values() if p["kind"] == "home")
     m = mover.apply(cfg, home)
     folder = mover.target_folder(cfg, home)
@@ -195,7 +194,7 @@ def test_migrate_between_layouts_and_name_patterns(cfg, library):
 def test_purge_sorted_tree_and_orphans(cfg, library):
     cfg.sidecar_cleanup = "never"
     config.save(cfg)
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     local = next(p for p in cluster.load_proposals().values() if p["kind"] == "local")
     mover.apply(cfg, local)
     gone = library.paths[0]

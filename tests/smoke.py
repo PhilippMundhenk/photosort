@@ -10,10 +10,8 @@ from pathlib import Path
 
 tmp = Path(tempfile.mkdtemp(prefix="photosort-"))
 os.environ["PHOTOSORT_DATA"] = str(tmp / "data")
-os.environ.pop("PHOTOSORT_KEV_URL", None)
 
 from app import cluster, config, mover  # noqa: E402
-from app.kev import Decider  # noqa: E402
 from tests import synth  # noqa: E402
 
 cfg = synth.make_config(tmp)
@@ -22,7 +20,7 @@ inboxA, inboxB, root = Path(cfg.inboxes[0]["path"]), Path(cfg.inboxes[1]["path"]
 lib = synth.populate(cfg)
 n = lib.n
 
-stats = cluster.run(cfg, Decider(cfg))
+stats = cluster.run(cfg)
 props = cluster.load_proposals()
 print("stats:", stats)
 for p in props.values():

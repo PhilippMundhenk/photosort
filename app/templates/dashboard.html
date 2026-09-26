@@ -9,9 +9,6 @@
   <div class="card"><div class="muted small">Photos in inboxes</div>
     <div class="stat">{{ state.last_stats.get('cluster',{}).get('photos','–') }}</div>
     <div class="small muted">{{ state.last_stats.get('ingest',{}).get('new','–') }} new last run · <a href="/everyday">{{ state.last_stats.get('cluster',{}).get('everyday','–') }} everyday</a></div></div>
-  <div class="card"><div class="muted small">Decision backend</div>
-    <div class="stat" style="font-size:18px">{{ kev.backend }} <span class="badge {{ 'ok' if kev.ok else 'bad' }}">{{ 'ok' if kev.ok else 'down' }}</span></div>
-    <div class="small muted">{{ kev.detail }}</div></div>
   <div class="card"><div class="muted small">Last run</div><div class="stat" style="font-size:16px">{{ state.last_run or 'not yet' }}</div>
     <div class="small muted">every {{ cfg.scan_interval_min }} min · {{ state.last_stats.get('applied',0) }} moved</div></div>
 </div>

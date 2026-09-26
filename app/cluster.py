@@ -9,7 +9,8 @@
     trip              the run spans >= trip_min_hours (an overnight stay)  -> "YYYY-MM-DD..DD Places"
     day out           shorter; >= dayout_min_photos photos near home, >= trip_min_photos
                       when mostly far away                                -> "YYYY-MM-DD Place"
-  home burst          photos at home closer than burst_gap_hours, above baseline -> Kev: occasion / busy_day
+  home burst          photos at home closer than burst_gap_hours, well above your usual photos/day
+                      -> proposal in _unnamed/ for you to name or reject
   everyday            everything else -> YYYY/MM
 
 Output: proposals, persisted in <data>/proposals.json with their review status.
@@ -27,7 +28,6 @@ from pathlib import Path
 
 from . import geo, ingest
 from .config import DATA_DIR, Config, inbox_dirs, tzinfo
-from .kev import Decider
 
 PROPOSALS_PATH = DATA_DIR / "proposals.json"
 UNCERTAIN_BELOW = 0.7
@@ -288,19 +288,6 @@ def local_proposal(cfg: Config, run: list[dict], now: datetime | None = None) ->
                          "note": f"{(b - a).total_seconds() / 3600:.1f} h away from home, {len(run)} photos"}}
 
 
-# The one question the decision model is asked today (see docs/DESIGN.md, section 2).
-HOME_BURST_OPTIONS = ["occasion", "busy_day"]
-HOME_BURST_INSTRUCTIONS = ("A dense burst of photos was taken at home; below is its metadata summary "
-                           "(no image content). Is this a special occasion worth its own album, or just "
-                           "an ordinary day with many photos?")
-HOME_BURST_CRITERIA = {
-    "occasion": "a special event at home: birthday, party, visitors, celebration, family gathering; "
-                "typically several people photographing, many photos within a few hours",
-    "busy_day": "an ordinary day with unusually many photos: documenting things, kids playing, "
-                "cooking, repairs, screenshots; nothing that deserves its own album",
-}
-
-
 def count_devices(recs: list[dict]) -> int:
     """Distinct devices. A record whose device name is only the inbox name (no metadata, e.g. an
     Android video) counts as the inbox's metadata-named device when that inbox has exactly one."""
@@ -343,15 +330,20 @@ def home_state(cfg: Config, burst: list[dict], threshold: float) -> dict:
     }
 
 
-def home_proposal(cfg: Config, burst: list[dict], decision: dict) -> dict:
+def home_proposal(cfg: Config, burst: list[dict], threshold: float) -> dict:
+    """A dense burst at home. Metadata cannot tell a birthday from a burst of shots of the same
+    thing (neither could a decision model, see docs/DESIGN.md section 10), so every burst well
+    above your usual day is proposed and you name or reject it."""
     a, b = _span(burst)
     photos = [_photo_entry(r, 1.0) for r in burst]
+    st = home_state(cfg, burst, threshold)
+    note = (f"{st['photos']} files in {st['duration_h']} h at home, {st['burst_ratio']}x your usual day, "
+            f"{st['devices']} device{'s' if st['devices'] != 1 else ''}")
     return {"id": _pid("home", burst), "kind": "home",
             "name": sanitize(f"{span_label(a, b)} ({media_label(burst)})"),
             "start": a.isoformat(), "end": b.isoformat(), "photos": photos, "n": len(photos),
             "n_uncertain": 0, "status": "pending",
-            "decision": {"by": decision["by"], "conf": round(decision["conf"], 3), "id": decision["id"],
-                         "answer": decision["answer"], "note": "home burst judged by " + decision["by"]}}
+            "decision": {"by": "rule", "conf": 1.0, "note": note, "state": st}}
 
 
 # --- manual clusters (Everyday page) ---------------------------------------------
@@ -409,9 +401,8 @@ def everyday_records(cfg: Config, props: dict | None = None) -> list[dict]:
 
 # --- driver --------------------------------------------------------------------
 
-def run(cfg: Config, decider: Decider | None = None) -> dict:
+def run(cfg: Config) -> dict:
     """Recompute proposals from the inbox, keeping the status of ones already reviewed."""
-    decider = decider or Decider(cfg)
     now = datetime.now(timezone.utc)
     old = load_proposals()
     recs, skipped = load_records(cfg)
@@ -459,17 +450,7 @@ def run(cfg: Config, decider: Decider | None = None) -> dict:
         if len(burst) < cfg.burst_min_photos:
             continue
         if major == geo.ZONE_HOME and len(burst) >= threshold:
-            pid = _pid("home", burst)
-            prev = old.get(pid)
-            if prev and prev.get("decision", {}).get("id"):
-                decision = {"id": prev["decision"]["id"], "by": prev["decision"]["by"],
-                            "conf": prev["decision"]["conf"], "answer": prev["decision"]["answer"]}
-            else:
-                decision = decider.choice("home_burst", home_state(cfg, burst, threshold),
-                                          HOME_BURST_OPTIONS, HOME_BURST_INSTRUCTIONS, HOME_BURST_CRITERIA)
-            if decision["answer"] != "occasion" or decision["conf"] < cfg.occasion_confidence_min:
-                continue
-            pr = home_proposal(cfg, burst, decision)
+            pr = home_proposal(cfg, burst, threshold)
         else:
             continue
         new[pr["id"]] = pr

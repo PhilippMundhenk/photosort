@@ -13,7 +13,6 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app import cluster, config, geo, ingest
-from app.kev import Decider
 from tests import synth
 from tests.synth import HOME, LISBON
 
@@ -140,7 +139,7 @@ def test_pipeline_with_videos(cfg):
     lib.video(a, when, HOME, kind="android")
     lib.video(a, when + timedelta(minutes=5), HOME, kind="iphone")
     lib.video(a, synth.T0 + timedelta(days=5, hours=12), LISBON, kind="android")   # inside the trip
-    cluster.run(cfg, Decider(cfg))
+    cluster.run(cfg)
     kinds = {p["kind"]: p for p in cluster.load_proposals().values()}
     home, trip = kinds["home"], kinds["trip"]
     assert home["name"] == "2026-06-30 (25 Fotos, 2 Videos)" and home["n"] == 27
