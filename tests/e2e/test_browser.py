@@ -161,9 +161,13 @@ def test_full_review_flow(server, page):
     assert not Path(props["trip"]["photos"][0]["path"]).exists()      # toggled back in above, so it moved
     assert not list(folder.rglob(cfg.review_dir))                      # manual approval: no _review
 
-    # reject the day out
-    page.locator(f"#{props['local']['id']}").get_by_role("button", name="Reject (keep as everyday)").click()
+    # type a new name and click reject immediately: the name must survive the race with the autosave
+    local = page.locator(f"#{props['local']['id']}")
+    local.locator("input[name=name]").fill("2026-06-27 Barock")
+    local.get_by_role("button", name="Reject (keep as everyday)").click()
     expect(page.get_by_role("heading", name="Proposed clusters (1)")).to_be_visible()
+    assert _proposals(data)["local"]["name"] == "2026-06-27 Barock"
+    assert _proposals(data)["local"]["status"] == "rejected"
 
     # approve the home burst, then name it from the "waiting for a name" list
     page.wait_for_load_state("networkidle")   # Windows cannot move files the browser is still reading
