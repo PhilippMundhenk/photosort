@@ -56,7 +56,8 @@ def test_pages_render_empty(client):
         assert r.status_code == 200 and text in r.text, path
     assert "dry-run" in client.get("/").text                     # badge in the header
     assert client.get("/static/style.css").status_code == 200
-    assert client.get("/static/ui.js").status_code == 200 and 'src="/static/ui.js"' in client.get("/").text
+    assert client.get("/static/ui.js").status_code == 200
+    assert f'src="/static/ui.js?v={main.STATIC_VERSION}"' in client.get("/").text and len(main.STATIC_VERSION) == 10
 
 
 def test_api_status(client):
@@ -156,6 +157,50 @@ def test_approve_shows_progress_and_reports_failure(client, library, monkeypatch
     main.queue_apply(local["id"])                                          # what "retry" does after a restart
     main.wait_for_apply()
     assert _proposals("local")["status"] == "applied" and _proposals("local")["error"] is None
+
+
+def test_approve_and_reject_take_the_name_along(client, library):
+    cfg = config.load()
+    cluster.run(cfg)
+    trip, local = _proposals("trip"), _proposals("local")
+    client.post(f"/proposal/{trip['id']}/approve", data={"name": "2026-06 Portugal", "remember_place": "1"})
+    assert _proposals("trip")["name"] == "2026-06 Portugal" and _proposals("trip")["status"] == "approved"
+    assert [p["name"] for p in config.load().named_places] == ["Portugal"]
+    main.wait_for_apply()
+    assert (Path(cfg.root) / "2026-06 Portugal").is_dir()
+    client.post(f"/proposal/{local['id']}/reject", data={"name": "2026-06-27 Barock"})
+    assert _proposals("local")["name"] == "2026-06-27 Barock" and _proposals("local")["status"] == "rejected"
+    kinds = [e["action"] for e in events.read(limit=6, kind="review")]
+    assert kinds.count("rename") == 2
+    client.post(f"/proposal/{local['id']}/reject", data={"name": ""})       # empty name: ignored
+    assert _proposals("local")["name"] == "2026-06-27 Barock"
+
+
+def test_concurrent_edits_do_not_lose_updates(client, library):
+    """Rename and approve of the same proposal from two threads: both must land."""
+    import threading
+    cfg = config.load()
+    cluster.run(cfg)
+    trip = _proposals("trip")
+    real_save = cluster.save_proposals
+
+    def slow_save(props):                                                   # widen the race window
+        time.sleep(0.2)
+        real_save(props)
+    cluster.save_proposals = slow_save
+    try:
+        t1 = threading.Thread(target=lambda: client.post(f"/proposal/{trip['id']}/rename", data={"name": "2026-06 X"}))
+        t2 = threading.Thread(target=lambda: client.post(f"/proposal/{trip['id']}/approve"))
+        t1.start()
+        time.sleep(0.05)
+        t2.start()
+        t1.join()
+        t2.join()
+    finally:
+        cluster.save_proposals = real_save
+    pr = _proposals("trip")
+    assert pr["name"] == "2026-06 X" and pr["status"] in ("approved", "applied")
+    main.wait_for_apply()
 
 
 def test_rename_over_fetch_returns_json(client, library):

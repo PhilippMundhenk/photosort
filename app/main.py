@@ -27,6 +27,20 @@ app = FastAPI(title="photosort")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 tpl = Jinja2Templates(directory=BASE / "templates")
 
+
+def _static_version() -> str:
+    """Changes whenever a static file changes: templates append it as ?v=... so browsers never
+    keep an old ui.js after a deploy (they did, and the page then silently lost features)."""
+    import hashlib
+    h = hashlib.sha1()
+    for f in sorted((BASE / "static").glob("*")):
+        h.update(f.name.encode())
+        h.update(f.read_bytes())
+    return h.hexdigest()[:10]
+
+
+STATIC_VERSION = _static_version()
+
 _lock = threading.Lock()
 _state = {"last_run": None, "last_stats": {}, "running": False, "error": None}
 
@@ -34,6 +48,7 @@ _state = {"last_run": None, "last_stats": {}, "running": False, "error": None}
 # over a share take a while) so the request returns at once. Progress is shown on the review page.
 _apply_queue: queue.Queue = queue.Queue()
 _applying: dict[str, dict] = {}
+_props_lock = threading.Lock()                # every read-modify-write of proposals.json from a request
 
 
 def _apply_one(pid: str) -> None:
@@ -54,10 +69,11 @@ def _apply_one(pid: str) -> None:
             events.log("review", proposal=pid, action="apply_failed", name=pr["name"], error=update["error"])
         finally:
             _applying.pop(pid, None)
-        props = cluster.load_proposals()              # re-read: the UI may have edited others meanwhile
-        if pid in props:
-            props[pid].update(update)
-            cluster.save_proposals(props)
+        with _props_lock:
+            props = cluster.load_proposals()          # re-read: the UI may have edited others meanwhile
+            if pid in props:
+                props[pid].update(update)
+                cluster.save_proposals(props)
 
 
 def _apply_worker() -> None:
@@ -145,7 +161,7 @@ def _stop():
 
 def render(request: Request, name: str, **ctx):
     cfg = config.load()
-    ctx.update(request=request, cfg=cfg, state=_state, page=name.split(".")[0])
+    ctx.update(request=request, cfg=cfg, state=_state, page=name.split(".")[0], v=STATIC_VERSION)
     return tpl.TemplateResponse(request, name, ctx)
 
 
@@ -219,22 +235,23 @@ async def everyday_assign(request: Request):
     form = await request.form()
     paths = [str(p) for p in form.getlist("paths")]
     target, kind, name = form.get("target", "new"), form.get("kind", "local"), str(form.get("name", ""))
-    props = cluster.load_proposals()
-    wanted = set(paths)
-    recs = [r for r in cluster.everyday_records(cfg, props) if r["path"] in wanted]
-    if not recs:
-        return RedirectResponse("/everyday", status_code=303)
-    if target == "new":
-        pr = cluster.create_manual(kind, name, recs)
-        props[pr["id"]] = pr
-        events.log("review", proposal=pr["id"], action="create", name=pr["name"], cluster_kind=kind, n=len(recs))
-    else:
-        pr = props.get(target)
-        if not pr or pr["status"] not in ("pending", "ongoing", "approved"):
+    with _props_lock:
+        props = cluster.load_proposals()
+        wanted = set(paths)
+        recs = [r for r in cluster.everyday_records(cfg, props) if r["path"] in wanted]
+        if not recs:
             return RedirectResponse("/everyday", status_code=303)
-        n = cluster.add_to_proposal(pr, recs)
-        events.log("review", proposal=pr["id"], action="add", name=pr["name"], n=n)
-    cluster.save_proposals(props)
+        if target == "new":
+            pr = cluster.create_manual(kind, name, recs)
+            props[pr["id"]] = pr
+            events.log("review", proposal=pr["id"], action="create", name=pr["name"], cluster_kind=kind, n=len(recs))
+        else:
+            pr = props.get(target)
+            if not pr or pr["status"] not in ("pending", "ongoing", "approved"):
+                return RedirectResponse("/everyday", status_code=303)
+            n = cluster.add_to_proposal(pr, recs)
+            events.log("review", proposal=pr["id"], action="add", name=pr["name"], n=n)
+        cluster.save_proposals(props)
     return RedirectResponse(f"/review?open={pr['id']}#{pr['id']}", status_code=303)
 
 
@@ -316,12 +333,32 @@ def run_now():
 
 @app.post("/proposal/{pid}/{action}")
 async def proposal_action(pid: str, action: str, request: Request):
+    form = dict(await request.form())
+    with _props_lock:
+        return _proposal_action(pid, action, form, request)
+
+
+def _rename(cfg: config.Config, pid: str, pr: dict, name: str, remember: bool) -> None:
+    new = cluster.sanitize(name)
+    if not new or new == pr["name"]:
+        return
+    pr["name"], pr["name_edited"] = new, True
+    events.log("review", proposal=pid, action="rename", name=pr["name"])
+    if remember:
+        _remember_place(cfg, pr["name"], [(p.get("lat"), p.get("lon")) for p in pr["photos"]
+                                          if p["path"] not in set(pr.get("excluded", []))])
+
+
+def _proposal_action(pid: str, action: str, form: dict, request: Request):
     cfg = config.load()
     props = cluster.load_proposals()
     pr = props.get(pid)
     if not pr:
         return RedirectResponse("/review", status_code=303)
-    form = dict(await request.form())
+    # approve/reject may carry the name field of the same card: an edit made right before the
+    # click must not be lost to a race with the autosave request
+    if action in ("approve", "reject") and form.get("name") is not None:
+        _rename(cfg, pid, pr, str(form["name"]), bool(form.get("remember_place")))
     if action == "approve" and pr["status"] in ("pending", "ongoing"):
         pr["status"], pr["error"] = "approved", None  # the apply worker moves the files
         events.log("review", proposal=pid, action="approve", name=pr["name"])
@@ -331,11 +368,7 @@ async def proposal_action(pid: str, action: str, request: Request):
         pr["status"] = "rejected"
         events.log("review", proposal=pid, action="reject", name=pr["name"], cluster_kind=pr["kind"])
     elif action == "rename":
-        pr["name"], pr["name_edited"] = cluster.sanitize(form.get("name", pr["name"])), True
-        events.log("review", proposal=pid, action="rename", name=pr["name"])
-        if form.get("remember_place"):
-            _remember_place(cfg, pr["name"], [(p.get("lat"), p.get("lon")) for p in pr["photos"]
-                                              if p["path"] not in set(pr.get("excluded", []))])
+        _rename(cfg, pid, pr, str(form.get("name", pr["name"])), bool(form.get("remember_place")))
     elif action == "toggle":
         path = form.get("path", "")
         ex = set(pr.get("excluded", []))
@@ -387,11 +420,12 @@ def cluster_rename(request: Request, folder: str = Form(...), name: str = Form(.
 def cluster_undo(folder: str = Form(...)):
     cfg = config.load()
     mover.undo(cfg, Path(folder))
-    props = cluster.load_proposals()
-    for pr in props.values():
-        if pr["status"] == "applied" and mover.target_folder(cfg, pr) == Path(folder):
-            pr["status"] = "rejected"
-    cluster.save_proposals(props)
+    with _props_lock:
+        props = cluster.load_proposals()
+        for pr in props.values():
+            if pr["status"] == "applied" and mover.target_folder(cfg, pr) == Path(folder):
+                pr["status"] = "rejected"
+        cluster.save_proposals(props)
     return RedirectResponse("/clusters", status_code=303)
 
 

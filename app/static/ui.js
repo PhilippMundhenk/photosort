@@ -43,6 +43,26 @@
     form.addEventListener("submit", function (ev) { ev.preventDefault(); clearTimeout(timer); saveName(form); });
   });
 
+  // approve/reject right after editing the name: send the name along instead of racing the autosave
+  document.addEventListener("submit", function (ev) {
+    var form = ev.target;
+    if (!/\/proposal\/[^/]+\/(approve|reject)$/.test(form.getAttribute("action") || "")) return;
+    var card = form.closest(".card");
+    var nameForm = card && card.querySelector("form[data-autosave]");
+    if (!nameForm) return;
+    var input = nameForm.querySelector("input[name=name]");
+    var remember = nameForm.querySelector("input[name=remember_place]");
+    nameForm.dataset.saved = input.value;                        // stop a pending autosave from firing
+    var hidden = document.createElement("input");
+    hidden.type = "hidden"; hidden.name = "name"; hidden.value = input.value;
+    form.appendChild(hidden);
+    if (remember && remember.checked) {
+      var h2 = document.createElement("input");
+      h2.type = "hidden"; h2.name = "remember_place"; h2.value = "1";
+      form.appendChild(h2);
+    }
+  }, true);
+
   // --- moving in the background: refresh progress, reload when done -------------------------
   if (document.querySelector("[data-poll]")) {
     var poll = setInterval(function () {
