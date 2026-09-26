@@ -113,11 +113,17 @@ def test_video_frame_with_ffmpeg(cfg, tmp_path):
 
 @pytest.mark.skipif(not HAS_EXIFTOOL, reason="exiftool not installed")
 def test_raw_preview_via_exiftool(cfg, tmp_path):
-    """A TIFF-based 'RAW' with an embedded preview is enough to exercise the exiftool path."""
+    """exiftool cannot write preview tags into a bare TIFF, so the 'RAW' here is a JPEG under a
+    .dng name with an EXIF ThumbnailImage: the extension selects the RAW path (no Pillow decode
+    of the file itself), the embedded image is what gets extracted."""
     src = tmp_path / "shot.dng"
-    Image.new("RGB", (400, 300), "purple").save(src, "TIFF")
+    Image.new("RGB", (400, 300), "purple").save(src, "JPEG")
     preview = tmp_path / "prev.jpg"
     Image.new("RGB", (800, 600), "purple").save(preview, "JPEG")
-    subprocess.run(["exiftool", "-q", "-overwrite_original", f"-PreviewImage<={preview}", str(src)], check=True)
+    subprocess.run(["exiftool", "-q", "-overwrite_original", f"-ThumbnailImage<={preview}", str(src)], check=True)
+    assert thumbs._raw_preview(src).size == (800, 600)
     t = thumbs.get(cfg, src)
     assert t and _img(t)[0] == (440, 330)
+    bare = tmp_path / "bare.dng"
+    Image.new("RGB", (40, 30)).save(bare, "TIFF")
+    assert thumbs._raw_preview(bare) is None and thumbs.get(cfg, bare) is None

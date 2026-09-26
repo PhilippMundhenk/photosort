@@ -13,6 +13,12 @@ def _props(cfg):
     return props, {p["kind"]: p for p in props.values()}
 
 
+def _force_uncertain(props: dict, pr: dict, i: int = 0) -> None:
+    pr["photos"][i].update(conf=0.6, uncertain=True)
+    pr["n_uncertain"] = sum(p["uncertain"] for p in pr["photos"])
+    cluster.save_proposals(props)
+
+
 def _jpgs(folder: Path) -> list[Path]:
     return sorted(p for p in folder.rglob("*.jpg") if p.is_file())
 
@@ -84,7 +90,7 @@ def test_apply_moves_by_source_and_uncertain_into_review(cfg, library):
 def test_manual_approval_settles_uncertain_photos(cfg, library):
     props, kinds = _props(cfg)
     local = kinds["local"]
-    assert local["n_uncertain"] == 1
+    _force_uncertain(props, local)
     m = mover.apply(cfg, local, reviewed=True)
     folder = mover.target_folder(cfg, local)
     assert m["reviewed"] is True and not list(folder.rglob(cfg.review_dir))
@@ -97,10 +103,11 @@ def test_manual_approval_settles_uncertain_photos(cfg, library):
 def test_apply_flat_when_subfolders_off(cfg, library):
     cfg.subfolder_by_source = False
     props, kinds = _props(cfg)
+    _force_uncertain(props, kinds["local"])
     m = mover.apply(cfg, kinds["local"])
     folder = mover.target_folder(cfg, kinds["local"])
     assert all(Path(p["dst"]).parent == folder for p in m["photos"] if not p["uncertain"])
-    assert (folder / cfg.review_dir).is_dir()                       # the one no-GPS photo of the day out
+    assert (folder / cfg.review_dir).is_dir()                       # the forced low-confidence photo
 
 
 def test_apply_moves_xmp_sidecar_along(cfg, library):
@@ -125,12 +132,12 @@ def test_apply_everyday_moves_only_old_unclustered(cfg, library):
     props, kinds = _props(cfg)
     n = mover.apply_everyday(cfg, min_age_days=4)
     root = Path(cfg.root)
-    assert n == 9 and _jpgs(root / "2026" / "06" / "phone-a")             # everyday photos, one per day
-    assert len(_jpgs(root / "2026")) == 9
+    assert n == 10 and _jpgs(root / "2026" / "06" / "phone-a")            # everyday photos, one per day
+    assert len(_jpgs(root / "2026")) == 10
     # clustered (pending) photos stayed in the inbox
     assert all(Path(p["path"]).exists() for pr in props.values() for p in pr["photos"])
     ev = events.read(limit=1)[0]
-    assert ev["kind"] == "apply_everyday" and ev["n"] == 9 and ev["mode"] == "move"
+    assert ev["kind"] == "apply_everyday" and ev["n"] == 10 and ev["mode"] == "move"
 
     cfg.everyday_layout = "leave"
     assert mover.apply_everyday(cfg, 0) == 0
@@ -240,7 +247,7 @@ def test_copy_mode_keeps_originals_and_marks_them(copy_cfg, library):
     stats = cluster.run(cfg, Decider(cfg))
     assert stats["photos"] == library.n - local["n"]
     assert cluster.load_proposals()[local["id"]]["status"] == "applied"   # kept as history
-    assert mover.apply_everyday(cfg, min_age_days=4) == 9
+    assert mover.apply_everyday(cfg, min_age_days=4) == 10
     assert len(_jpgs(Path(cfg.inboxes[0]["path"]))) + len(_jpgs(Path(cfg.inboxes[1]["path"]))) == library.n
     assert mover.apply_everyday(cfg, min_age_days=4) == 0             # marked, not copied twice
 

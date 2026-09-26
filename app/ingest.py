@@ -233,11 +233,11 @@ def scan(cfg: Config, force: bool = False) -> dict:
             rec = read_sidecar(p)
             if rec is None:
                 continue
-            old = (rec.get("zone"), rec.get("dist_km"), rec.get("source"))
+            old = (rec.get("zone"), rec.get("dist_km"), rec.get("source"), rec.get("place"))
             enrich_location(cfg, rec)
             rec.setdefault("source", name)
             rec.setdefault("inbox", str(folder))
-            if (rec.get("zone"), rec.get("dist_km"), rec.get("source")) != old:
+            if (rec.get("zone"), rec.get("dist_km"), rec.get("source"), rec.get("place")) != old:
                 write_sidecar(p, rec)
         stats["new"] += len(todo)
         stats["total"] += len(photos)
