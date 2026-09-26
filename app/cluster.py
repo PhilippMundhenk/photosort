@@ -125,7 +125,9 @@ def find_trip_runs(cfg: Config, recs: list[dict]) -> list[list[dict]]:
         part = [run[0]]
         for prev, nxt in zip(run, run[1:]):
             gap_days = (nxt["_t"] - prev["_t"]).total_seconds() / 86400
-            far = geo.haversine_km(prev["lat"], prev["lon"], nxt["lat"], nxt["lon"]) > cfg.trip_split_distance_km
+            far = False
+            if prev.get("lat") is not None and nxt.get("lat") is not None:     # GPS-less photos never split
+                far = geo.haversine_km(prev["lat"], prev["lon"], nxt["lat"], nxt["lon"]) > cfg.trip_split_distance_km
             if gap_days > cfg.trip_gap_days and far:
                 out.append(part)
                 part = []
