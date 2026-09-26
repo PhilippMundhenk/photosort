@@ -97,7 +97,8 @@ decision model that was tried for exactly this (DESIGN.md, section 10). You name
    - **Occasion at home** = a burst at home well above your normal photos/day. Every such burst
      is proposed and goes to `_unnamed/` until you name it (`2026-06-30 Hannas Geburtstag`) or
      reject it (then it stays everyday).
-   - Everything else → `YYYY/MM/`.
+   - Everything else is *everyday*: shown on the Everyday page; moved into `YYYY/MM/` by the
+     button there (photos older than the trip gap), or on every run with *Auto-move everyday*.
 3. **Review** in the web UI: approve, reject, rename, toggle single photos, name unnamed
    bursts, undo whole clusters, move single photos back out. **Everyday** lists every photo
    that is in no cluster, by month and day; tick photos to add them to a pending proposal or

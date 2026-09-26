@@ -354,9 +354,26 @@ def group_bursts(cfg: Config, recs: list[dict]) -> list[list[dict]]:
     return bursts
 
 
-def home_baseline(recs: list[dict]) -> float:
-    per_day = Counter(r["_t"].date() for r in recs if r["zone"] == geo.ZONE_HOME)
-    return statistics.median(per_day.values()) if per_day else 1.0
+BASELINE_PATH = DATA_DIR / "baseline.json"
+
+
+def home_baseline(recs: list[dict], persist: bool = True) -> float:
+    """Median photos per day at home. The per-day counts are remembered in data/baseline.json
+    (highest count seen per day), so the baseline does not drift down once everyday photos have
+    been moved out of the inbox and only the bursts remain."""
+    per_day = {str(d): n for d, n in Counter(r["_t"].date() for r in recs if r["zone"] == geo.ZONE_HOME).items()}
+    seen: dict[str, int] = {}
+    if persist and BASELINE_PATH.exists():
+        try:
+            seen = {k: int(v) for k, v in json.loads(BASELINE_PATH.read_text(encoding="utf-8")).items()}
+        except (json.JSONDecodeError, OSError, ValueError):
+            seen = {}
+    for day, n in per_day.items():
+        seen[day] = max(seen.get(day, 0), n)
+    if persist and seen != {}:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        BASELINE_PATH.write_text(json.dumps(seen, sort_keys=True), encoding="utf-8")
+    return statistics.median(seen.values()) if seen else 1.0
 
 
 def local_proposal(cfg: Config, run: list[dict], now: datetime | None = None) -> dict:

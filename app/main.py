@@ -6,6 +6,7 @@ import mimetypes
 import queue
 import re
 import threading
+import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -51,7 +52,37 @@ _applying: dict[str, dict] = {}
 _props_lock = threading.Lock()                # every read-modify-write of proposals.json from a request
 
 
+EVERYDAY_JOB = "everyday"
+
+
+def _progress(key: str):
+    def cb(done: int, total: int, current: dict | None = None) -> None:
+        _applying[key].update(done=done, total=total, current=current)
+    return cb
+
+
+def _apply_everyday_job() -> None:
+    with _lock:
+        cfg = config.load()
+        if cfg.dry_run:
+            return
+        _applying[EVERYDAY_JOB] = {"done": 0, "total": 0, "name": "everyday photos", "current": None}
+        try:
+            n = mover.apply_everyday(cfg, min_age_days=cfg.trip_gap_days, progress=_progress(EVERYDAY_JOB))
+            events.log("review", action="move_everyday", n=n)
+        except mover.DryRun:
+            return
+        except Exception as e:  # noqa: BLE001
+            log.exception("moving everyday photos failed")
+            events.log("review", action="move_everyday_failed", error=f"{type(e).__name__}: {e}")
+        finally:
+            _applying.pop(EVERYDAY_JOB, None)
+
+
 def _apply_one(pid: str) -> None:
+    if pid == EVERYDAY_JOB:
+        _apply_everyday_job()
+        return
     with _lock:                                   # never while a scan rewrites the proposals
         cfg = config.load()
         if cfg.dry_run:                           # approved proposals wait; Settings queues them again
@@ -59,11 +90,11 @@ def _apply_one(pid: str) -> None:
         pr = cluster.load_proposals().get(pid)
         if not pr or pr["status"] != "approved":
             return
-        _applying[pid] = {"done": 0, "total": pr["n"], "name": pr["name"]}
+        _applying[pid] = {"done": 0, "total": pr["n"], "name": pr["name"], "current": None}
         update: dict = {}
         try:
             mover.apply(cfg, pr, reviewed=True,           # a human looked at it: nothing goes to _review
-                        progress=lambda done, total: _applying[pid].update(done=done, total=total))
+                        progress=_progress(pid))
             update = {"status": "applied", "error": None}
         except mover.DryRun:
             return                                        # switched on meanwhile: stays approved, untouched
@@ -134,7 +165,8 @@ def run_pipeline(trigger: str = "schedule") -> dict:
                     pr["status"] = "applied"
                     applied += 1
             cluster.save_proposals(props)
-            applied += mover.apply_everyday(cfg, min_age_days=cfg.trip_gap_days)
+            if cfg.auto_apply_everyday:
+                applied += mover.apply_everyday(cfg, min_age_days=cfg.trip_gap_days)
         stats = {"ingest": s1, "cluster": s2, "applied": applied, "trigger": trigger}
         _state["last_run"], _state["last_stats"] = datetime.now(timezone.utc).isoformat(timespec="seconds"), stats
         events.log("run", **{k: v for k, v in stats.items() if k != "ingest"}, new_photos=s1.get("new"))
@@ -255,9 +287,22 @@ def everyday(request: Request, month: str = ""):
                     "photos": [{"path": r["path"], "file": r["file"], "ts": r["ts"], "zone": r["zone"],
                                 "media": r.get("media", "photo"), "place": (r.get("place") or {}).get("place")}
                                for r in rs]})
+    movable = len(mover.everyday_movable(cfg, cfg.trip_gap_days))
     return render(request, "everyday.html", months=months, month=month, days=out, pending=_pending(props),
                   total=len(recs), prev_month=prev_month, next_month=next_month,
-                  month_n=months_c.get(month, 0))
+                  month_n=months_c.get(month, 0), movable=movable, moving=_applying.get(EVERYDAY_JOB),
+                  queued=EVERYDAY_JOB in list(_apply_queue.queue))
+
+
+@app.post("/everyday/move_all")
+def everyday_move_all():
+    """Move every everyday photo older than trip_gap_days into YYYY/MM, in the background."""
+    cfg = config.load()
+    if cfg.dry_run:
+        raise mover.DryRun("dry-run is on: everyday photos are not moved (switch it off in Settings)")
+    if EVERYDAY_JOB not in _applying and EVERYDAY_JOB not in list(_apply_queue.queue):
+        queue_apply(EVERYDAY_JOB)
+    return RedirectResponse("/everyday", status_code=303)
 
 
 @app.post("/everyday/assign")
@@ -527,7 +572,11 @@ def cluster_move_out(folder: str = Form(...), photo: str = Form(...)):
 @app.post("/cluster/put_back")
 def cluster_put_back(folder: str = Form(...), src: str = Form(...)):
     cfg = config.load()
-    entry = mover.put_back(cfg, Path(folder), Path(src))
+    try:
+        entry = mover.put_back(cfg, Path(folder), Path(src))
+    except FileNotFoundError as e:
+        back = f"/clusters/view?folder={quote(folder)}"
+        return HTMLResponse(f"<h1>Not put back</h1><p>{e}</p><p><a href='{back}'>back</a></p>", status_code=404)
     if entry:
         _set_excluded(Path(folder), src, False)
     return RedirectResponse(f"/clusters/view?folder={quote(folder)}", status_code=303)
@@ -597,5 +646,8 @@ def api_status():
     cfg = config.load()
     props = cluster.load_proposals()
     approved = [p["id"] for p in props.values() if p["status"] == "approved"]
+    now = time.time()
+    applying = {k: {**v, "current": {**v["current"], "seconds": round(now - v["current"]["since"])}
+                    if v.get("current") else None} for k, v in _applying.items()}
     return {"state": _state, "pending": len(_pending(props)), "dry_run": cfg.dry_run,
-            "approved": len(approved), "applying": dict(_applying)}
+            "approved": len(approved), "applying": applying}

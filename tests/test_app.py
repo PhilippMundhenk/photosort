@@ -187,7 +187,7 @@ def test_approve_shows_progress_and_reports_failure(client, library, monkeypatch
     real = mover.apply
 
     def slow_apply(cfg, pr, reviewed=False, progress=None):
-        m = real(cfg, pr, reviewed=reviewed, progress=lambda d, t: seen.append((d, t)))
+        m = real(cfg, pr, reviewed=reviewed, progress=lambda d, t, c=None: seen.append((d, t)))
         return m
     monkeypatch.setattr(mover, "apply", slow_apply)
     client.post(f"/proposal/{trip['id']}/approve")
@@ -389,6 +389,52 @@ def test_name_unnamed_burst_then_view_move_out_undo(client, library):
         == library.n
 
 
+def test_everyday_photos_move_on_request_with_progress(client, library):
+    cfg = config.load()
+    cluster.run(cfg)
+    n = len(mover.everyday_movable(cfg, cfg.trip_gap_days))
+    assert n == 10
+    page = client.get("/everyday").text
+    assert f"Move {n} everyday photos into YYYY/MM/" in page
+    assert client.get("/api/status").json()["applying"] == {}
+    r = client.post("/everyday/move_all")
+    assert r.status_code == 303 and r.headers["location"] == "/everyday"
+    client.post("/everyday/move_all")                                       # already queued: no duplicate
+    main.wait_for_apply()
+    assert (Path(cfg.root) / "2026" / "06").is_dir() and len(list((Path(cfg.root) / "2026").rglob("*.jpg"))) == n
+    assert len(cluster.everyday_records(cfg)) == 0
+    page = client.get("/everyday").text
+    assert "Nothing to move" in page or "No everyday photos" in page
+    assert events.read(limit=1, kind="review")[0] == {**events.read(limit=1, kind="review")[0],
+                                                       "action": "move_everyday", "n": n}
+    # the scheduled run does not move everyday photos unless asked to
+    library.photo(Path(cfg.inboxes[0]["path"]), synth.T0 + timedelta(days=0, hours=1), synth.HOME)
+    cluster.run(cfg)
+    assert main.run_pipeline("test")["applied"] == 0 and len(cluster.everyday_records(cfg)) == 1
+    cfg.auto_apply_everyday = True
+    config.save(cfg)
+    assert main.run_pipeline("test")["applied"] == 1
+
+
+def test_everyday_move_refused_in_dry_run(client, library):
+    cfg = config.load()
+    cfg.dry_run = True
+    config.save(cfg)
+    cluster.run(cfg)
+    page = client.get("/everyday").text
+    assert "dry-run is on, nothing moves" in page and "/everyday/move_all" not in page
+    assert client.post("/everyday/move_all").status_code == 409
+
+
+def test_progress_reports_the_current_file(cfg, library):
+    seen = []
+    cluster.run(cfg)
+    local = next(p for p in cluster.load_proposals().values() if p["kind"] == "local")
+    mover.apply(cfg, local, progress=lambda d, t, c: seen.append((d, t, c)))
+    assert seen[0][0] == 0 and seen[0][2]["file"].startswith("IMG_") and seen[0][2]["bytes"] > 0
+    assert seen[-1] == (local["n"], local["n"], None)
+
+
 def test_removed_photo_is_everyday_and_can_be_put_back(client, library, monkeypatch):
     cfg = config.load()
     cfg.sidecar_cleanup = "never"                        # the record travels with the photo (no exiftool here)
@@ -428,6 +474,11 @@ def test_removed_photo_is_everyday_and_can_be_put_back(client, library, monkeypa
     assert len(cluster.everyday_records(cfg)) == n_everyday
     cluster.run(cfg)
     assert src in _proposals("local")["excluded"] and len(cluster.everyday_records(cfg)) == n_everyday + 1
+
+    # a removed photo that has vanished cannot be put back: a page says so, not a 500
+    Path(src).unlink()
+    r = client.post("/cluster/put_back", data={"folder": str(folder), "src": src})
+    assert r.status_code == 404 and "Not put back" in r.text
 
 
 def test_undo_marks_applied_proposal_rejected(client, library):
@@ -521,7 +572,7 @@ def test_settings_save_coerces_and_reschedules(client):
 
 def test_live_mode_auto_applies_trips_with_review_folder(client, library, monkeypatch):
     cfg = config.load()
-    cfg.dry_run, cfg.auto_apply_trips = False, True
+    cfg.dry_run, cfg.auto_apply_trips, cfg.auto_apply_everyday = False, True, True
     config.save(cfg)
     cluster.run(cfg)
     trip = _proposals("trip")

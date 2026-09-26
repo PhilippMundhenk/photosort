@@ -68,6 +68,7 @@
   <div class="check"><input type="checkbox" id="at" name="auto_apply_trips" {% if cfg.auto_apply_trips %}checked{% endif %}><label for="at">Auto-apply trips (when not dry-run)</label></div>
   <div class="check"><input type="checkbox" id="al" name="auto_apply_local" {% if cfg.auto_apply_local %}checked{% endif %}><label for="al">Auto-apply local day outs</label></div>
   <div class="check"><input type="checkbox" id="ah" name="auto_apply_home" {% if cfg.auto_apply_home %}checked{% endif %}><label for="ah">Auto-apply home bursts (into <code>{{ cfg.unnamed_dir }}/YYYY-MM-DD (n Fotos)/</code> until you name them)</label></div>
+  <div class="check"><input type="checkbox" id="ae" name="auto_apply_everyday" {% if cfg.auto_apply_everyday %}checked{% endif %}><label for="ae">Auto-move everyday photos older than {{ cfg.trip_gap_days }} days into <code>{{ cfg.everyday_layout }}/</code> on every run (otherwise: the button on the Everyday page)</label></div>
   <div class="check"><input type="checkbox" id="xmp" name="write_xmp_sidecar" {% if cfg.write_xmp_sidecar %}checked{% endif %}><label for="xmp">Also write keywords to .xmp sidecars</label></div>
   <label>Scan interval (minutes)</label><input type="number" name="scan_interval_min" value="{{ cfg.scan_interval_min }}">
 </div>

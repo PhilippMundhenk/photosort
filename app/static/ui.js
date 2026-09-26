@@ -93,10 +93,13 @@
       fetch("/api/status").then(function (r) { return r.json(); }).then(function (s) {
         Object.keys(s.applying || {}).forEach(function (pid) {
           var el = document.querySelector('[data-progress="' + pid + '"]');
-          if (el) el.textContent = s.applying[pid].done + " / " + s.applying[pid].total;
+          var a = s.applying[pid], c = a.current;
+          if (el) el.textContent = a.done + " / " + a.total + (c ? " · " + c.file + " (" + Math.round(c.bytes / 1048576) + " MB, " + c.seconds + " s)" : "");
         });
-        var shown = document.querySelectorAll("[data-poll] .card").length;
-        if (s.approved < shown) { clearInterval(poll); location.reload(); }
+        var everyday = document.querySelector('[data-poll="everyday"]');
+        if (everyday && !(s.applying && s.applying.everyday)) { clearInterval(poll); location.reload(); }
+        var shown = document.querySelectorAll('[data-poll="approved"] .card').length;
+        if (shown && s.approved < shown) { clearInterval(poll); location.reload(); }
       }).catch(function () {});
     }, 2000);
   }
