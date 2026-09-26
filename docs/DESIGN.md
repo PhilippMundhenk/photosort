@@ -88,7 +88,10 @@ mechanics, which are unchanged.
 
 ### Naming
 
-`<span> <places>`: places in order of first appearance, deduplicated, at most four; then
+`<span> <places>`. The span is the month (`2026-08`) when a multi-day cluster stays within one
+month (user request, September 2026: the day range added nothing once the folder is inside a
+year tree), the day for a single day, and a full range only across months. Places in order of
+first appearance, deduplicated, at most four; then
 countries; then "Multiple". Places mentioned by fewer than 3 % of a run's photos (and fewer
 than two) are dropped, so a motorway stop does not name the trip. The place comes from:
 
