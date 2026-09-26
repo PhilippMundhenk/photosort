@@ -7,7 +7,8 @@
                       the two sides are in different areas, or if it exceeds local_gap_hours while
                       either side is near home (you sleep at home, so a night ends the outing).
     trip              the run spans >= trip_min_hours (an overnight stay)  -> "YYYY-MM-DD..DD Places"
-    day out           shorter, with >= dayout_min_photos photos           -> "YYYY-MM-DD Place"
+    day out           shorter; >= dayout_min_photos photos near home, >= trip_min_photos
+                      when mostly far away                                -> "YYYY-MM-DD Place"
   home burst          photos at home closer than burst_gap_hours, above baseline -> Kev: occasion / busy_day
   everyday            everything else -> YYYY/MM
 
@@ -171,7 +172,11 @@ def excursion_kind(cfg: Config, run: list[dict]) -> str | None:
     located = sum(1 for r in run if r["zone"] != geo.ZONE_UNKNOWN)
     if (b - a) >= timedelta(hours=cfg.trip_min_hours):
         return "trip" if located >= cfg.trip_min_photos else None
-    return "local" if len(run) >= cfg.dayout_min_photos else None
+    # a day out far away is an outing even with three photos; near home it needs more
+    # (the school run and the supermarket must stay everyday)
+    away = sum(1 for r in run if r["zone"] == geo.ZONE_AWAY)
+    need = cfg.trip_min_photos if away > len(run) / 2 else cfg.dayout_min_photos
+    return "local" if len(run) >= need else None
 
 
 def _span(recs: list[dict]) -> tuple[datetime, datetime]:

@@ -1,13 +1,20 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Everyday photos <span class="muted small">— not in any cluster</span></h1>
-<div class="card">
-  <div class="row">
-    <span class="muted small">month:</span>
-    {% for m in months %}<a class="badge {{ 'ok' if m.key == month }}" href="/everyday?month={{ m.key }}">{{ m.key }} <span class="muted">{{ m.n }}</span></a>{% endfor %}
-    {% if not months %}<span class="muted">nothing indexed yet</span>{% endif %}
+<h1>Everyday photos <span class="muted small">— {{ total }} photos and videos that are in no cluster</span></h1>
+{% if months %}
+<div class="card monthnav">
+  <div class="row" style="justify-content:space-between">
+    {% if prev_month %}<a class="btn secondary" href="/everyday?month={{ prev_month }}">&larr; {{ prev_month }}</a>{% else %}<span></span>{% endif %}
+    <div class="current"><b>{{ month }}</b> <span class="muted">{{ month_n }} files</span></div>
+    {% if next_month %}<a class="btn secondary" href="/everyday?month={{ next_month }}">{{ next_month }} &rarr;</a>{% else %}<span></span>{% endif %}
+  </div>
+  <div class="months">
+    {% for m in months %}<a class="month {{ 'active' if m.key == month }}" href="/everyday?month={{ m.key }}"><span>{{ m.key }}</span><small>{{ m.n }}</small></a>{% endfor %}
   </div>
 </div>
+{% else %}
+<div class="card muted">Nothing indexed yet — press “Run now”.</div>
+{% endif %}
 
 {% if days %}
 <form method="post" action="/everyday/assign" id="assign">

@@ -130,8 +130,8 @@ def test_everyday_page_lists_by_month_and_day(client, cfg, library):
     assert "2026-06" in page and page.count('data-day="') == 9 and 'name="paths"' in page   # 10 photos, 9 days
     assert "Everyday" in client.get("/").text and 'href="/everyday"' in client.get("/").text
     assert "No everyday photos in 2030-01" in client.get("/everyday?month=2030-01").text
-    # the month list shows counts
-    assert ">10</span>" in page.replace('class="muted"', "").replace(" ", "") or "10" in page
+    assert 'class="month active"' in page and "<small>10</small>" in page          # month strip with counts
+    assert "10 files" in page and "&larr;" not in page and "&rarr;" not in page      # single month: no arrows
 
 
 def test_assign_creates_manual_cluster_and_adds_to_existing(client, cfg, library):
