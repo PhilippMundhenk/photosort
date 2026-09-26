@@ -29,7 +29,7 @@
       </figure>
     {% endfor %}
     </div>
-    <div class="muted small">Click a photo to exclude/include it (greyed = excluded, orange = uncertain → goes to {{ cfg.review_dir }}/).</div>
+    <div class="muted small">Click a photo to exclude/include it (greyed = excluded, orange = low confidence — approving here settles them; only auto-applied clusters park them in {{ cfg.review_dir }}/).</div>
   </details>
   <div class="row" style="margin-top:8px">
     {% if p.status != 'ongoing' %}<form method="post" action="/proposal/{{ p.id }}/approve" class="inline"><button>Approve &amp; move</button></form>{% endif %}

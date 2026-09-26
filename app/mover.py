@@ -93,8 +93,12 @@ def target_folder(cfg: Config, pr: dict) -> Path:
     return root / cfg.unnamed_dir / pr["name"] if pr["kind"] == "home" else root / pr["name"]
 
 
-def apply(cfg: Config, pr: dict) -> dict:
-    """Move (or copy) a proposal's photos into its folder; uncertain ones into <folder>/_review."""
+def apply(cfg: Config, pr: dict, reviewed: bool = False) -> dict:
+    """Move (or copy) a proposal's photos into its folder.
+
+    reviewed=True means a human approved the proposal in the UI: everything goes straight into
+    the folder. Unreviewed (auto-applied) proposals put their uncertain photos into
+    <folder>/<review_dir> so they can be checked later."""
     folder = target_folder(cfg, pr)
     copy = cfg.copy_instead_of_move
     excluded = set(pr.get("excluded", []))
@@ -104,7 +108,8 @@ def apply(cfg: Config, pr: dict) -> dict:
         if p["path"] in excluded or not src.exists():
             continue
         dst_dir = folder / p["source"] if (cfg.subfolder_by_source and p.get("source")) else folder
-        if p.get("uncertain"):
+        in_review = bool(p.get("uncertain")) and not reviewed
+        if in_review:
             dst_dir = dst_dir / cfg.review_dir
         dst = _transfer(src, dst_dir, copy)
         rec = ingest.read_sidecar(dst) or {}
@@ -118,15 +123,15 @@ def apply(cfg: Config, pr: dict) -> dict:
             ingest.write_xmp_keywords(dst, [f"zone/{p['zone']}", f"cluster/{pr['name']}"])
         moved.append({"src": p["path"], "dst": str(dst), "conf": p["conf"], "zone": p["zone"],
                       "source": p.get("source"), "inbox": p.get("inbox"),
-                      "uncertain": bool(p.get("uncertain"))})
+                      "uncertain": bool(p.get("uncertain")), "in_review": in_review})
     manifest = {
         "name": pr["name"], "kind": pr["kind"], "start": pr["start"], "end": pr["end"],
         "proposal_id": pr["id"], "decision": pr["decision"], "applied": _now(), "mode": _mode(cfg),
-        "label": None, "photos": moved,
+        "reviewed": reviewed, "label": None, "photos": moved,
     }
     write_manifest(folder, manifest)
     events.log("apply", proposal=pr["id"], cluster_kind=pr["kind"], name=pr["name"], n=len(moved),
-               mode=_mode(cfg), decision_id=pr["decision"].get("id"))
+               mode=_mode(cfg), reviewed=reviewed, decision_id=pr["decision"].get("id"))
     return manifest
 
 
@@ -252,7 +257,7 @@ def list_clusters(cfg: Config) -> list[dict]:
         m["rel"] = str(mp.parent.relative_to(root))
         m["unnamed"] = mp.parent.parent.name == cfg.unnamed_dir
         m["n"] = len(m.get("photos", []))
-        m["n_review"] = sum(1 for p in m.get("photos", []) if p.get("uncertain"))
+        m["n_review"] = sum(1 for p in m.get("photos", []) if p.get("in_review", p.get("uncertain")))
         out.append(m)
     out.sort(key=lambda m: m.get("start") or "", reverse=True)
     return out

@@ -11,7 +11,7 @@
   <label>Target root</label><input type="text" name="root" value="{{ cfg.root }}">
   <label>Everyday layout (<code>YYYY/MM</code> or <code>leave</code>)</label><input type="text" name="everyday_layout" value="{{ cfg.everyday_layout }}">
   <label>Unnamed-bursts folder (inside root)</label><input type="text" name="unnamed_dir" value="{{ cfg.unnamed_dir }}">
-  <label>Review subfolder (inside a cluster)</label><input type="text" name="review_dir" value="{{ cfg.review_dir }}">
+  <label>Review subfolder for low-confidence photos of <i>auto-applied</i> clusters (manual approval settles them)</label><input type="text" name="review_dir" value="{{ cfg.review_dir }}">
   <div class="check"><input type="checkbox" id="sbs" name="subfolder_by_source" {% if cfg.subfolder_by_source %}checked{% endif %}><label for="sbs">Per-source subfolders (<code>2026-10 Lisbon/smartphone-a/</code>)</label></div>
   <label>Photo extensions</label><input type="text" name="photo_extensions" value="{{ extensions }}">
   <label>Thumbnail pattern (relative to the photo, <code>{name}</code> = file name)</label><input type="text" name="thumb_pattern" value="{{ cfg.thumb_pattern }}">
@@ -48,7 +48,7 @@
   <div class="check"><input type="checkbox" id="copy" name="copy_instead_of_move" {% if cfg.copy_instead_of_move %}checked{% endif %}><label for="copy"><b>Copy instead of move</b> — originals stay in the inbox (their sidecar notes where the copy went); undo deletes the copies</label></div>
   <div class="check"><input type="checkbox" id="at" name="auto_apply_trips" {% if cfg.auto_apply_trips %}checked{% endif %}><label for="at">Auto-apply trips (when not dry-run)</label></div>
   <div class="check"><input type="checkbox" id="al" name="auto_apply_local" {% if cfg.auto_apply_local %}checked{% endif %}><label for="al">Auto-apply local day outs</label></div>
-  <div class="check"><input type="checkbox" id="ah" name="auto_apply_home" {% if cfg.auto_apply_home %}checked{% endif %}><label for="ah">Auto-apply home bursts (into {{ cfg.unnamed_dir }}/)</label></div>
+  <div class="check"><input type="checkbox" id="ah" name="auto_apply_home" {% if cfg.auto_apply_home %}checked{% endif %}><label for="ah">Auto-apply home bursts (into <code>{{ cfg.unnamed_dir }}/YYYY-MM-DD (n Fotos)/</code> until you name them)</label></div>
   <div class="check"><input type="checkbox" id="xmp" name="write_xmp_sidecar" {% if cfg.write_xmp_sidecar %}checked{% endif %}><label for="xmp">Also write keywords to .xmp sidecars</label></div>
   <label>Scan interval (minutes)</label><input type="number" name="scan_interval_min" value="{{ cfg.scan_interval_min }}">
 </div>
