@@ -449,8 +449,8 @@ def test_everyday_photos_move_on_request_with_progress(client, library):
     assert len(cluster.everyday_records(cfg)) == 0
     page = client.get("/everyday").text
     assert "Nothing to move" in page or "No everyday photos" in page
-    assert events.read(limit=1, kind="review")[0] == {**events.read(limit=1, kind="review")[0],
-                                                       "action": "move_everyday", "n": n}
+    moves = [e for e in events.read(limit=5, kind="review") if e["action"] == "move_everyday"]
+    assert moves and moves[-1]["n"] == n            # a second, empty run may follow on fast hosts
     # the scheduled run does not move everyday photos unless asked to
     library.photo(Path(cfg.inboxes[0]["path"]), synth.T0 + timedelta(days=0, hours=1), synth.HOME)
     cluster.run(cfg)
