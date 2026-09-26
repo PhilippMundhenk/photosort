@@ -205,13 +205,13 @@ def test_settings_save_coerces_and_reschedules(client):
     form = {k: str(v) for k, v in cfg.as_dict().items() if not isinstance(v, (bool, list))}
     form.update({"inboxes": config.inboxes_text(cfg), "photo_extensions": "jpg, heic",
                  "scan_interval_min": "42", "home_lat": "48.1", "copy_instead_of_move": "on",
-                 "kev_url": "http://laya:8000", "kev_model": "laya"})
+                 "kev_url": "http://127.0.0.1:9", "kev_model": "laya"})       # port 9: nothing listens
     r = client.post("/settings", data=form)
     assert r.status_code == 303 and r.headers["location"] == "/settings"
     new = config.load()
     assert new.scan_interval_min == 42 and new.home_lat == 48.1 and new.photo_extensions == ["jpg", "heic"]
     assert new.copy_instead_of_move is True and new.dry_run is False        # checkbox absent -> off
-    assert new.kev_url == "http://laya:8000" and new.kev_model == "laya"
+    assert new.kev_url == "http://127.0.0.1:9" and new.kev_model == "laya"
     assert main.scheduler.get_job("scan").trigger.interval.total_seconds() == 42 * 60
     assert events.read(limit=1, kind="settings")[0]["changed"]
     page = client.get("/settings").text

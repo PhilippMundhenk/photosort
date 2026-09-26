@@ -176,7 +176,11 @@ def scan(cfg: Config, force: bool = False) -> dict:
 def write_xmp_keywords(photo: Path, keywords: list[str]) -> None:
     """Best effort: keep an .xmp sidecar with photosort/* keywords for other tools."""
     xmp = photo.with_suffix(".xmp")
-    args = ["-api", "NoDups=1"] + [f"-XMP-dc:Subject+=photosort/{k}" for k in keywords]
+    # remove-then-add per keyword: exiftool's NoDups only dedupes within the values being written,
+    # so a plain += would append the same keyword again on every run
+    args = []
+    for k in keywords:
+        args += [f"-XMP-dc:Subject-=photosort/{k}", f"-XMP-dc:Subject+=photosort/{k}"]
     if xmp.exists():
         cmd = ["exiftool", "-q", "-overwrite_original", *args, str(xmp)]
     else:
