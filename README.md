@@ -34,7 +34,9 @@ inbox/camera/**.dng  ─┘                              sorted/_unnamed/2026-06
    - Everything else → `YYYY/MM/`.
 3. **Review** in the web UI: approve, reject, rename, toggle single photos, name unnamed
    bursts, undo whole clusters, move single photos back out. Every action is logged and every
-   folder gets a `manifest.json` (source paths, confidences, corrections).
+   folder gets a `manifest.json` (source paths, confidences, corrections). Approving in the
+   UI settles every photo; only auto-applied clusters park their low-confidence photos in
+   `<folder>/_review/` for a later look.
 
 **Dry-run is on by default.** Nothing moves until you approve it or switch a rule to auto-apply.
 

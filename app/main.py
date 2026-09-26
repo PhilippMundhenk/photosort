@@ -43,7 +43,7 @@ def run_pipeline(trigger: str = "schedule") -> dict:
             auto = {"trip": cfg.auto_apply_trips, "local": cfg.auto_apply_local, "home": cfg.auto_apply_home}
             for pr in props.values():
                 if pr["status"] == "approved" or (pr["status"] == "pending" and auto.get(pr["kind"])):
-                    mover.apply(cfg, pr)
+                    mover.apply(cfg, pr, reviewed=pr["status"] == "approved")
                     pr["status"] = "applied"
                     applied += 1
             cluster.save_proposals(props)
@@ -164,7 +164,7 @@ async def proposal_action(pid: str, action: str, request: Request):
         return RedirectResponse("/review", status_code=303)
     form = dict(await request.form())
     if action == "approve":
-        mover.apply(cfg, pr)
+        mover.apply(cfg, pr, reviewed=True)          # a human looked at it: nothing goes to _review
         pr["status"] = "applied"
         events.log("review", proposal=pid, action="approve", name=pr["name"])
     elif action == "reject":

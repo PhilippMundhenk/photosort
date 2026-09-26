@@ -66,6 +66,7 @@ def test_apply_moves_by_source_and_uncertain_into_review(cfg, library):
     assert Path(excluded).exists()                                 # excluded photo stays in the inbox
     assert len(m["photos"]) == trip["n"] - 1 and m["name"] == trip["name"] and m["kind"] == "trip"
     assert m["proposal_id"] == trip["id"] and m["label"] is None and m["mode"] == "move"
+    assert m["reviewed"] is False
     assert (folder / "phone-a").is_dir() and (folder / "phone-b").is_dir()
     review = folder / trip["photos"][1]["source"] / cfg.review_dir     # photos are in time order, sources mixed
     assert _jpgs(review) == [review / Path(trip["photos"][1]["path"]).name]
@@ -76,6 +77,19 @@ def test_apply_moves_by_source_and_uncertain_into_review(cfg, library):
     assert not ingest.sidecar_path(Path(m["photos"][0]["src"])).exists()
     ev = events.read(limit=1)[0]
     assert ev["kind"] == "apply" and ev["n"] == len(m["photos"]) and ev["proposal"] == trip["id"]
+
+
+def test_manual_approval_settles_uncertain_photos(cfg, library):
+    props, kinds = _props(cfg)
+    local = kinds["local"]
+    assert local["n_uncertain"] == 1
+    m = mover.apply(cfg, local, reviewed=True)
+    folder = mover.target_folder(cfg, local)
+    assert m["reviewed"] is True and not list(folder.rglob(cfg.review_dir))
+    unc = next(p for p in m["photos"] if p["uncertain"])
+    assert unc["in_review"] is False and Path(unc["dst"]).parent == folder / unc["source"]
+    assert mover.list_clusters(cfg)[0]["n_review"] == 0
+    assert events.read(limit=1)[0]["reviewed"] is True
 
 
 def test_apply_flat_when_subfolders_off(cfg, library):
@@ -272,4 +286,4 @@ def test_manifest_json_is_valid_and_complete(cfg, library):
     folder = mover.target_folder(cfg, kinds["local"])
     m = json.loads((folder / mover.MANIFEST).read_text(encoding="utf-8"))
     assert set(m) >= {"name", "kind", "start", "end", "proposal_id", "decision", "applied", "label", "photos", "mode"}
-    assert set(m["photos"][0]) == {"src", "dst", "conf", "zone", "source", "inbox", "uncertain"}
+    assert set(m["photos"][0]) == {"src", "dst", "conf", "zone", "source", "inbox", "uncertain", "in_review"}

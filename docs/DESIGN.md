@@ -96,8 +96,12 @@ Explicit requirement: databases get lost and break. So:
   was rejected (no benefit, risky for RAW).
 - **Manifest per cluster folder** (`manifest.json`): proposal, decision and confidence,
   source→target of every photo, later corrections. It is the undo log and the eval set.
-- **The folder tree is the decision**: a photo in a trip folder is settled; `_review/`
-  inside a folder holds uncertain ones; `_unnamed/` holds bursts waiting for a label.
+- **The folder tree is the decision**: a photo in a trip folder is settled; `_unnamed/` holds
+  bursts waiting for a label (each folder carries its date, `_unnamed/2026-06-30 (25 Fotos)/`,
+  so several can wait at once). `_review/` inside a folder holds low-confidence photos of
+  *auto-applied* clusters only: when a human approves a proposal in the UI, that *is* the
+  review, and everything goes straight into the folder (decided September 2026, after the
+  first version parked them in `_review/` in both cases).
 - `data/` (config.yaml, proposals.json, events.jsonl) is the only non-photo state and only
   costs history if lost.
 
