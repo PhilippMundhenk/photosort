@@ -35,10 +35,10 @@ jobs:
           tags: photosort-test:local
           cache-from: type=gha,scope=test
           cache-to: type=gha,scope=test,mode=max
-      - name: Run tests
-        run: docker compose -f docker-compose.test.yml run --rm --no-build tests
+      - name: Run tests (ruff + pytest, incl. browser e2e)
+        run: docker run --rm photosort-test:local
       - name: Smoke script
-        run: docker compose -f docker-compose.test.yml run --rm --no-build tests python -m tests.smoke
+        run: docker run --rm photosort-test:local python -m tests.smoke
 
   images:
     name: Build ${{ matrix.image.name }}
