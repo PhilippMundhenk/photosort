@@ -1,11 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Review queue</h1>
-{% if cfg.dry_run %}<div class="warnbox">Dry-run: nothing moves until you approve here. Turn it off in Settings once you trust a rule.</div>{% endif %}
+{% if cfg.dry_run %}<div class="warnbox"><b>Dry-run is on: nothing is moved, copied or deleted.</b> Approving here only marks a proposal;
+  {% if n_approved %}{{ n_approved }} approved proposal{{ 's' if n_approved != 1 }} wait{{ '' if n_approved != 1 else 's' }} for dry-run to be switched off in <a href="/settings">Settings</a>.{% else %}approved proposals are moved once you switch dry-run off in <a href="/settings">Settings</a>.{% endif %}</div>{% endif %}
 
 {% if applying %}
-<h2>Moving ({{ applying|length }})</h2>
-<div data-poll="approved">
+<h2>{{ 'Approved, waiting for dry-run to be switched off' if cfg.dry_run else 'Moving' }} ({{ applying|length }})</h2>
+<div {% if not cfg.dry_run %}data-poll="approved"{% endif %}>
 {% for p in applying %}
 <div class="card" id="{{ p.id }}">
   <div class="row">
@@ -13,6 +14,7 @@
     {% if p.error %}<span class="badge bad">failed</span> <span class="small">{{ p.error }}</span>
       <form method="post" action="/proposal/{{ p.id }}/approve" class="inline"><button class="small">retry</button></form>
     {% elif p.progress %}<span class="badge warn">moving</span> <span class="small" data-progress="{{ p.id }}">{{ p.progress.done }} / {{ p.progress.total }}</span>
+    {% elif cfg.dry_run %}<span class="badge">approved</span> <span class="small muted">{{ p.n }} files, not moved (dry-run)</span>
     {% else %}<span class="badge">queued</span> <span class="small" data-progress="{{ p.id }}">0 / {{ p.n }}</span>{% endif %}
   </div>
 </div>
@@ -23,8 +25,8 @@
 {% set ready = pending|selectattr('status', 'equalto', 'pending')|list %}
 <div class="row" style="justify-content:space-between;align-items:baseline">
   <h2 style="margin:22px 0 10px">Proposed clusters ({{ pending|length }})</h2>
-  {% if ready %}<form method="post" action="/proposals/approve_all" class="inline" data-approve-all onsubmit="return confirm('Approve and move all {{ ready|length }} proposals?')">
-    <button>Approve &amp; move all ({{ ready|length }})</button></form>{% endif %}
+  {% if ready %}<form method="post" action="/proposals/approve_all" class="inline" data-approve-all onsubmit="return confirm('{% if cfg.dry_run %}Approve{% else %}Approve and move{% endif %} all {{ ready|length }} proposals?')">
+    <button>{% if cfg.dry_run %}Approve all{% else %}Approve &amp; move all{% endif %} ({{ ready|length }})</button></form>{% endif %}
 </div>
 {% for p in pending %}
 <div class="card" id="{{ p.id }}">
@@ -56,7 +58,7 @@
     <div class="muted small">Click a photo to exclude/include it (greyed = excluded, orange = low confidence — approving here settles them; only auto-applied clusters park them in {{ cfg.review_dir }}/). ⤡ opens the full-size photo or video.</div>
   </details>
   <div class="row" style="margin-top:8px">
-    {% if p.status != 'ongoing' %}<form method="post" action="/proposal/{{ p.id }}/approve" class="inline"><button>Approve &amp; move</button></form>{% endif %}
+    {% if p.status != 'ongoing' %}<form method="post" action="/proposal/{{ p.id }}/approve" class="inline"><button>{% if cfg.dry_run %}Approve{% else %}Approve &amp; move{% endif %}</button></form>{% endif %}
     <form method="post" action="/proposal/{{ p.id }}/reject" class="inline"><button class="secondary">Reject (keep as everyday)</button></form>
   </div>
 </div>

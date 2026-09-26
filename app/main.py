@@ -54,6 +54,8 @@ _props_lock = threading.Lock()                # every read-modify-write of propo
 def _apply_one(pid: str) -> None:
     with _lock:                                   # never while a scan rewrites the proposals
         cfg = config.load()
+        if cfg.dry_run:                           # approved proposals wait; Settings queues them again
+            return
         pr = cluster.load_proposals().get(pid)
         if not pr or pr["status"] != "approved":
             return
@@ -63,6 +65,8 @@ def _apply_one(pid: str) -> None:
             mover.apply(cfg, pr, reviewed=True,           # a human looked at it: nothing goes to _review
                         progress=lambda done, total: _applying[pid].update(done=done, total=total))
             update = {"status": "applied", "error": None}
+        except mover.DryRun:
+            return                                        # switched on meanwhile: stays approved, untouched
         except Exception as e:  # noqa: BLE001
             log.exception("apply failed for %s", pid)
             update = {"error": f"{type(e).__name__}: {e}"}
@@ -89,6 +93,16 @@ def _apply_worker() -> None:
 
 def queue_apply(pid: str) -> None:
     _apply_queue.put(pid)
+
+
+def queue_approved() -> int:
+    """Queue every approved-but-not-applied proposal (after dry-run was switched off, at startup)."""
+    n = 0
+    for pid, pr in cluster.load_proposals().items():
+        if pr["status"] == "approved":
+            queue_apply(pid)
+            n += 1
+    return n
 
 
 def wait_for_apply(timeout: float = 120) -> None:
@@ -147,14 +161,20 @@ def _start():
     scheduler.start()
     if not any(t.name == "apply" for t in threading.enumerate()):
         threading.Thread(target=_apply_worker, name="apply", daemon=True).start()
-    for pid, pr in cluster.load_proposals().items():           # approved before a restart: finish them
-        if pr["status"] == "approved":
-            queue_apply(pid)
+    if not cfg.dry_run:
+        queue_approved()                                       # approved before a restart: finish them
 
 
 @app.on_event("shutdown")
 def _stop():
     scheduler.shutdown(wait=False)
+
+
+@app.exception_handler(mover.DryRun)
+async def _dry_run_refused(request: Request, exc: mover.DryRun):
+    """Any request that would move a file while dry-run is on ends here, never in a move."""
+    return HTMLResponse(f"<h1>Dry-run is on</h1><p>{exc}</p><p><a href='/review'>Review</a> · "
+                        f"<a href='/settings'>Settings</a></p>", status_code=409)
 
 
 # --- helpers --------------------------------------------------------------------
@@ -187,8 +207,10 @@ def review(request: Request, open: str = ""):
     props = cluster.load_proposals()
     unnamed = [c for c in mover.list_clusters(cfg) if c["unnamed"]]
     applying = [dict(p, progress=_applying.get(p["id"])) for p in props.values() if p["status"] == "approved"]
+    approved_all = [p for p in props.values() if p["status"] == "approved"]
     return render(request, "review.html", pending=_pending(props), unnamed=unnamed, open_id=open,
-                  applying=sorted(applying, key=lambda p: p["start"], reverse=True))
+                  applying=sorted(applying, key=lambda p: p["start"], reverse=True),
+                  n_approved=len(approved_all))
 
 
 def _month_key(ts: str) -> str:
@@ -318,11 +340,18 @@ def settings_detect_home():
 @app.post("/settings")
 async def settings_save(request: Request):
     form = dict(await request.form())
+    before = config.load()
     cfg = config.update_from_form(config.load(), form)
     config.save(cfg)
     scheduler.reschedule_job("scan", trigger="interval", minutes=max(1, cfg.scan_interval_min))
-    events.log("settings", changed=sorted(form.keys()))
-    return RedirectResponse("/settings", status_code=303)
+    events.log("settings", changed=sorted(form.keys()), dry_run=cfg.dry_run)
+    msg = ""
+    if before.dry_run and not cfg.dry_run:
+        n = queue_approved()                                   # they waited for exactly this
+        msg = f"Dry-run is off. {n} approved proposal{'s' if n != 1 else ''} will be moved now."
+    elif not before.dry_run and cfg.dry_run:
+        msg = "Dry-run is on: nothing will be moved, copied or deleted."
+    return RedirectResponse("/settings" + (f"?msg={quote(msg)}" if msg else ""), status_code=303)
 
 
 @app.post("/run")

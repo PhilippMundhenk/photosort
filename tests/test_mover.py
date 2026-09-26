@@ -8,6 +8,7 @@ from app import cluster, config, events, ingest, mover
 
 def _props(cfg):
     cfg.sidecar_cleanup = "never"                     # these tests inspect the records of sorted photos
+    cfg.dry_run = False                               # these tests move files
     config.save(cfg)
     cluster.run(cfg)
     props = cluster.load_proposals()
@@ -35,11 +36,45 @@ def test_unique_adds_counter(tmp_path):
     assert mover._unique(p) == tmp_path / "a_2.jpg"
 
 
-def test_target_folder_home_goes_to_unnamed(cfg):
+def test_target_folder_home_goes_to_unnamed_until_named(cfg):
     root = Path(cfg.root)
     assert mover.target_folder(cfg, {"kind": "trip", "name": "T"}) == root / "T"
     assert mover.target_folder(cfg, {"kind": "local", "name": "L"}) == root / "L"
     assert mover.target_folder(cfg, {"kind": "home", "name": "H"}) == root / cfg.unnamed_dir / "H"
+    assert mover.target_folder(cfg, {"kind": "home", "name": "H", "name_edited": True}) == root / "H"   # renamed
+    assert mover.target_folder(cfg, {"kind": "home", "name": "H", "manual": True}) == root / "H"
+
+
+def test_dry_run_blocks_every_file_operation(cfg, library):
+    """Dry-run means nothing is moved, copied or deleted, whatever is asked."""
+    import pytest as _pytest
+    cfg.dry_run = True
+    cluster.run(cfg)
+    props = cluster.load_proposals()
+    kinds = {p["kind"]: p for p in props.values()}
+    before = sorted(str(p) for p in library.paths if p.exists())
+    with _pytest.raises(mover.DryRun):
+        mover.apply(cfg, kinds["trip"], reviewed=True)
+    with _pytest.raises(mover.DryRun):
+        mover.apply_everyday(cfg, min_age_days=0)
+    with _pytest.raises(mover.DryRun):
+        mover._transfer(cfg, library.paths[0], Path(cfg.root) / "x")
+    with _pytest.raises(mover.DryRun):
+        mover._delete_with_sidecars(cfg, library.paths[0])
+    # a folder that exists from live times: rename/undo/move_out are blocked too
+    cfg.dry_run = False
+    m = mover.apply(cfg, kinds["local"])
+    folder = mover.target_folder(cfg, kinds["local"])
+    cfg.dry_run = True
+    with _pytest.raises(mover.DryRun):
+        mover.undo(cfg, folder)
+    with _pytest.raises(mover.DryRun):
+        mover.rename(cfg, folder, "other")
+    with _pytest.raises(mover.DryRun):
+        mover.move_out(cfg, folder, Path(m["photos"][0]["dst"]))
+    assert folder.is_dir() and Path(m["photos"][0]["dst"]).exists()
+    after = sorted(str(p) for p in library.paths if p.exists())
+    assert set(before) - set(after) == {p["src"] for p in m["photos"]}     # only the deliberate live apply moved
 
 
 def test_thumb_for(cfg, tmp_path):

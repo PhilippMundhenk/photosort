@@ -194,6 +194,15 @@ with the queue staying authoritative.
 Dry-run is the default. Auto-apply is per rule (trips first, bursts later) so trust can be
 built incrementally.
 
+Dry-run semantics were tightened on 2026-09-26 after an incident: the first version moved
+files when the user approved a proposal *in* dry-run mode ("nothing moves until you approve"),
+and an "approve all" in dry-run then moved 1060 files. The user's rule: dry-run means nothing
+is moved, copied or deleted, whatever is approved. It is enforced in one place, the two
+functions in `mover` through which every file operation passes (`_transfer`,
+`_delete_with_sidecars`), plus `apply`/`apply_everyday`/`undo`/`rename` themselves; they raise
+`DryRun`. Approvals are only recorded; switching dry-run off (with a confirmation) queues them.
+An invariant test drives every UI action with dry-run on and asserts the inbox is untouched.
+
 ## 7. Hardware constraints and how they shaped the code
 
 - EXIF via `exiftool` in batches. Thumbnails come from the NAS's `@eaDir` when present;

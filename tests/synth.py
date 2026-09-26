@@ -24,7 +24,7 @@ def make_config(base: Path, **overrides) -> config.Config:
     kw = dict(inboxes=[{"path": str(base / "phone-a"), "name": "phone-a"},
                        {"path": str(base / "phone-b"), "name": "phone-b"}],
               root=str(base / "sorted"), home_lat=HOME[0], home_lon=HOME[1], timezone="UTC",
-              write_xmp_sidecar=False, subfolder_by_source=True)
+              write_xmp_sidecar=False, subfolder_by_source=True, dry_run=False)   # tests move files
     kw.update(overrides)
     return config.Config(**kw)
 

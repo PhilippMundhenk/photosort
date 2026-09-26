@@ -21,9 +21,10 @@ inbox/camera/**.dng  ─┘                          sorted/_unnamed/2026-06-30 
 - **Trips, day outs and occasions from plain observation.** A run of photos away from home is a
   trip if it spans a night and a day out otherwise; a dense burst at home is an occasion for you
   to name. No dates or hints to type in.
-- **Review before anything moves.** Dry-run is the default. Approve, rename, exclude single
-  photos, name bursts, undo whole folders; the Everyday page shows what was not clustered and
-  lets you build clusters by hand.
+- **Review before anything moves.** Dry-run is the default and blocks every move, copy and
+  delete; approvals wait until you switch it off. Approve, rename, exclude single photos, name
+  bursts, undo whole folders; the Everyday page shows what was not clustered and lets you build
+  clusters by hand.
 - **Videos included.** iPhone and Android MP4/MOV get correct local timestamps (UTC converted
   to your home zone), GPS from the QuickTime metadata and a thumbnail frame.
 - **Readable names.** `2026-06 Lisbon, Sevilla`; your own place names ("Black Forest") beat
@@ -105,7 +106,9 @@ decision model that was tried for exactly this (DESIGN.md, section 10). You name
    UI settles every photo; only auto-applied clusters park their low-confidence photos in
    `<folder>/_review/` for a later look.
 
-**Dry-run is on by default.** Nothing moves until you approve it or switch a rule to auto-apply.
+**Dry-run is on by default, and it means exactly that: nothing is moved, copied or deleted.**
+Approving only marks proposals; they are moved once you switch dry-run off in Settings (which
+asks for confirmation). Every function that touches a file checks the flag itself.
 
 ## Layout
 

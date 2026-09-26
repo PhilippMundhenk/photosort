@@ -54,7 +54,11 @@ def test_pages_render_empty(client):
                        ("/log", "filter:"), ("/settings", "Save settings")]:
         r = client.get(path)
         assert r.status_code == 200 and text in r.text, path
-    assert "dry-run" in client.get("/").text                     # badge in the header
+    assert "LIVE" in client.get("/").text                        # badge in the header (tests run live)
+    cfg = config.load()
+    cfg.dry_run = True
+    config.save(cfg)
+    assert "dry-run" in client.get("/").text
     assert client.get("/static/style.css").status_code == 200
     assert client.get("/static/ui.js").status_code == 200
     assert f'src="/static/ui.js?v={main.STATIC_VERSION}"' in client.get("/").text and len(main.STATIC_VERSION) == 10
@@ -62,7 +66,7 @@ def test_pages_render_empty(client):
 
 def test_api_status(client):
     s = client.get("/api/status").json()
-    assert s == {"state": main._state, "pending": 0, "dry_run": True, "approved": 0, "applying": {}}
+    assert s == {"state": main._state, "pending": 0, "dry_run": False, "approved": 0, "applying": {}}
 
 
 def test_startup_writes_config_and_schedules_scan(client):
@@ -74,6 +78,9 @@ def test_startup_writes_config_and_schedules_scan(client):
 # --- run & review ---------------------------------------------------------------------------
 
 def test_run_now_produces_proposals_and_dry_run_moves_nothing(client, library):
+    cfg = config.load()
+    cfg.dry_run = True
+    config.save(cfg)
     r = client.post("/run")
     assert r.status_code == 303 and r.headers["location"] == "/"
     stats = _wait_run()
@@ -82,7 +89,7 @@ def test_run_now_produces_proposals_and_dry_run_moves_nothing(client, library):
     assert all(p.exists() for p in library.paths)
     page = client.get("/review").text
     assert "Proposed clusters (3)" in page and "2026-06 Lisbon, Sevilla" in page and "Ludwigsburg" in page
-    assert "Approve &amp; move" in page and "(25 Fotos)" in page
+    assert ">Approve</button>" in page and "Approve &amp; move" not in page and "(25 Fotos)" in page   # dry-run wording
     assert client.get("/api/status").json()["pending"] == 3
     assert "Open proposals" in client.get("/").text and "run" in client.get("/log?kind=run").text
     assert events.read(limit=1, kind="run")[0]["new_photos"] == 0
@@ -123,6 +130,50 @@ def test_approve_moves_photos_without_review_folder(client, library):
     assert client.get("/api/status").json()["pending"] == 2
 
 
+def test_dry_run_never_moves_anything_whatever_the_ui_does(client, library, tmp_path):
+    """The invariant behind the incident of 2026-09-26: with dry-run on, every action the UI
+    offers may change proposals but not a single file."""
+    cfg = config.load()
+    cfg.dry_run, cfg.auto_apply_trips, cfg.auto_apply_local, cfg.auto_apply_home = True, True, True, True
+    config.save(cfg)
+    inbox_before = sorted(str(p) for p in Path(cfg.inboxes[0]["path"]).rglob("*") if p.is_file())
+    inbox_before += sorted(str(p) for p in Path(cfg.inboxes[1]["path"]).rglob("*") if p.is_file())
+    cluster.run(cfg)
+    kinds = _proposals()
+    client.post(f"/proposal/{kinds['trip']['id']}/approve", data={"name": "2026-06 Portugal"})
+    client.post(f"/proposal/{kinds['local']['id']}/rename", data={"name": "x"})
+    client.post("/proposals/approve_all")
+    main.wait_for_apply()
+    assert "error" not in main.run_pipeline("test")                         # auto-apply flags on, dry-run wins
+    paths = [r["path"] for r in cluster.everyday_records(cfg)][:2]
+    client.post("/everyday/assign", data={"paths": paths, "target": "new", "kind": "local", "name": "by hand"})
+    client.post("/cluster/undo", data={"folder": str(Path(cfg.root) / "nothing")})       # no manifest: no-op
+    r = client.post("/cluster/rename", data={"folder": str(Path(cfg.root) / "nothing"), "name": "x"})
+    assert r.status_code == 409 and "Dry-run is on" in r.text                            # refused, not a 500
+    r = client.post("/cluster/move_out", data={"folder": str(Path(cfg.root) / "nothing"), "photo": inbox_before[0]})
+    assert r.status_code == 409
+    inbox_after = sorted(str(p) for p in Path(cfg.inboxes[0]["path"]).rglob("*") if p.is_file())
+    inbox_after += sorted(str(p) for p in Path(cfg.inboxes[1]["path"]).rglob("*") if p.is_file())
+    assert inbox_after == inbox_before
+    assert not Path(cfg.root).exists() or not any(Path(cfg.root).rglob("*"))
+    now = _proposals()
+    assert now["trip"]["status"] == "approved" and now["trip"]["name"] == "2026-06 Portugal"   # recorded, not moved
+    assert now["home"]["status"] == "approved"
+    status = client.get("/api/status").json()
+    assert status["dry_run"] is True and status["approved"] >= 3 and status["applying"] == {}
+    page = client.get("/review").text
+    assert "Dry-run is on" in page and "waiting for dry-run" in page and "Approve &amp; move" not in page
+
+    # switching dry-run off (Settings) is what moves them, and asks nothing of the worker before
+    form = {k: str(v) for k, v in config.load().as_dict().items() if not isinstance(v, (bool, list))}
+    form.update({"inboxes": config.inboxes_text(cfg), "photo_extensions": "jpg"})   # dry_run absent: off
+    r = client.post("/settings", data=form)
+    assert "will%20be%20moved%20now" in r.headers["location"]
+    main.wait_for_apply()
+    assert _proposals()["trip"]["status"] == "applied" and (Path(cfg.root) / "2026-06 Portugal").is_dir()
+    assert events.read(limit=1, kind="settings")[0]["dry_run"] is False
+
+
 def test_approve_shows_progress_and_reports_failure(client, library, monkeypatch):
     cfg = config.load()
     cluster.run(cfg)
@@ -145,7 +196,9 @@ def test_approve_shows_progress_and_reports_failure(client, library, monkeypatch
 
     # a failing move leaves the proposal approved with the error shown, and can be retried
     local = _proposals("local")
-    monkeypatch.setattr(mover, "apply", lambda *a, **k: (_ for _ in ()).throw(OSError("share gone")))
+    def boom(*a, **k):
+        raise OSError("share gone")
+    monkeypatch.setattr(mover, "apply", boom)
     client.post(f"/proposal/{local['id']}/approve")
     main.wait_for_apply()
     again = _proposals("local")
@@ -400,7 +453,7 @@ def test_settings_save_coerces_and_reschedules(client):
     assert events.read(limit=1, kind="settings")[0]["changed"]
     page = client.get("/settings").text
     assert 'value="42"' in page and 'name="copy_instead_of_move" checked' in page
-    assert "live" in client.get("/").text                                  # header badge, dry-run off
+    assert "LIVE" in client.get("/").text                                  # header badge, dry-run off
 
 
 def test_live_mode_auto_applies_trips_with_review_folder(client, library, monkeypatch):

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -97,18 +98,18 @@ _cache: dict = {"key": None, "cfg": None}
 
 
 def load() -> Config:
-    """Config from YAML. Cached on the file's mtime/size (it is read per request and per
-    sidecar); every caller gets its own copy, so mutating it never leaks without save()."""
+    """Config from YAML. Cached on the file's content (it is read per request and per record);
+    every caller gets its own copy, so mutating it never leaks without save()."""
     try:
-        st = CONFIG_PATH.stat()
-        key = (str(CONFIG_PATH), st.st_mtime_ns, st.st_size)
+        text = CONFIG_PATH.read_text(encoding="utf-8")       # ~1 kB: cheaper than getting mtime wrong
+        key = hashlib.sha1(text.encode("utf-8")).hexdigest()
     except OSError:
         key = None
     if key is not None and _cache["key"] == key:
         return copy.deepcopy(_cache["cfg"])
     cfg = Config()
     if key is not None:
-        data = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+        data = yaml.safe_load(text) or {}
         for k, v in data.items():
             if hasattr(cfg, k):
                 setattr(cfg, k, v)

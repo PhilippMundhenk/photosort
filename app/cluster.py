@@ -22,6 +22,7 @@ import hashlib
 import json
 import re
 import statistics
+import threading
 import uuid
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -39,17 +40,24 @@ UNCERTAIN_BELOW = 0.7
 def load_proposals() -> dict[str, dict]:
     if PROPOSALS_PATH.exists():
         try:
-            return json.loads(PROPOSALS_PATH.read_text())
-        except json.JSONDecodeError:
+            with _save_lock:
+                return json.loads(PROPOSALS_PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
             pass
     return {}
 
 
+_save_lock = threading.Lock()
+
+
 def save_proposals(props: dict[str, dict]) -> None:
+    """Atomic replace; serialized, with a per-writer temp file (the apply worker and a request
+    may save at the same moment, and Windows refuses to replace a file another thread holds)."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = PROPOSALS_PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(props, ensure_ascii=False, indent=1))
-    tmp.replace(PROPOSALS_PATH)
+    with _save_lock:
+        tmp = PROPOSALS_PATH.with_name(f"proposals.{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps(props, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(PROPOSALS_PATH)
 
 
 # --- records -------------------------------------------------------------------
