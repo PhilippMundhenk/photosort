@@ -25,9 +25,9 @@
       .then(function (d) {
         var ex = {};
         (d.excluded_paths || []).forEach(function (p) { ex[p] = true; });
-        q.card.querySelectorAll("form[data-toggle]").forEach(function (f) {      // the server's view wins,
-          var p = f.querySelector("input[name=path]").value;                    // except for clicks still queued
-          if (q.paths.indexOf(p) < 0) f.closest("figure").classList.toggle("excluded", !!ex[p]);
+        q.card.querySelectorAll("button[name=path]").forEach(function (b) {      // the server's view wins,
+          var p = b.value;                                                      // except for clicks still queued
+          if (q.paths.indexOf(p) < 0) b.closest("figure").classList.toggle("excluded", !!ex[p]);
         });
         q.card.classList.remove("unsaved");
       })
@@ -38,11 +38,13 @@
     var form = ev.target;
     if (!form.matches("form[data-toggle]")) return;
     ev.preventDefault();
-    var card = form.closest(".card"), fig = form.closest("figure");
-    var pid = card ? card.id : form.action;
+    var btn = ev.submitter || document.activeElement;                    // the photo's button (name=path)
+    if (!btn || btn.name !== "path") return;
+    var card = form.closest(".card") || form, fig = btn.closest("figure");
+    var pid = card.id || form.action;
     fig.classList.toggle("excluded");
-    var q = toggles[pid] || (toggles[pid] = {paths: [], busy: false, action: form.action, card: card || fig});
-    q.paths.push(form.querySelector("input[name=path]").value);
+    var q = toggles[pid] || (toggles[pid] = {paths: [], busy: false, action: form.action, card: card});
+    q.paths.push(btn.value);
     flushToggles(pid);
   });
 
@@ -125,6 +127,7 @@
     var page = busy.getAttribute("data-page");
     var runsSeen = null, everydayWasMoving = false, reloading = false;
     var stateless = page === "dashboard" || page === "log" || page === "clusters";
+    function setText(el, s) { if (el.textContent !== s) el.textContent = s; }   // no mutation for the same text
     function fmt(a) {
       var c = a.current;
       return a.done + " / " + a.total + (c ? " · " + c.file + " (" + Math.round(c.bytes / 1048576) + " MB, " + c.seconds + " s)" : "");
@@ -164,7 +167,7 @@
       document.querySelectorAll("[data-progress]").forEach(function (el) {
         var pid = el.getAttribute("data-progress");
         var a = (s.applying || {})[pid];
-        if (a) { el.textContent = fmt(a); el.dataset.seen = "1"; return; }
+        if (a) { setText(el, fmt(a)); el.dataset.seen = "1"; return; }
         if (pid === "everyday") {
           if (!s.everyday_queued && (el.dataset.seen || everydayWasMoving)) finished(el, "moved");
           return;
@@ -183,8 +186,8 @@
       if (document.hidden) { schedule(false); return; }
       fetch("/api/status").then(function (r) { return r.json(); }).then(function (s) {
         var msg = describe(s), isBusy = !!msg;
-        text.textContent = isBusy ? msg : "";
-        busy.hidden = !isBusy && hint.hidden;
+        setText(text, isBusy ? msg : "");
+        if (busy.hidden !== (!isBusy && hint.hidden)) busy.hidden = !isBusy && hint.hidden;
         busy.classList.toggle("done", !isBusy && !hint.hidden);
         if (s.applying && s.applying.everyday) everydayWasMoving = true;
         progressCards(s);

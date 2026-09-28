@@ -105,3 +105,21 @@ def test_review_page_offers_reload_instead_of_reloading(client, library):
     body = js.split("function offerReload")[1]
     assert "location.reload()" in body                                  # only on the stateless pages or on click
     assert js.count("location.reload()") == 2                           # the offer's click handler, and that one
+
+
+def test_pages_are_light_on_forms_for_password_managers(client, library):
+    """Password-manager extensions re-scan every form and field on each DOM change; a form per
+    photo (hundreds) made Firefox warn that the extension slows the page down."""
+    cfg = config.load()
+    cluster.run(cfg)
+    html = client.get("/review").text
+    pending = sum(1 for p in cluster.load_proposals().values() if p["status"] in ("pending", "ongoing"))
+    assert html.count("data-toggle") == pending                        # one toggle form per proposal
+    assert html.count('name="path"') == sum(p["n"] for p in cluster.load_proposals().values()
+                                            if p["status"] in ("pending", "ongoing"))
+    assert html.count('name="path"') == html.count('name="path" value="') and "data-bwignore" in html
+    assert html.count("<form") < pending * 4 + 5                       # rename, approve, reject, toggle per card
+    everyday = client.get("/everyday").text
+    assert everyday.count('name="paths"') == everyday.count('name="paths" value="')
+    assert everyday.count("data-bwignore") >= everyday.count('name="paths"')
+    assert everyday.count("<form") <= 3                                # move-all, assign
