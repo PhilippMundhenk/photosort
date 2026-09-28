@@ -12,7 +12,9 @@ import pytest
 _SESSION_TMP = Path(tempfile.mkdtemp(prefix="photosort-pytest-"))
 os.environ["PHOTOSORT_DATA"] = str(_SESSION_TMP / "data")
 
-from app import config  # noqa: E402
+from app import config, thumbs  # noqa: E402
+
+thumbs.YIELD_S = thumbs.PREFETCH_PAUSE_S = 0.0     # the prefetch's politeness only slows the suite down
 from tests import synth  # noqa: E402
 
 
