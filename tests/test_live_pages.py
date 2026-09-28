@@ -160,3 +160,28 @@ def test_retry_after_a_failed_move_moves(client, library, monkeypatch):
     assert cluster.load_proposals()[local["id"]]["status"] == "applied"
     assert not any(Path(p["path"]).exists() for p in local["photos"])
     assert [e for e in events.read(limit=50) if e.get("action") == "retry"]
+
+
+def test_pages_warn_when_inbox_and_root_are_on_different_mounts(client, library, monkeypatch):
+    cfg = config.load()
+    assert mover.cross_mount_note(cfg) is None                       # tmp_path: one filesystem
+    assert "Slow moves" not in client.get("/settings").text
+    real = Path.stat
+
+    class Dev:
+        def __init__(self, st, dev):
+            self._st, self.st_dev = st, dev
+
+        def __getattr__(self, k):
+            return getattr(self._st, k)
+
+    def stat(self, *a, **k):
+        st = real(self, *a, **k)
+        return Dev(st, 99) if str(self) == cfg.root else st
+    monkeypatch.setattr(Path, "stat", stat)
+    mover._mount_cache["at"] = 0.0
+    note = mover.cross_mount_note(cfg)
+    assert note and "different mounts" in note and "PHOTOS_BASE" in note
+    for page in ("/", "/review", "/settings"):
+        assert "Slow moves" in client.get(page).text
+    assert "Slow moves" not in client.get("/everyday").text

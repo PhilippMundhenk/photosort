@@ -268,7 +268,8 @@ async def _dry_run_refused(request: Request, exc: mover.DryRun):
 
 def render(request: Request, name: str, **ctx):
     cfg = config.load()
-    ctx.update(request=request, cfg=cfg, state=_state, page=name.split(".")[0], v=STATIC_VERSION)
+    ctx.update(request=request, cfg=cfg, state=_state, page=name.split(".")[0], v=STATIC_VERSION,
+               mount_note=mover.cross_mount_note(cfg))
     return tpl.TemplateResponse(request, name, ctx)
 
 

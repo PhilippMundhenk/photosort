@@ -66,7 +66,11 @@ corrected in **Settings**. Press **Run now** any time. The first scan runs `exif
 
 ### Input folders
 
-Mount the inbox root at `/photos/inbox` (`PHOTOS_INBOX` in `.env`). Every subfolder in it is an
+Mount the folder that holds `inbox/` and `sorted/` once, at `/photos` (`PHOTOS_BASE` in `.env`):
+a move is then a rename on the share. Two separate mounts, as earlier versions used, make every
+move a copy through the container and back over the network (the pages warn when they see it).
+The inbox root is `/photos/inbox`, the sorted root `/photos/sorted`; both are editable in
+Settings for other layouts. Every subfolder of the inbox root is an
 input named after the folder: `hans/` becomes `hans=/photos/inbox/hans`, discovered on every
 scan, so a new device folder needs no configuration. Settings shows what was found; the
 override box takes explicit `name=/path` lines when the layout is different. Each input is
