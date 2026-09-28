@@ -280,6 +280,19 @@ out, or renaming a burst appends a *correction* that references the decision id.
 buckets decisions by confidence and shows accuracy per bucket — for a calibrated model the two
 match. This is the actual learning objective of the project: does "0.8" mean 0.8 on my data?
 
+## 8b. Testing policy (September 2026)
+
+Everything runs in Docker (`docker compose -f docker-compose.test.yml run --rm tests`), nothing
+on the host. The test image's default command lints, runs the whole suite and fails below 99 %
+line and branch coverage of `app/`; it stands at 100 %, with dead code removed rather than
+covered. Beyond the Python: one browser session executes `ui.js` under Chromium's coverage
+profiler (every function, 99 %+ of the code; page-initiated navigations are answered with 204
+so the document survives for the snapshot), every template branch is rendered and asserted,
+every way a file can move is checked against dry-run, live-with-switches-off and each switch,
+scale tests print latencies for 20 000 records and a 3 000-photo proposal, and CI starts the
+published runtime image and calls every page. The rule when a bug is fixed: the test that
+would have caught it lands in the same commit.
+
 ## 9. Open points
 
 - Home radius vs. transit: a photo in town on the way out is "local", so it starts the run
