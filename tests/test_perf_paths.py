@@ -118,3 +118,27 @@ def test_reapplying_the_same_trip_keeps_one_manifest(cfg, library):
     assert len(m["photos"]) == 9 and m["proposal_id"] == "t2"
     assert mover.undo(cfg, folder) == 9
     assert all(Path(p["path"]).exists() for p in trip["photos"][:9])
+
+
+def test_record_written_during_a_full_reload_is_not_lost(cfg, library, monkeypatch):
+    """The cache warm-up or a page may be reloading every record while the scan (or a test)
+    writes a new one; that record's change note used to be wiped when the reload finished."""
+    from datetime import timedelta
+
+    from tests.synth import HOME, T0
+    cluster.load_records(cfg)
+    real = cluster._load_records
+    late: list[Path] = []
+
+    def load_and_get_interrupted(c):
+        recs, skipped = real(c)
+        late.append(library.photo(Path(cfg.inboxes[0]["path"]), T0 + timedelta(days=200), HOME))   # during the load
+        return recs, skipped
+    monkeypatch.setattr(cluster, "_load_records", load_and_get_interrupted)
+    ingest.changed["all"] = True
+    recs, _ = cluster.load_records(cfg)
+    assert str(late[0]) not in {r["path"] for r in recs}                   # the load did not see it
+    assert str(late[0]) in ingest.changed["paths"]                          # but it is still noted
+    monkeypatch.setattr(cluster, "_load_records", real)
+    recs, _ = cluster.load_records(cfg)
+    assert str(late[0]) in {r["path"] for r in recs}                       # and patched in next time
