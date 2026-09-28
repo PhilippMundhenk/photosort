@@ -25,7 +25,7 @@ from tests.e2e.test_browser import ROOT, _proposals, _status, _wait_pending, mak
 pw = pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-MIN_SHARE = 0.97
+MIN_SHARE = 0.99
 STATUS = re.compile(r"/api/status$")
 
 
@@ -40,6 +40,7 @@ def server(tmp_path_factory):
         lib.photo(inbox, day + timedelta(days=(i % 14), minutes=10 + (i // 14) * 9), synth.LISBON)
     for i in range(1500):                                                 # everyday, four a day, no bursts
         lib.photo(inbox, synth.T0 - timedelta(days=400) + timedelta(hours=6 * i), synth.HOME)
+    lib.video(inbox, synth.T0 + timedelta(days=5, hours=12), synth.LISBON)   # a video inside the trip
     with serve(base, lib) as s:
         yield s
 
@@ -78,6 +79,9 @@ def _share(entries: list[dict], source: str) -> tuple[float, list[str]]:
     share = sum(hit[i] for i in code) / max(1, len(code))
     lines = source.splitlines()
     never = []
+    missed_lines = sorted({source[:i].count(chr(10)) + 1 for i in code if not hit[i]})
+    for n in missed_lines[:40]:
+        never.append(f"line {n} not fully executed: {lines[n - 1].strip()[:90]}")
     for (name, off), n in sorted(runs.items(), key=lambda kv: kv[0][1]):
         if n == 0:
             line = source[:off].count(chr(10)) + 1
@@ -172,16 +176,35 @@ async def _session(url: str, data: Path, cfg) -> list[dict]:
         await figs.nth(2).locator(".pick").click()
         await expect(trip).to_have_class(re.compile(r"unsaved"))
         await page.unroute(toggle)
+        await page.route(toggle, lambda route: route.fulfill(status=500, body="down"))   # an error answer
         await figs.nth(2).locator(".pick").click()
+        await page.wait_for_timeout(300)
+        await page.unroute(toggle)
+        await page.route(toggle, lambda route: route.fulfill(status=200, content_type="application/json",
+                                                             body="{}"))                 # an answer without paths
+        await figs.nth(3).locator(".pick").click()
         await expect(trip).not_to_have_class(re.compile(r"unsaved"))
+        await page.unroute(toggle)
+        await figs.nth(3).locator(".pick").click()                            # for real now: out and back in
+        await figs.nth(3).locator(".pick").click()
+        await figs.nth(2).locator(".pick").click()
+        await figs.nth(2).locator(".pick").click()
+        _wait(lambda: _proposals(data)["trip"]["excluded"] == [])
         await figs.nth(0).hover()
         await figs.nth(0).locator(".view").click()
+        await page.keyboard.press("ArrowLeft")                                # before the first: stays
+        await expect(page.locator(".viewer .v-caption")).to_contain_text("(1/")
         await page.locator(".viewer .v-next").click()
         await page.locator(".viewer .v-prev").click()
         await page.keyboard.press("ArrowRight")
         await page.keyboard.press("ArrowLeft")
         await page.locator(".viewer").click(position={"x": 5, "y": 5})
         await expect(page.locator(".viewer")).to_be_hidden()
+        video = trip.locator("figure", has=page.locator(".badge", has_text="video")).first
+        await video.hover()
+        await video.locator(".view").click()                                  # a video in the viewer
+        await expect(page.locator(".viewer video")).to_have_attribute("src", re.compile(r"^/media"))
+        await page.keyboard.press("Escape")
         await figs.nth(0).locator(".view").click()
         await page.locator(".viewer .v-close").click()
         await figs.nth(0).locator(".view").click()
@@ -230,6 +253,7 @@ async def _session(url: str, data: Path, cfg) -> list[dict]:
         # approve all with names, then the moved cards
         await go(url + "/review")
         await page.locator(f"#{props['home']['id']} input[name=name]").fill("2026-06-30 Hannas Geburtstag")
+        await page.locator(f"#{props['local']['id']} input[name=remember_place]").check()   # travels along
         page.once("dialog", accept)
         await page.get_by_role("button", name=re.compile(r"Approve & move all")).click()
         await follow()

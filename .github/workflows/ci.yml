@@ -33,6 +33,29 @@ jobs:
         run: docker run --rm photosort-test:local
       - name: Smoke script
         run: docker run --rm photosort-test:local python -m tests.smoke
+      - name: Build the runtime image (this platform)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          load: true
+          tags: photosort:ci
+          cache-from: type=gha,scope=photosort
+      - name: The runtime image starts, scans an empty inbox and serves every page
+        run: |
+          mkdir -p /tmp/ps/data /tmp/ps/photos/inbox/phone /tmp/ps/photos/sorted
+          chmod -R a+rwx /tmp/ps
+          docker run -d --name ps -p 8080:8080 -e TZ=Europe/Berlin -e PHOTOSORT_DATA=/data \
+            -v /tmp/ps/data:/data -v /tmp/ps/photos:/photos --user 1000:1000 photosort:ci
+          for i in $(seq 1 30); do curl -fs localhost:8080/api/status >/dev/null && break; sleep 1; done
+          curl -fs localhost:8080/api/status | grep -q '"dry_run": true'
+          for p in / /review /everyday /clusters /log /settings; do curl -fso /dev/null -w "%{http_code} $p\n" localhost:8080$p | grep -q '^200'; done
+          curl -fs -X POST localhost:8080/run >/dev/null || true
+          sleep 20
+          curl -fs localhost:8080/api/status | grep -q '"runs": 1'
+          test -f /tmp/ps/data/config.yaml
+          docker logs ps | grep -q "executed successfully"
+          docker rm -f ps
 
   images:
     name: Build ${{ matrix.image.name }}

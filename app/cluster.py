@@ -40,6 +40,9 @@ UNCERTAIN_BELOW = 0.7
 
 _save_lock = threading.Lock()
 _props_cache: dict = {"stamp": None, "text": "", "counts": None}
+# Every read-modify-write of the proposals: the pages' actions and the run's recompute. Without
+# it a click saved while the run was between reading and writing the file was overwritten.
+proposals_lock = threading.RLock()
 
 
 def _props_text() -> str:
@@ -670,10 +673,14 @@ def run(cfg: Config) -> dict:
     global busy
     busy = False                                  # the pipeline itself always sees fresh records
     now = datetime.now(timezone.utc)
-    old = load_proposals()
-    _, skipped = load_records(cfg)
+    _, skipped = load_records(cfg)                # reading the records may take seconds: outside the lock
     recs = records_filled(cfg)
+    with proposals_lock:                          # from reading the file to writing it: no click is lost
+        return _run_locked(cfg, now, skipped, recs)
 
+
+def _run_locked(cfg: Config, now: datetime, skipped: list[dict], recs: list[dict]) -> dict:
+    old = load_proposals()
     # photos the user rejected from a cluster stay out of clustering (they become everyday)
     rejected = {p["path"] for pr in old.values() if pr["status"] == "rejected" for p in pr["photos"]}
     recs = [r for r in recs if r["path"] not in rejected]

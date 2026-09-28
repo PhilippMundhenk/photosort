@@ -51,7 +51,7 @@ _state = {"last_run": None, "last_stats": {}, "running": False, "error": None, "
 # over a share take a while) so the request returns at once. Progress is shown on the review page.
 _apply_queue: queue.Queue = queue.Queue()
 _applying: dict[str, dict] = {}
-_props_lock = threading.Lock()                # every read-modify-write of proposals.json from a request
+_props_lock = cluster.proposals_lock          # every read-modify-write of proposals.json, pages and run alike
 
 
 EVERYDAY_JOB = "everyday"

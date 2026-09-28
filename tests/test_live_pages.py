@@ -210,3 +210,35 @@ def test_a_failed_move_is_not_retried_by_every_run(client, library, monkeypatch)
     client.post(f"/proposal/{local['id']}/approve")                   # retry: tried once more
     main.wait_for_apply()
     assert len(calls) == 2
+
+
+def test_concurrent_toggles_from_many_tabs_during_a_run_end_consistent(client, library):
+    """Eight 'tabs' toggle different photos of the same proposal while the pipeline runs; every
+    click must land exactly once and nothing may error, whatever the interleaving."""
+    import threading
+
+    cfg = config.load()
+    cfg.dry_run = True
+    config.save(cfg)
+    main.run_pipeline("test")
+    trip = _kind("trip")
+    paths = [p["path"] for p in trip["photos"][:40]]
+    errors: list = []
+
+    def tab(i: int):
+        mine = paths[i::8]
+        for path in mine:
+            r = client.post(f"/proposal/{trip['id']}/toggle", data={"path": path}, headers=FETCH)
+            if r.status_code != 200:
+                errors.append((i, r.status_code))
+    runner = threading.Thread(target=main.run_pipeline, args=("schedule",))
+    tabs = [threading.Thread(target=tab, args=(i,)) for i in range(8)]
+    runner.start()
+    for t in tabs:
+        t.start()
+    for t in tabs + [runner]:
+        t.join(60)
+    main.wait_for_apply()
+    assert not errors
+    assert sorted(_kind("trip")["excluded"]) == sorted(paths)                # each photo toggled exactly once
+    assert client.get("/review").status_code == 200
