@@ -740,6 +740,10 @@ def run(cfg: Config) -> dict:
         if prev and prev["status"] in ("approved", "rejected", "applied"):
             pr["status"] = prev["status"]
             pr["name"] = prev.get("name", pr["name"])
+            pr["name_edited"] = bool(prev.get("name_edited"))   # a named burst stays out of _unnamed/
+            pr["auto"] = bool(prev.get("auto"))                 # (a run between approve and move lost both)
+            if prev.get("error"):
+                pr["error"] = prev["error"]
         elif prev and prev.get("name_edited"):
             pr["name"], pr["name_edited"] = prev["name"], True
         have = {p["path"] for p in pr["photos"]}

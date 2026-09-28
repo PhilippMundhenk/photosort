@@ -519,8 +519,7 @@ def scan(cfg: Config, force: bool = False, progress=None) -> dict:
     return stats
 
 
-def write_xmp_keywords(photo: Path, keywords: list[str]) -> None:
-    """Best effort: keep an .xmp sidecar with photosort/* keywords for other tools."""
+def _xmp_args(photo: Path, keywords: list[str]) -> list[str]:
     xmp = photo.with_suffix(".xmp")
     # remove-then-add per keyword: exiftool's NoDups only dedupes within the values being written,
     # so a plain += would append the same keyword again on every run
@@ -528,7 +527,29 @@ def write_xmp_keywords(photo: Path, keywords: list[str]) -> None:
     for k in keywords:
         args += [f"-XMP-dc:Subject-=photosort/{k}", f"-XMP-dc:Subject+=photosort/{k}"]
     if xmp.exists():
-        cmd = ["exiftool", "-q", "-overwrite_original", *args, str(xmp)]
-    else:
-        cmd = ["exiftool", "-q", "-o", str(xmp), *args, str(photo)]
-    subprocess.run(cmd, capture_output=True)
+        return ["-q", "-overwrite_original", *args, str(xmp)]
+    return ["-q", "-o", str(xmp), *args, str(photo)]
+
+
+def write_xmp_keywords(photo: Path, keywords: list[str]) -> None:
+    """Best effort: keep an .xmp sidecar with photosort/* keywords for other tools."""
+    write_xmp_keywords_batch([(photo, keywords)])
+
+
+def write_xmp_keywords_batch(items: list[tuple[Path, list[str]]]) -> None:
+    """One exiftool process for many photos (-execute separates the jobs): starting exiftool
+    costs a good part of a second, and one start per moved file made a move of 87 files take
+    minutes over a share."""
+    if not items:
+        return
+    for i in range(0, len(items), 500):
+        chunk = items[i:i + 500]
+        cmd = ["exiftool"]
+        for j, (photo, keywords) in enumerate(chunk):
+            if j:
+                cmd.append("-execute")
+            cmd += _xmp_args(photo, keywords)
+        try:
+            subprocess.run(cmd, capture_output=True)
+        except FileNotFoundError:
+            return

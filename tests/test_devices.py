@@ -140,3 +140,18 @@ def test_identity_needs_at_least_half_of_the_old_proposal(cfg, library):
     cluster._keep_identities(old, new)
     assert set(new) == {"m123"}
     assert json.loads(cluster.PROPOSALS_PATH.read_text(encoding="utf-8")).keys() == props.keys()   # nothing saved
+
+
+def test_named_burst_keeps_its_name_flag_through_a_run_after_approval(cfg, library):
+    """Approve a burst you named, let a scan run before the worker moves it: the target must
+    still be <root>/<name>, not _unnamed/<name> (the flag was lost in the carry-over)."""
+    from app import mover
+    cluster.run(cfg)
+    props = cluster.load_proposals()
+    home = next(p for p in props.values() if p["kind"] == "home")
+    home["name"], home["name_edited"], home["status"] = "2026-06-29 Hannas Geburtstag", True, "approved"
+    cluster.save_proposals(props)
+    cluster.run(cfg)                                                   # a scan between approve and move
+    again = cluster.load_proposals()[home["id"]]
+    assert again["status"] == "approved" and again["name_edited"] is True
+    assert mover.target_folder(cfg, again) == Path(cfg.root) / "2026-06-29 Hannas Geburtstag"

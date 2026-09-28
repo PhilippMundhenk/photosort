@@ -398,3 +398,32 @@ def test_manifest_json_is_valid_and_complete(cfg, library):
     m = json.loads((folder / mover.MANIFEST).read_text(encoding="utf-8"))
     assert set(m) >= {"name", "kind", "start", "end", "proposal_id", "decision", "applied", "label", "photos", "mode"}
     assert set(m["photos"][0]) == {"src", "dst", "conf", "zone", "media", "source", "inbox", "uncertain", "in_review"}
+
+
+def test_move_that_leaves_the_original_behind_fails_and_removes_the_copy(cfg, library, monkeypatch):
+    """Across mounts a move is copy + delete; a read-only inbox can keep the original while the
+    share reports success. That must not pass as a move (the photo would exist twice and be
+    indexed again): the copy is removed, the move fails, and what moved before stays undoable."""
+    import shutil
+    cluster.run(cfg)
+    local = next(p for p in cluster.load_proposals().values() if p["kind"] == "local")
+    real = shutil.move
+    calls = []
+
+    def copy_only(src, dst):
+        calls.append(src)
+        if len(calls) <= 3:
+            return real(src, dst)                                  # the first three really move
+        shutil.copy2(src, dst)                                     # then the delete "succeeds" silently
+        return dst
+    monkeypatch.setattr(shutil, "move", copy_only)
+    with pytest.raises(PermissionError, match="still there after the move"):
+        mover.apply(cfg, local, reviewed=True)
+    folder = mover.target_folder(cfg, local)
+    srcs = [Path(p["path"]) for p in local["photos"]]
+    assert all(p.exists() for p in srcs[3:])                        # the originals are untouched
+    assert len([f for f in folder.rglob("*.jpg")]) == 3             # the fourth copy was removed again
+    m = mover.read_manifest(folder)
+    assert m and m["partial"] is True and len(m["photos"]) == 3     # the part that moved is recorded
+    monkeypatch.setattr(shutil, "move", real)
+    assert mover.undo(cfg, folder) == 3 and all(p.exists() for p in srcs)

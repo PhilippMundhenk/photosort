@@ -234,3 +234,25 @@ def test_write_xmp_keywords_creates_and_appends(tmp_path):
     out = subprocess.run(["exiftool", "-json", "-XMP-dc:Subject", str(xmp)], capture_output=True, text=True)
     subjects = json.loads(out.stdout)[0]["Subject"]
     assert sorted(subjects) == ["photosort/cluster/2026-06 Lisbon", "photosort/zone/away"]
+
+
+@pytest.mark.skipif(shutil.which("exiftool") is None, reason="exiftool not installed")
+def test_xmp_keywords_for_many_photos_use_one_exiftool_process(tmp_path, monkeypatch):
+    photos = []
+    for i in range(3):
+        p = tmp_path / f"s{i}.png"
+        _png_1x1(p)
+        photos.append(p)
+    runs = []
+    real = subprocess.run
+
+    def counting(cmd, *a, **k):
+        runs.append(cmd)
+        return real(cmd, *a, **k)
+    monkeypatch.setattr(subprocess, "run", counting)
+    ingest.write_xmp_keywords_batch([(p, ["zone/away", f"cluster/c{i}"]) for i, p in enumerate(photos)])
+    assert len([c for c in runs if c and c[0] == "exiftool"]) == 1 and runs[0].count("-execute") == 2
+    for i, p in enumerate(photos):
+        out = real(["exiftool", "-json", "-XMP-dc:Subject", str(p.with_suffix(".xmp"))], capture_output=True, text=True)
+        assert sorted(json.loads(out.stdout)[0]["Subject"]) == [f"photosort/cluster/c{i}", "photosort/zone/away"]
+    ingest.write_xmp_keywords_batch([])                                # nothing to do, no process

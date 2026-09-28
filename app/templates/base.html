@@ -27,6 +27,7 @@
   <a id="busy-hint" href="" hidden></a>
 </div>
 <main>
+{% if mount_note and page in ('dashboard', 'review', 'settings') %}<div class="warnbox"><b>Slow moves:</b> {{ mount_note }}</div>{% endif %}
 {% block content %}{% endblock %}
 </main>
 <script src="/static/ui.js?v={{ v }}" defer></script>

@@ -68,8 +68,18 @@ def _transfer(cfg: Config, src: Path, dst_dir: Path, copy: bool = False) -> Path
     _guard(cfg)
     dst_dir.mkdir(parents=True, exist_ok=True)
     dst = _unique(dst_dir / src.name)
+    size = src.stat().st_size
     op = shutil.copy2 if copy else shutil.move      # move = rename on same fs; copy+delete across mounts
     op(str(src), str(dst))
+    # a move across mounts is a copy followed by a delete; on a read-only inbox the delete can
+    # fail silently (the share says yes and keeps the file) and the photo would then exist twice
+    # and be indexed again as new. Verify, and undo the copy rather than leave a duplicate.
+    if not dst.exists() or dst.stat().st_size != size:
+        raise OSError(f"{dst} is missing or incomplete after the transfer")
+    if not copy and src.exists():
+        dst.unlink(missing_ok=True)
+        raise PermissionError(f"{src} is still there after the move (inbox mounted read-only?); "
+                              f"the copy in {dst_dir} was removed again")
     ingest.move_sidecar(src, dst, cfg, keep_source=copy)
     xmp = src.with_suffix(".xmp")
     if xmp.exists():
@@ -147,6 +157,7 @@ def apply(cfg: Config, pr: dict, reviewed: bool = False, progress=None) -> dict:
     copy = cfg.copy_instead_of_move
     excluded = set(pr.get("excluded", []))
     moved = []
+    xmp_jobs: list[tuple[Path, list[str]]] = []
     total = len(pr["photos"])
     for i, p in enumerate(pr["photos"], 1):
         if progress:
@@ -158,16 +169,31 @@ def apply(cfg: Config, pr: dict, reviewed: bool = False, progress=None) -> dict:
         in_review = bool(p.get("uncertain")) and not reviewed
         if in_review:
             dst_dir = dst_dir / cfg.review_dir
-        dst = _transfer(cfg, src, dst_dir, copy)
+        try:
+            dst = _transfer(cfg, src, dst_dir, copy)
+        except Exception:
+            if moved:                         # what did move stays undoable: a manifest for the part done
+                earlier = read_manifest(folder) or {}
+                write_manifest(folder, {"name": pr["name"], "kind": pr["kind"], "start": pr["start"],
+                                        "end": pr["end"], "proposal_id": pr["id"], "decision": pr["decision"],
+                                        "applied": _now(), "mode": _mode(cfg), "reviewed": reviewed,
+                                        "label": earlier.get("label"), "partial": True,
+                                        "corrections": earlier.get("corrections", []),
+                                        "photos": earlier.get("photos", []) + moved})
+            raise
         _settle(cfg, dst, {"cluster": pr["name"],
                            "decision": {"by": pr["decision"]["by"], "conf": p["conf"], "kind": pr["kind"]}})
         if copy:
             _mark_source(cfg, src, dst, pr["name"])
         if cfg.write_xmp_sidecar:
-            ingest.write_xmp_keywords(dst, [f"zone/{p['zone']}", f"cluster/{pr['name']}"])
+            xmp_jobs.append((dst, [f"zone/{p['zone']}", f"cluster/{pr['name']}"]))
         moved.append({"src": p["path"], "dst": str(dst), "conf": p["conf"], "zone": p["zone"],
                       "media": p.get("media", "photo"), "source": p.get("source"), "inbox": p.get("inbox"),
                       "uncertain": bool(p.get("uncertain")), "in_review": in_review})
+    if xmp_jobs:
+        if progress:
+            progress(total, total, {"file": f"keywords for {len(xmp_jobs)} files", "bytes": 0, "since": time.time()})
+        ingest.write_xmp_keywords_batch(xmp_jobs)               # one exiftool start, not one per file
     if progress:
         progress(total, total, None)
     manifest = {
@@ -350,6 +376,33 @@ def put_back(cfg: Config, folder: Path, src: Path) -> dict | None:
     write_manifest(folder, m)
     events.log("correction_undone", name=folder.name, photo=dst.name, proposal=m.get("proposal_id"))
     return entry
+
+
+_mount_cache: dict = {"key": None, "at": 0.0, "note": None}
+
+
+def cross_mount_note(cfg: Config) -> str | None:
+    """A sentence for the pages when an inbox and the sorted root are on different mounts:
+    rename() cannot cross a mount point (even two bind mounts of the same share), so every
+    move becomes a copy through the container and back over the network. 87 files took
+    minutes that way; on one mount a move is instant."""
+    key = (cfg.root, tuple(str(f) for _, f in inbox_dirs(cfg)))
+    if _mount_cache["key"] == key and time.time() - _mount_cache["at"] < 300:
+        return _mount_cache["note"]
+    note = None
+    try:
+        root = Path(cfg.root)
+        if root.exists():
+            dev = root.stat().st_dev
+            apart = [str(f) for _, f in inbox_dirs(cfg) if f.exists() and f.stat().st_dev != dev]
+            if apart:
+                note = (f"{', '.join(apart)} and {cfg.root} are on different mounts: every move is a copy "
+                        f"through the container and back over the network. Mount their common parent once "
+                        f"(PHOTOS_BASE in .env) so a move is a rename.")
+    except OSError:
+        note = None
+    _mount_cache.update(key=key, at=time.time(), note=note)
+    return note
 
 
 _clusters_cache: dict = {"key": None, "at": 0.0, "value": []}
