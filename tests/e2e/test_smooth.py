@@ -51,7 +51,7 @@ def test_run_finishing_keeps_what_the_user_is_doing(server, page):
     trip.locator("details summary").click()
     figs = trip.locator("figure")
     for i in range(4):                                                  # four quick clicks, no waiting
-        figs.nth(i).locator("button.pick").click()
+        figs.nth(i).locator(".pick").click()
     for i in range(4):
         expect(figs.nth(i)).to_have_class(re.compile(r"(^|\s)excluded(\s|$)"))
     trip.locator("input[name=name]").fill("2026-06 Portugal")
@@ -81,7 +81,7 @@ def test_run_finishing_keeps_what_the_user_is_doing(server, page):
     trip.locator("details summary").click()
     for i in range(4):                                                  # server-side state, as shown after reload
         expect(trip.locator("figure").nth(i)).to_have_class(re.compile(r"(^|\s)excluded(\s|$)"))
-        trip.locator("figure").nth(i).locator("button.pick").click()   # and back in
+        trip.locator("figure").nth(i).locator(".pick").click()         # and back in
     t0 = time.time()
     while _proposals(data)["trip"]["excluded"]:
         assert time.time() - t0 < 10
@@ -108,13 +108,13 @@ def test_dashboard_reloads_itself_other_pages_do_not(server, page):
     page.wait_for_timeout(1000)                                         # the reload has committed
     page.goto(url + "/everyday")
     page.evaluate("window.__stay = 1")
-    first = page.locator("input[name=paths]").first
-    first.check()
+    first = page.locator(".thumbs figure").first
+    first.locator(".pick").click()
     expect(page.locator("#selcount")).to_have_text("1")
     _run_and_wait(url)
     expect(page.locator("#busy-hint")).to_be_visible()
     assert page.evaluate("window.__stay") == 1
-    expect(first).to_be_checked()                                       # the tick survived the run
+    expect(first).to_have_class(re.compile(r"(^|\s)selected(\s|$)"))     # the tick survived the run
     expect(page.locator("#selcount")).to_have_text("1")
 
 
@@ -185,7 +185,7 @@ def test_large_library_stays_responsive(big_server, page):
     figs = trip.locator("figure")
     t0 = time.time()
     for i in range(8):
-        figs.nth(i).locator("button.pick").click()
+        figs.nth(i).locator(".pick").click()
     for i in range(8):
         expect(figs.nth(i)).to_have_class(re.compile(r"(^|\s)excluded(\s|$)"))
     assert time.time() - t0 < 5                                         # instant on the page

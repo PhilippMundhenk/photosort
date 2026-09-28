@@ -145,7 +145,7 @@ docker compose -f docker-compose.test.yml run --rm tests pytest -m e2e -v
 | Suite | Where | What |
 |---|---|---|
 | unit | `tests/test_{geo,config,ingest,events,cluster,devices,mover,video,thumbs,manual,sidecars,perf_paths}.py` | rules, two devices, coercion, records, moving/copying, videos, thumbnails (helper process), manual clusters, caches and hot paths |
-| web e2e | `tests/test_app.py`, `tests/test_live_pages.py` | every page and form action through FastAPI's TestClient; batched clicks, a run finishing mid-review, the auto-move switches |
+| web e2e | `tests/test_app.py`, `tests/test_live_pages.py`, `tests/test_moving_matrix.py` | every page and form action through FastAPI's TestClient; batched clicks, a run finishing mid-review; every way a file can move against dry-run, live-with-switches-off and each switch |
 | browser e2e | `tests/e2e/test_browser.py`, `tests/e2e/test_smooth.py` | real uvicorn + headless Chromium (Playwright): the review flow; no reload while the user works, hidden-tab polling, a 4000-photo library |
 | smoke | `python -m tests.smoke` | one synthetic end-to-end run without pytest |
 

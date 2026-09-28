@@ -14,15 +14,17 @@
   <div class="muted small">{{ folder }}</div>
 </div>
 <div class="card">
+  {# one form per action for the whole page (a password manager watches every form and field) #}
+  <form method="post" action="/cluster/move_out" id="move_out" hidden><input type="hidden" name="folder" value="{{ folder }}"><input type="hidden" name="photo"></form>
+  <form method="post" action="/cluster/put_back" id="put_back" hidden><input type="hidden" name="folder" value="{{ folder }}"><input type="hidden" name="src"></form>
+  <noscript><div class="warnbox">Removing and putting back single photos needs JavaScript.</div></noscript>
   <div class="thumbs">
   {% for p in m.photos %}
     <figure class="{{ 'uncertain' if p.uncertain }}">
       <img src="/thumb?path={{ p.dst|urlencode }}" loading="lazy" title="{{ p.dst }} · conf {{ p.conf }}" alt="">
-      <button class="view" data-view="/media?path={{ p.dst|urlencode }}" data-type="{{ p.media or 'photo' }}" data-title="{{ p.dst.rsplit('/',1)[-1].rsplit('\\',1)[-1] }} · conf {{ p.conf }}" title="view full size">&#x2921;</button>
+      <span class="view" role="button" tabindex="0" data-view="/media?path={{ p.dst|urlencode }}" data-type="{{ p.media or 'photo' }}" data-title="{{ p.dst.rsplit('/',1)[-1].rsplit('\\',1)[-1] }} · conf {{ p.conf }}" title="view full size">&#x2921;</span>
       <figcaption>{% if p.media == 'video' %}<span class="badge">video</span> {% endif %}{{ p.zone }} {{ p.conf }}{% if p.source %} · {{ p.source }}{% endif %}</figcaption>
-      <form method="post" action="/cluster/move_out" class="inline" onsubmit="return confirm('Remove this photo from the cluster and move it back to the inbox?')">
-        <input type="hidden" name="folder" value="{{ folder }}"><input type="hidden" name="photo" value="{{ p.dst }}">
-        <button class="secondary small" title="moves the photo back to the inbox; it can be put back from the Corrections list below">remove from cluster</button></form>
+      <span class="act" role="button" tabindex="0" data-act="move_out" data-field="photo" data-value="{{ p.dst }}" data-confirm="Remove this photo from the cluster and move it back to the inbox?" title="moves the photo back to the inbox; it can be put back from the Corrections list below">remove from cluster</span>
     </figure>
   {% endfor %}
   </div>
@@ -34,9 +36,7 @@
     <figure>
       <img src="/thumb?path={{ c.src|urlencode }}" loading="lazy" alt="">
       <figcaption>{{ c.src.rsplit('/',1)[-1].rsplit('\\',1)[-1] }}</figcaption>
-      <form method="post" action="/cluster/put_back" class="inline">
-        <input type="hidden" name="folder" value="{{ folder }}"><input type="hidden" name="src" value="{{ c.src }}">
-        <button class="secondary small" title="undo: move it back into this cluster">put back</button></form>
+      <span class="act" role="button" tabindex="0" data-act="put_back" data-field="src" data-value="{{ c.src }}" title="undo: move it back into this cluster">put back</span>
     </figure>
   {% endfor %}
   </div>

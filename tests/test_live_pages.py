@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app import cluster, config, main
+from app import cluster, config, events, main, mover
 from tests import synth
 
 
@@ -107,19 +107,56 @@ def test_review_page_offers_reload_instead_of_reloading(client, library):
     assert js.count("location.reload()") == 2                           # the offer's click handler, and that one
 
 
-def test_pages_are_light_on_forms_for_password_managers(client, library):
-    """Password-manager extensions re-scan every form and field on each DOM change; a form per
-    photo (hundreds) made Firefox warn that the extension slows the page down."""
+def test_pages_have_no_form_control_per_photo(client, library):
+    """Password-manager extensions watch every input and button on the page and re-scan them on
+    every change and scroll; one per photo (hundreds) made Firefox flag the extension. Photos
+    are plain elements on every page, however many there are."""
     cfg = config.load()
     cluster.run(cfg)
+    props = cluster.load_proposals()
+    pending = [p for p in props.values() if p["status"] in ("pending", "ongoing")]
+    n_photos = sum(p["n"] for p in pending)
     html = client.get("/review").text
-    pending = sum(1 for p in cluster.load_proposals().values() if p["status"] in ("pending", "ongoing"))
-    assert html.count("data-toggle") == pending                        # one toggle form per proposal
-    assert html.count('name="path"') == sum(p["n"] for p in cluster.load_proposals().values()
-                                            if p["status"] in ("pending", "ongoing"))
-    assert html.count('name="path"') == html.count('name="path" value="') and "data-bwignore" in html
-    assert html.count("<form") < pending * 4 + 5                       # rename, approve, reject, toggle per card
+    assert html.count("<figure") == n_photos and n_photos > 50
+    assert html.count("<input") <= 3 * len(pending) + 3               # name, remember-place per card; not per photo
+    assert html.count("<button") <= 3 * len(pending) + 3               # approve, reject per card; approve all, run
+    assert html.count("<form") <= 3 * len(pending) + 3
     everyday = client.get("/everyday").text
-    assert everyday.count('name="paths"') == everyday.count('name="paths" value="')
-    assert everyday.count("data-bwignore") >= everyday.count('name="paths"')
-    assert everyday.count("<form") <= 3                                # move-all, assign
+    assert everyday.count("<figure") > 5
+    assert everyday.count("<input") <= 3 and everyday.count("<button") <= 4 and everyday.count("<form") <= 3
+    local = next(p for p in pending if p["kind"] == "local")
+    mover.apply(cfg, local, reviewed=True)
+    page = client.get("/clusters/view", params={"folder": str(mover.target_folder(cfg, local))}).text
+    assert page.count("<figure") == local["n"]
+    assert page.count("<form") <= 5 and page.count("<button") <= 4 and page.count("<input") <= 8   # not per photo
+
+
+def test_retry_after_a_failed_move_moves(client, library, monkeypatch):
+    """A move that failed (e.g. the sorted root not writable) leaves the proposal approved with
+    an error; the retry button must queue it again, and once the cause is fixed it moves."""
+    cfg = config.load()
+    cfg.dry_run = False
+    config.save(cfg)
+    cluster.run(cfg)
+    local = _kind("local")
+    real = mover.apply
+    calls = []
+
+    def failing(*a, **k):
+        calls.append(1)
+        if len(calls) == 1:
+            raise PermissionError(13, "Permission denied", str(Path(cfg.root) / local["name"]))
+        return real(*a, **k)
+    monkeypatch.setattr(mover, "apply", failing)
+    client.post(f"/proposal/{local['id']}/approve")
+    main.wait_for_apply()
+    pr = cluster.load_proposals()[local["id"]]
+    assert pr["status"] == "approved" and "Permission denied" in pr["error"]
+    assert "failed" in client.get("/review").text and "retry" in client.get("/review").text
+    assert client.get("/api/status").json()["queue"] == {local["id"]: "failed: " + pr["error"]}
+    client.post(f"/proposal/{local['id']}/approve")                   # the retry button
+    main.wait_for_apply()
+    assert len(calls) == 2
+    assert cluster.load_proposals()[local["id"]]["status"] == "applied"
+    assert not any(Path(p["path"]).exists() for p in local["photos"])
+    assert [e for e in events.read(limit=50) if e.get("action") == "retry"]

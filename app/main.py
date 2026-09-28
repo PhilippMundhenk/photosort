@@ -490,9 +490,13 @@ def _proposal_action(pid: str, action: str, form: dict, request: Request):
     # click must not be lost to a race with the autosave request
     if action in ("approve", "reject") and form.get("name") is not None:
         _rename(cfg, pid, pr, str(form["name"]), bool(form.get("remember_place")))
-    if action == "approve" and pr["status"] in ("pending", "ongoing"):
+    if action == "approve" and (pr["status"] in ("pending", "ongoing") or
+                                (pr["status"] == "approved" and pid not in _applying)):
+        # pending: approve; approved with an error (the move failed): retry - the button did
+        # nothing before because the proposal was already "approved"
+        retry = pr["status"] == "approved"
         pr["status"], pr["error"] = "approved", None  # the apply worker moves the files
-        events.log("review", proposal=pid, action="approve", name=pr["name"])
+        events.log("review", proposal=pid, action="retry" if retry else "approve", name=pr["name"])
         cluster.save_proposals(props)
         queue_apply(pid)
     elif action == "reject":

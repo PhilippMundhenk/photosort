@@ -29,6 +29,7 @@
 </div>
 
 {% if days %}
+<noscript><div class="warnbox">Selecting photos needs JavaScript.</div></noscript>
 <form method="post" action="/everyday/assign" id="assign">
 <div class="card sticky">
   <div class="row">
@@ -48,14 +49,14 @@
 {% for d in days %}
 <div class="card" data-day="{{ d.date }}">
   <div class="row">
-    <label class="small" style="margin:0"><input type="checkbox" data-select-all data-bwignore> <b>{{ d.date }}</b> ({{ d.weekday }})</label>
+    <b>{{ d.date }}</b> <span class="small">({{ d.weekday }})</span> <span class="act" role="button" tabindex="0" data-select-all title="select or unselect every photo of this day">all</span>
     <span class="muted small">{{ d.n }} files · {{ d.zones }}{% if d.places %} · {{ d.places }}{% endif %}</span>
   </div>
-  <div class="thumbs">
+  <div class="thumbs" data-select>
   {% for ph in d.photos %}
-    <figure class="{{ 'uncertain' if ph.zone == 'unknown' }}">
-      <label class="pick"><input type="checkbox" name="paths" value="{{ ph.path }}" data-bwignore><img src="/thumb?path={{ ph.path|urlencode }}" loading="lazy" alt=""></label>
-      <button type="button" class="view" data-bwignore data-view="/media?path={{ ph.path|urlencode }}" data-type="{{ ph.media }}" data-title="{{ ph.file }} · {{ ph.ts[:16].replace('T',' ') }} · {{ ph.place or ph.zone }}" title="view full size">&#x2921;</button>
+    <figure class="{{ 'uncertain' if ph.zone == 'unknown' }}" data-path="{{ ph.path }}">
+      <span class="pick" role="checkbox" aria-checked="false" tabindex="0" title="{{ ph.file }} · click to select"><img src="/thumb?path={{ ph.path|urlencode }}" loading="lazy" alt=""></span>
+      <span class="view" role="button" tabindex="0" data-view="/media?path={{ ph.path|urlencode }}" data-type="{{ ph.media }}" data-title="{{ ph.file }} · {{ ph.ts[:16].replace('T',' ') }} · {{ ph.place or ph.zone }}" title="view full size">&#x2921;</span>
       <figcaption>{% if ph.media == 'video' %}<span class="badge">video</span> {% endif %}{{ ph.ts[11:16] }} {{ ph.zone }}{% if ph.place %} · {{ ph.place }}{% endif %}</figcaption>
     </figure>
   {% endfor %}
