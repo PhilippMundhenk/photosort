@@ -38,27 +38,72 @@ UNCERTAIN_BELOW = 0.7
 
 # --- persistence ----------------------------------------------------------------
 
-def load_proposals() -> dict[str, dict]:
-    if PROPOSALS_PATH.exists():
-        try:
-            with _save_lock:
-                return json.loads(PROPOSALS_PATH.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
 _save_lock = threading.Lock()
+_props_cache: dict = {"stamp": None, "text": "", "counts": None}
+
+
+def _props_text() -> str:
+    """The proposals file, read from disk only when it changed (every open tab asks for the
+    status every few seconds; a megabyte of JSON must not be re-read for each of them)."""
+    try:
+        st = PROPOSALS_PATH.stat()
+    except OSError:
+        return ""
+    stamp = (st.st_mtime_ns, st.st_size)
+    with _save_lock:
+        if _props_cache["stamp"] != stamp:
+            try:
+                text = PROPOSALS_PATH.read_text(encoding="utf-8")
+            except OSError:
+                return ""
+            _props_cache.update(stamp=stamp, text=text, counts=None)
+        return _props_cache["text"]
+
+
+def load_proposals() -> dict[str, dict]:
+    """A fresh copy per call (callers edit it and save it back)."""
+    text = _props_text()
+    if not text:
+        return {}
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+
+
+def status_counts() -> dict:
+    """What the status poll needs, computed once per version of the file: pending, ongoing and
+    approved proposals, with the approved ones' error text (failed moves)."""
+    _props_text()
+    with _save_lock:
+        if _props_cache["counts"] is None:
+            props: dict = {}
+            try:
+                props = json.loads(_props_cache["text"]) if _props_cache["text"] else {}
+            except json.JSONDecodeError:
+                props = {}
+            _props_cache["counts"] = {
+                "pending": sum(1 for p in props.values() if p["status"] in ("pending", "ongoing")),
+                "approved": {pid: p.get("error") for pid, p in props.items() if p["status"] == "approved"},
+            }
+        c = _props_cache["counts"]
+        return {"pending": c["pending"], "approved": dict(c["approved"])}
 
 
 def save_proposals(props: dict[str, dict]) -> None:
     """Atomic replace; serialized, with a per-writer temp file (the apply worker and a request
     may save at the same moment, and Windows refuses to replace a file another thread holds)."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(props, ensure_ascii=False, indent=1)
     with _save_lock:
         tmp = PROPOSALS_PATH.with_name(f"proposals.{threading.get_ident()}.tmp")
-        tmp.write_text(json.dumps(props, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.write_text(text, encoding="utf-8")
         tmp.replace(PROPOSALS_PATH)
+        try:
+            st = PROPOSALS_PATH.stat()
+            _props_cache.update(stamp=(st.st_mtime_ns, st.st_size), text=text, counts=None)
+        except OSError:
+            _props_cache.update(stamp=None, text="", counts=None)
 
 
 # --- records -------------------------------------------------------------------
@@ -108,37 +153,44 @@ def load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
     Cached: a full read only when the config changed or ingest says everything changed; a
     changed record (ingest.changed paths: written, moved, deleted, vanished) is re-read on its
     own. Callers get copies."""
-    key = _records_key(cfg)
-    ch = ingest.changed
-    stale_ok = (busy and _records_cache["key"] == key and not ch["all"]
-                and time.time() - _records_cache["built"] < REFRESH_WHILE_BUSY_S)
-    if _records_cache["key"] != key or ch["all"]:
-        recs, skipped = _load_records(cfg)
-        _records_cache.update(key=key, recs=recs, skipped=skipped, filled=None, built=time.time())
-        ch["all"], ch["paths"] = False, set()
-    elif ch["paths"] and not stale_ok:
-        paths = set(ch["paths"])
-        ch["paths"] = set()
-        recs = [r for r in _records_cache["recs"] if r["path"] not in paths]
-        skipped = [r for r in _records_cache["skipped"] if r["path"] not in paths]
-        for path in paths:
-            rec = _record_for(cfg, path)
-            if rec is None:
-                continue
-            (recs if rec.get("ts") else skipped).append(rec)
-        recs.sort(key=lambda r: r["_t"])
-        borrow_video_offsets(recs)
-        _records_cache.update(recs=recs, skipped=skipped, filled=None, built=time.time())
-    return [dict(r) for r in _records_cache["recs"]], [dict(r) for r in _records_cache["skipped"]]
+    with _records_lock:                       # one thread rebuilds or patches; the others wait for it
+        key = _records_key(cfg)
+        ch = ingest.changed
+        stale_ok = (busy and _records_cache["key"] == key and not ch["all"]
+                    and time.time() - _records_cache["built"] < REFRESH_WHILE_BUSY_S)
+        if _records_cache["key"] != key or ch["all"]:
+            recs, skipped = _load_records(cfg)
+            _records_cache.update(key=key, recs=recs, skipped=skipped, filled=None, built=time.time())
+            ch["all"], ch["paths"] = False, set()
+        elif ch["paths"] and not stale_ok:
+            paths = set(ch["paths"])
+            ch["paths"] = set()
+            recs = [r for r in _records_cache["recs"] if r["path"] not in paths]
+            skipped = [r for r in _records_cache["skipped"] if r["path"] not in paths]
+            for path in paths:
+                rec = _record_for(cfg, path)
+                if rec is None:
+                    continue
+                (recs if rec.get("ts") else skipped).append(rec)
+            recs.sort(key=lambda r: r["_t"])
+            borrow_video_offsets(recs)
+            _records_cache.update(recs=recs, skipped=skipped, filled=None, built=time.time())
+        return [dict(r) for r in _records_cache["recs"]], [dict(r) for r in _records_cache["skipped"]]
+
+
+_records_lock = threading.RLock()
 
 
 def records_filled(cfg: Config) -> list[dict]:
-    """load_records plus the neighbour GPS fill, cached the same way (the fill costs ~0.5 s)."""
+    """load_records plus the neighbour GPS fill, cached the same way. The fill runs in one
+    thread at a time: with several tabs polling during a scan, every request used to fill its
+    own copy of twenty thousand records, and the server looked dead."""
     recs, _ = load_records(cfg)
-    if _records_cache["filled"] is None:
-        fill_gps_from_neighbours(cfg, recs)
-        _records_cache["filled"] = recs
-    return [dict(r) for r in _records_cache["filled"]]
+    with _records_lock:
+        if _records_cache["filled"] is None:
+            fill_gps_from_neighbours(cfg, recs)
+            _records_cache["filled"] = recs
+        return [dict(r) for r in _records_cache["filled"]]
 
 
 def _load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
@@ -170,19 +222,35 @@ def _load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
 
 
 def fill_gps_from_neighbours(cfg: Config, recs: list[dict], max_hours: float = 48) -> None:
-    """Photos without GPS inherit position/zone from the closest GPS'd photo in time."""
-    with_gps = [i for i, r in enumerate(recs) if r.get("lat") is not None]
-    if not with_gps:
-        return
+    """Photos without GPS inherit position/zone from the closest GPS'd photo in time, taken by
+    the same device (`source`): while one phone is abroad, a screenshot on the other phone at
+    home must not be placed abroad. Only a device that never records GPS at all borrows from
+    the other devices."""
     import bisect
-    times = [recs[i]["_t"] for i in with_gps]
+    located = [i for i, r in enumerate(recs) if r.get("lat") is not None]
+    if not located:
+        return
+    groups: dict[str | None, list[int]] = {None: located}
+    for i in located:
+        if recs[i].get("source") is not None:
+            groups.setdefault(recs[i]["source"], []).append(i)
+    times = {k: [recs[i]["_t"] for i in v] for k, v in groups.items()}
+
+    def nearest(key, t):
+        idx = groups.get(key)
+        if not idx:
+            return None
+        k = bisect.bisect_left(times[key], t)
+        cands = [idx[j] for j in (k - 1, k) if 0 <= j < len(idx)]
+        best = min(cands, key=lambda j: abs((recs[j]["_t"] - t).total_seconds()))
+        return best if abs((recs[best]["_t"] - t).total_seconds()) <= max_hours * 3600 else None
+
     for r in recs:
         if r.get("lat") is not None:
             continue
-        k = bisect.bisect_left(times, r["_t"])
-        cands = [with_gps[j] for j in (k - 1, k) if 0 <= j < len(with_gps)]
-        best = min(cands, key=lambda j: abs((recs[j]["_t"] - r["_t"]).total_seconds()))
-        if abs((recs[best]["_t"] - r["_t"]).total_seconds()) > max_hours * 3600:
+        key = r.get("source") if r.get("source") in groups else None
+        best = nearest(key, r["_t"])
+        if best is None:
             continue
         src = recs[best]
         r.update({"lat": src["lat"], "lon": src["lon"], "gps_source": f"neighbour:{src['file']}"})
@@ -215,7 +283,59 @@ def borrow_video_offsets(recs: list[dict], max_hours: float = 48) -> None:
 
 def find_excursions(cfg: Config, recs: list[dict]) -> list[list[dict]]:
     """Maximal runs of photos away from home (local or away zone), ended by any photo at home.
-    GPS-less photos ride along inside a run but never start or end one."""
+    GPS-less photos ride along inside a run but never start or end one.
+
+    Each device (`source`, the inbox) is followed on its own timeline: a photo taken at home
+    with one phone must not end the other phone's trip, and two phones 10 000 km apart at the
+    same time are two excursions, not one. Runs of different devices that overlap in time and
+    are in the same area (some photos within a day of each other closer than
+    trip_split_distance_km) are one excursion: the family trip with two phones."""
+    by_source: dict[str | None, list[dict]] = {}
+    for r in recs:
+        by_source.setdefault(r.get("source"), []).append(r)
+    runs: list[list[dict]] = []
+    for group in by_source.values():
+        runs.extend(_device_excursions(cfg, group))
+    if len(by_source) <= 1:
+        return runs
+    return _merge_device_runs(cfg, runs)
+
+
+def _same_area(cfg: Config, a: list[dict], b: list[dict], hours: float = 24) -> bool:
+    """Some located photo of a is within `hours` of a located photo of b and closer than
+    trip_split_distance_km."""
+    import bisect
+    lb = [r for r in b if r.get("lat") is not None]
+    if not lb:
+        return False
+    tb = [r["_t"] for r in lb]
+    for r in a:
+        if r.get("lat") is None:
+            continue
+        k = bisect.bisect_left(tb, r["_t"])
+        for j in range(max(0, k - 3), min(len(lb), k + 3)):
+            o = lb[j]
+            if abs((o["_t"] - r["_t"]).total_seconds()) <= hours * 3600 and \
+                    geo.haversine_km(r["lat"], r["lon"], o["lat"], o["lon"]) <= cfg.trip_split_distance_km:
+                return True
+    return False
+
+
+def _merge_device_runs(cfg: Config, runs: list[list[dict]]) -> list[list[dict]]:
+    slack = timedelta(hours=cfg.local_gap_hours)
+    merged: list[list[dict]] = []
+    for run in sorted(runs, key=lambda run: run[0]["_t"]):
+        target = next((m for m in merged if run[0]["_t"] <= m[-1]["_t"] + slack and _same_area(cfg, run, m)), None)
+        if target is None:
+            merged.append(list(run))
+        else:
+            target.extend(run)
+            target.sort(key=lambda r: r["_t"])
+    merged.sort(key=lambda run: run[0]["_t"])
+    return merged
+
+
+def _device_excursions(cfg: Config, recs: list[dict]) -> list[list[dict]]:
     runs, cur = [], []
     for r in recs:
         z = r["zone"]
@@ -523,6 +643,33 @@ def _reconcile_corrections(cfg: Config, props: dict) -> None:
         pr["excluded"] = sorted(ex)
 
 
+def _keep_identities(old: dict, new: dict) -> None:
+    """A proposal's id is a hash of its first and last photo, so a photo that syncs late and
+    lands at either end gives the same excursion a new id, and with it the review state (toggled
+    photos, an edited name, an approval) was lost on the next run. A new proposal that mostly
+    consists of the photos of an old live proposal keeps the old id."""
+    live = {pid: pr for pid, pr in old.items()
+            if pr["status"] in ("pending", "ongoing", "approved") and not pr.get("manual")}
+    if not live:
+        return
+    owner = {p["path"]: pid for pid, pr in live.items() for p in pr["photos"]}
+    claimed: set[str] = {pid for pid in new if pid in old}
+    # the biggest new proposal claims first: an old one split in two keeps its id on the larger half
+    for pid in sorted(new, key=lambda k: -len(new[k]["photos"])):
+        pr = new[pid]
+        if pid in old or pr.get("manual"):
+            continue
+        hits = Counter(owner[p["path"]] for p in pr["photos"] if p["path"] in owner)
+        for old_pid, n in hits.most_common():
+            if old_pid in claimed:
+                continue
+            if n >= 0.5 * len(live[old_pid]["photos"]):          # at least half of the old one is in here
+                pr["id"] = old_pid
+                new[old_pid] = new.pop(pid)
+                claimed.add(old_pid)
+            break
+
+
 def run(cfg: Config) -> dict:
     """Recompute proposals from the inbox, keeping the status of ones already reviewed."""
     global busy
@@ -580,6 +727,7 @@ def run(cfg: Config) -> dict:
         new[pr["id"]] = pr
         taken.update(p["path"] for p in pr["photos"])
 
+    _keep_identities(old, new)
     # photos added by hand to automatic proposals
     for pid, paths in additions.items():
         if pid in new and not new[pid].get("manual"):
