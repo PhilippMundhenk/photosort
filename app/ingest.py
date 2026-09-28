@@ -425,6 +425,23 @@ def _needs_index(p: Path, cfg: Config) -> bool:
 
 
 SCAN_CHUNK = 200
+ZONING_PATH = DATA_DIR / "zoning.json"
+
+
+def zoning_key(cfg: Config) -> str:
+    """Everything a stored record's zone, distance and place depend on. Re-zoning every record
+    (read, geocode, compare) on every run cost twenty thousand reads and lookups per ten
+    minutes on a large library; it is only needed when one of these changed."""
+    parts = [SIDECAR_VERSION, cfg.home_lat, cfg.home_lon, cfg.home_radius_km, cfg.local_radius_km,
+             cfg.named_places, cfg.min_city_population, cfg.sidecar_mode, cfg.sidecar_name]
+    return hashlib.sha1(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _zoned_with() -> str | None:
+    try:
+        return json.loads(ZONING_PATH.read_text(encoding="utf-8")).get("key")
+    except (OSError, ValueError, AttributeError):
+        return None
 
 
 def scan(cfg: Config, force: bool = False, progress=None) -> dict:
@@ -432,6 +449,9 @@ def scan(cfg: Config, force: bool = False, progress=None) -> dict:
     progress(done, total) is called per chunk of new files (a first scan of a big library
     takes long; the UI shows where it is)."""
     stats = {"new": 0, "total": 0, "missing": []}
+    key = zoning_key(cfg)
+    rezone = force or _zoned_with() != key
+    complete = True
     plan: list[tuple[str, Path, list[Path], list[Path]]] = []
     for name, folder in inbox_dirs(cfg):
         if not folder.exists():
@@ -452,6 +472,7 @@ def scan(cfg: Config, force: bool = False, progress=None) -> dict:
             except ExifToolMissing as e:
                 log.error("%s: %d new photos in %s left unindexed", e, len(todo) - i, folder)
                 stats["error"] = str(e)
+                complete = False
                 break
             for p in chunk:
                 try:
@@ -468,8 +489,8 @@ def scan(cfg: Config, force: bool = False, progress=None) -> dict:
             if progress:
                 progress(done, total_new)
         todo = indexed
-        # re-zone existing sidecars if home/radii changed: cheap, no exiftool needed
-        for p in photos:
+        # re-zone existing sidecars if home/radii/places changed: no exiftool needed
+        for p in (photos if rezone else ()):
             if p in todo:
                 continue
             rec = read_sidecar(p, cfg)
@@ -491,6 +512,10 @@ def scan(cfg: Config, force: bool = False, progress=None) -> dict:
         elif not todo:
             _bump()                            # first scan in this process: the cache may predate it
         _known[str(folder)] = now
+    if rezone and complete and not stats["missing"]:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        ZONING_PATH.write_text(json.dumps({"key": key}), encoding="utf-8")
+    stats["rezoned"] = rezone
     return stats
 
 

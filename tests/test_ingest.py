@@ -139,7 +139,7 @@ def test_scan_indexes_only_new_files_and_rezones(tmp_path, monkeypatch):
     monkeypatch.setattr(ingest, "exif_batch", fake_exif)
 
     stats = ingest.scan(cfg)
-    assert stats == {"new": 2, "total": 2, "missing": []} and calls == [["a.jpg", "b.jpg"]]
+    assert stats == {"new": 2, "total": 2, "missing": [], "rezoned": True} and calls == [["a.jpg", "b.jpg"]]
     rec = ingest.read_sidecar(a, cfg)
     assert rec["zone"] == geo.ZONE_LOCAL and rec["source"] == "cam" and rec["inbox"] == str(inbox)
 
@@ -173,7 +173,9 @@ def test_scan_reports_progress_per_chunk(tmp_path, monkeypatch):
 
 def test_scan_reports_missing_inbox(tmp_path):
     cfg = config.Config(inboxes=[{"path": str(tmp_path / "nope"), "name": "x"}])
-    assert ingest.scan(cfg) == {"new": 0, "total": 0, "missing": [str(tmp_path / "nope")]}
+    st = ingest.scan(cfg)
+    st.pop("rezoned")                                      # depends on what an earlier test left in the data dir
+    assert st == {"new": 0, "total": 0, "missing": [str(tmp_path / "nope")]}
 
 
 def test_scan_without_exiftool_leaves_photos_unindexed(tmp_path, monkeypatch):
