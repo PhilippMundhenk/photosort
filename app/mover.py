@@ -324,6 +324,8 @@ def move_out(cfg: Config, folder: Path, photo: Path) -> dict | None:
     manifest entry (with src = where the photo is now)."""
     m = read_manifest(folder)
     entry = next((p for p in (m or {}).get("photos", []) if p["dst"] == str(photo)), None)
+    if not photo.exists() and not (entry and (m or {}).get("mode") == "copy"):
+        return None                                       # nothing there (removed by hand): nothing to do
     rec = ingest.read_sidecar(photo, cfg) or {}
     if m and m.get("mode") == "copy" and entry:
         _delete_with_sidecars(cfg, photo)
