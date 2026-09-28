@@ -15,6 +15,8 @@ os.environ["PHOTOSORT_DATA"] = str(_SESSION_TMP / "data")
 from app import config, thumbs  # noqa: E402
 
 thumbs.YIELD_S = thumbs.PREFETCH_PAUSE_S = 0.0     # the prefetch's politeness only slows the suite down
+thumbs.IN_PROCESS = True                           # decode in-process so coverage sees the generators;
+                                                   # tests of the helper process switch it off themselves
 from tests import synth  # noqa: E402
 
 
