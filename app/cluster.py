@@ -159,9 +159,9 @@ def load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
         stale_ok = (busy and _records_cache["key"] == key and not ch["all"]
                     and time.time() - _records_cache["built"] < REFRESH_WHILE_BUSY_S)
         if _records_cache["key"] != key or ch["all"]:
-            recs, skipped = _load_records(cfg)
+            ch["all"], ch["paths"] = False, set()   # cleared first: a record written while the load runs
+            recs, skipped = _load_records(cfg)      # stays noted and is patched in on the next call
             _records_cache.update(key=key, recs=recs, skipped=skipped, filled=None, built=time.time())
-            ch["all"], ch["paths"] = False, set()
         elif ch["paths"] and not stale_ok:
             paths = set(ch["paths"])
             ch["paths"] = set()
