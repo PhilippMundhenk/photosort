@@ -271,7 +271,12 @@ its id; the larger half keeps it when a late home photo splits an old one in two
   2026). The pages warn when an inbox and the root are on different devices. On a read-only
   inbox such a copy-move can leave the original behind while the share reports success, so a
   transfer verifies the source is gone and removes the copy otherwise. Keywords for a whole
-  cluster are written by one exiftool process (`-execute`), not one per file.
+  cluster are written by one exiftool process (`-execute`), not one per file. The folder's
+  manifest is written every 25 files while a cluster moves and extended, never replaced, on a
+  later apply into the same folder: a kill mid-move (power, a container restart) loses at most
+  one batch of entries, and the continuation after the restart records the files it finds in
+  the folder without an entry, so undo always covers everything (a browser test kills the server
+  in the middle of a 2 500-file move and restarts it).
 
 ## 8. Feedback loop and calibration (historical, see section 10)
 
@@ -290,7 +295,11 @@ profiler (every function, 99 %+ of the code; page-initiated navigations are answ
 so the document survives for the snapshot), every template branch is rendered and asserted,
 every way a file can move is checked against dry-run, live-with-switches-off and each switch,
 scale tests print latencies for 20 000 records and a 3 000-photo proposal, and CI starts the
-published runtime image and calls every page. The rule when a bug is fixed: the test that
+published runtime image and calls every page. Randomized inputs (a thousand tag sets, timestamps, offsets,
+user texts and timelines) go through every parser and the clustering; their first run found an
+out-of-range coordinate crashing the geocoder, an EXIF offset beyond +14:00 crashing the time
+parser, control characters surviving in folder names and a split run that could start with, or
+consist only of, GPS-less photos. The rule when a bug is fixed: the test that
 would have caught it lands in the same commit.
 
 ## 9. Open points

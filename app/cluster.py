@@ -348,12 +348,11 @@ def _device_excursions(cfg: Config, recs: list[dict]) -> list[list[dict]]:
             cur.append(r)
     if cur:
         runs.append(cur)
-    # drop trailing GPS-less photos (a run always starts with a located one), then split on
-    # long gaps between different areas
+    # split on long gaps between different areas; every part is then trimmed of GPS-less photos
+    # at its ends (they ride along inside, they never open or close an excursion) and a part
+    # without any located photo is dropped: a day out cannot consist of photos without a position
     out = []
     for run in runs:
-        while run[-1]["zone"] == geo.ZONE_UNKNOWN:
-            run.pop()
         part = [run[0]]
         for prev, nxt in zip(run, run[1:], strict=False):
             gap_days = (nxt["_t"] - prev["_t"]).total_seconds() / 86400
@@ -367,7 +366,15 @@ def _device_excursions(cfg: Config, recs: list[dict]) -> list[list[dict]]:
                 part = []
             part.append(nxt)
         out.append(part)
-    return out
+    trimmed = []
+    for part in out:
+        while part and part[0]["zone"] == geo.ZONE_UNKNOWN:
+            part.pop(0)
+        while part and part[-1]["zone"] == geo.ZONE_UNKNOWN:
+            part.pop()
+        if part:
+            trimmed.append(part)
+    return trimmed
 
 
 def excursion_kind(cfg: Config, run: list[dict]) -> str | None:
@@ -425,7 +432,11 @@ def places_label(cfg: Config, recs: list[dict]) -> str:
 
 
 def sanitize(name: str) -> str:
-    return re.sub(r'[\\/:*?"<>|]+', "-", name).strip(" .")
+    """A folder name: no path separators or characters Windows/SMB refuse, no control characters,
+    single spaces, nothing leading or trailing that a file system would drop."""
+    name = re.sub(r"[\x00-\x1f\x7f]+", " ", name)
+    name = re.sub(r'[\\/:*?"<>|]+', "-", name)
+    return re.sub(r"\s+", " ", name).strip(" .")
 
 
 def _gps_conf(r: dict) -> float:

@@ -68,7 +68,7 @@ def serve(base: Path, lib: synth.Library):
             time.sleep(0.2)
         else:
             raise RuntimeError("server did not start")
-        yield {"url": url, "data": data, "cfg": cfg, "lib": lib}
+        yield {"url": url, "data": data, "cfg": cfg, "lib": lib, "proc": proc}
     finally:
         proc.terminate()
         try:
