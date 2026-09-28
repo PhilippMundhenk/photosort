@@ -25,6 +25,9 @@ inbox/camera/**.dng  ─┘                          sorted/_unnamed/2026-06-30 
   delete; approvals wait until you switch it off. Approve, rename, exclude single photos, name
   bursts, undo whole folders; the Everyday page shows what was not clustered and lets you build
   clusters by hand.
+- **Two phones, one library.** Each device is followed on its own timeline: the family trip
+  with two phones is one folder, the partner's photos at home never cut it short, and two
+  phones on different continents are two trips.
 - **Videos included.** iPhone and Android MP4/MOV get correct local timestamps (UTC converted
   to your home zone), GPS from the QuickTime metadata and a thumbnail frame.
 - **Readable names.** `2026-06 Lisbon, Sevilla`; your own place names ("Black Forest") beat
@@ -141,9 +144,9 @@ docker compose -f docker-compose.test.yml run --rm tests pytest -m e2e -v
 
 | Suite | Where | What |
 |---|---|---|
-| unit | `tests/test_{geo,config,ingest,events,cluster,mover,video,thumbs,manual,sidecars}.py` | rules, coercion, records, moving/copying, videos, thumbnails, manual clusters |
-| web e2e | `tests/test_app.py` | every page and form action through FastAPI's TestClient |
-| browser e2e | `tests/e2e/test_browser.py` | real uvicorn + headless Chromium (Playwright): run, rename, toggle, approve, name, move out, undo, settings |
+| unit | `tests/test_{geo,config,ingest,events,cluster,devices,mover,video,thumbs,manual,sidecars,perf_paths}.py` | rules, two devices, coercion, records, moving/copying, videos, thumbnails (helper process), manual clusters, caches and hot paths |
+| web e2e | `tests/test_app.py`, `tests/test_live_pages.py` | every page and form action through FastAPI's TestClient; batched clicks, a run finishing mid-review, the auto-move switches |
+| browser e2e | `tests/e2e/test_browser.py`, `tests/e2e/test_smooth.py` | real uvicorn + headless Chromium (Playwright): the review flow; no reload while the user works, hidden-tab polling, a 4000-photo library |
 | smoke | `python -m tests.smoke` | one synthetic end-to-end run without pytest |
 
 Locally without Docker (needs exiftool and `playwright install chromium`):

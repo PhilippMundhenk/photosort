@@ -67,6 +67,21 @@ town are noise. The local/away
 zone remains as a label and for confidences only. The earlier notes below describe the run
 mechanics, which are unchanged.
 
+### One timeline per device (September 2026)
+
+With two phones in the inbox the single merged timeline broke in both directions: a photo
+taken at home with one phone ended the other phone's trip (the trip fell apart into day-long
+fragments, none long enough to be a trip), and two phones 10 000 km apart at the same time
+produced one "trip" with both places in its name, because the gap-and-distance split only
+looks at consecutive photos and the gaps between interleaved photos are minutes. Excursions
+are therefore found per device (`source`, the inbox folder), and runs of different devices
+become one excursion only when they overlap in time and some of their photos are within a
+day and `trip_split_distance_km` of each other: the family trip with two phones stays one
+folder, the partner at home stays out of it. The same rule applies to GPS-less photos: they
+borrow a position from the nearest located photo *of the same device*; only a device that
+never records GPS at all borrows from the others. Home bursts still look at the merged
+timeline, since a birthday photographed with two phones is one occasion.
+
 ### Trip runs: mechanics
 
 - Returning home ends a trip *no matter how short the stay*. This was an explicit
@@ -212,14 +227,39 @@ functions in `mover` through which every file operation passes (`_transfer`,
 `DryRun`. Approvals are only recorded; switching dry-run off (with a confirmation) queues them.
 An invariant test drives every UI action with dry-run on and asserts the inbox is untouched.
 
+The page never reloads itself (September 2026). The first version reloaded every page when a
+scan or a move finished, "for fresh counts"; with a scan every ten minutes on a large library
+that meant losing ticked photos, a half-typed name and the open viewer several times an hour,
+and each reload re-fetched hundreds of thumbnails. Now one poll per page updates the busy
+banner and the move progress in place and, when a run finished or files were moved, offers a
+reload in the banner; only the pages without user state (dashboard, log, clusters) refresh
+on their own. Clicks on photos flip at once and travel batched, one request in flight per
+proposal, because a page full of lazily loading thumbnails otherwise queues every click
+behind the browser's six connections per host.
+
+A proposal keeps its identity across runs. Its id is a hash of first and last photo, so a
+photo that synced late and landed at either end gave the same excursion a new id and the
+review state (toggled photos, an edited name, an approval) was lost on the next run. A new
+proposal that contains at least half of the photos of an old live proposal now takes over
+its id; the larger half keeps it when a late home photo splits an old one in two.
+
 ## 7. Hardware constraints and how they shaped the code
 
 - EXIF via `exiftool` in batches. Thumbnails come from the NAS's `@eaDir` when present;
   otherwise (revised September 2026, after the first real run showed mostly placeholders)
   they are generated once into `data/thumbs`: Pillow in JPEG draft mode (decodes at 1/8
   scale, ~30 ms per 12 MP photo), the embedded preview for RAW via exiftool, one frame via
-  ffmpeg for videos. A background thread pre-generates after each scan. This is the one
-  place the app decodes images; it is bounded and cached, and can be switched off.
+  ffmpeg for videos. A background thread pre-generates after each scan, pausing whenever a
+  page is loading thumbnails. Decoding runs in a helper process (September 2026: with a
+  512 MB memory limit the container was killed and restarted a few seconds after every run,
+  without a traceback, as soon as the prefetch reached a handful of broken and very large
+  files; the kill hit uvicorn itself). A helper that dies or exceeds its memory cap costs one
+  thumbnail; a file that gave none is remembered and not decoded again on every run. This is
+  the one place the app decodes images; it is bounded and cached, and can be switched off.
+- The status poll and the pages must stay cheap on a library of tens of thousands of files:
+  the proposals file is parsed only when it changed, the sorted tree is walked for the cluster
+  list at most every few minutes, records are re-zoned only when home, radii or named places
+  changed (not on every run), and the neighbour-GPS fill runs in one thread at a time.
 - Offline reverse geocoding with a pure-Python package (no numpy/scipy build on the T430).
 - The app is one ~60 MB container; the decision-model container that was planned next to it
   (~1 GB resident) is gone with the model (section 10).
