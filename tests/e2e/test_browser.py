@@ -3,6 +3,7 @@ the synthetic library on disk. Run: pytest -m e2e   (needs `playwright install c
 the test Docker image has it)."""
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -30,15 +31,26 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-@pytest.fixture(scope="module")
-def server(tmp_path_factory):
-    base = tmp_path_factory.mktemp("e2e")
+def make_library(tmp_path_factory, name: str = "e2e") -> tuple[Path, synth.Library]:
+    """A data dir with a saved config and the synthetic library on disk, for a server process."""
+    base = tmp_path_factory.mktemp(name)
     data = base / "data"
     data.mkdir()
     cfg = synth.make_config(base, sidecar_mode="beside")   # records must be visible to the server process
     (data / "config.yaml").write_text(yaml.safe_dump(cfg.as_dict(), sort_keys=False), encoding="utf-8")
-    lib = synth.populate(cfg)
+    return base, synth.populate(cfg)
 
+
+@pytest.fixture(scope="module")
+def server(tmp_path_factory):
+    base, lib = make_library(tmp_path_factory)
+    with serve(base, lib) as s:
+        yield s
+
+
+@contextlib.contextmanager
+def serve(base: Path, lib: synth.Library):
+    data, cfg = base / "data", lib.cfg
     port = _free_port()
     env = {**os.environ, "PHOTOSORT_DATA": str(data)}
     proc = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(port),
@@ -81,6 +93,8 @@ def page(browser):
     ctx = browser.new_context()
     pg = ctx.new_page()
     pg.set_default_timeout(15_000)
+    pg.on("pageerror", lambda e: print("pageerror:", e))          # a script error shows up in the test output
+    pg.on("console", lambda m: print("console:", m.type, m.text) if m.type in ("error", "warning") else None)
     yield pg
     ctx.close()
 
@@ -156,7 +170,11 @@ def test_full_review_flow(server, page):
     expect(page.get_by_role("heading", name="Proposed clusters (2)")).to_be_visible()
     expect(page.get_by_role("heading", name="Moving (1)")).to_be_visible()     # files move in the background
     folder = Path(cfg.root) / "2026-06 Portugal & Spain"
-    expect(page.get_by_role("heading", name="Moving (1)")).to_be_hidden(timeout=60_000)   # page reloads when done
+    page.evaluate("window.__stay = 1")
+    moving = page.locator(f"#{props['trip']['id']}")
+    expect(moving.locator(".badge.ok")).to_have_text("moved", timeout=60_000)  # shown in place when done
+    expect(page.locator("#busy-hint")).to_be_visible()                          # a reload is offered, not forced
+    assert page.evaluate("window.__stay") == 1
     assert folder.is_dir() and (folder / "manifest.json").exists()
     assert not Path(props["trip"]["photos"][0]["path"]).exists()      # toggled back in above, so it moved
     assert not list(folder.rglob(cfg.review_dir))                      # manual approval: no _review
@@ -172,7 +190,8 @@ def test_full_review_flow(server, page):
     # approve the home burst, then name it from the "waiting for a name" list
     page.wait_for_load_state("networkidle")   # Windows cannot move files the browser is still reading
     page.locator(f"#{props['home']['id']}").get_by_role("button", name="Approve & move").click()
-    expect(page.get_by_role("heading", name="Moving (1)")).to_be_hidden(timeout=60_000)
+    expect(page.locator(f"#{props['home']['id']} .badge.ok")).to_have_text("moved", timeout=60_000)
+    page.locator("#busy-hint").click()                                          # reload, on request
     expect(page.get_by_role("heading", name="Bursts waiting for a name (1)")).to_be_visible()
     name_box = page.get_by_placeholder("What was this?")
     name_box.fill("2026-06-30 Hannas Geburtstag")

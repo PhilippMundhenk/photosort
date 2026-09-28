@@ -43,7 +43,9 @@ def _static_version() -> str:
 STATIC_VERSION = _static_version()
 
 _lock = threading.Lock()
-_state = {"last_run": None, "last_stats": {}, "running": False, "error": None, "progress": None}
+# runs: counts finished pipeline runs; a page compares it with what it saw when it loaded and
+# offers a reload instead of reloading by itself (which threw away what the user was doing)
+_state = {"last_run": None, "last_stats": {}, "running": False, "error": None, "progress": None, "runs": 0}
 
 # Approving a proposal only marks it "approved"; this worker moves the files (hundreds of them
 # over a share take a while) so the request returns at once. Progress is shown on the review page.
@@ -93,8 +95,9 @@ def _apply_one(pid: str) -> None:
         _applying[pid] = {"done": 0, "total": pr["n"], "name": pr["name"], "current": None}
         update: dict = {}
         try:
-            mover.apply(cfg, pr, reviewed=True,           # a human looked at it: nothing goes to _review
-                        progress=_progress(pid))
+            # a human looked at it: nothing goes to _review; auto-applied by a run (pr["auto"]): uncertain
+            # photos are parked in _review
+            mover.apply(cfg, pr, reviewed=not pr.get("auto"), progress=_progress(pid))
             update = {"status": "applied", "error": None}
         except mover.DryRun:
             return                                        # switched on meanwhile: stays approved, untouched
@@ -153,6 +156,7 @@ def run_pipeline(trigger: str = "schedule") -> dict:
 
     def scanned(done: int, total: int) -> None:
         _state["progress"] = {"phase": "scanning", "done": done, "total": total}
+    cfg, queued = None, []
     try:
         cfg = config.load()
         cluster.busy = True                       # page requests serve a slightly stale cache meanwhile
@@ -171,21 +175,29 @@ def run_pipeline(trigger: str = "schedule") -> dict:
         cluster.busy = False
         _state["progress"] = {"phase": "clustering", "done": 0, "total": 0}
         s2 = cluster.run(cfg)
-        thumbs.prefetch(cfg, [p for _, folder in config.inbox_dirs(cfg) if folder.exists()
-                              for p in ingest.list_photos(cfg, folder)])
-        applied = 0
+        applied, queued = 0, []
         if not cfg.dry_run:
-            props = cluster.load_proposals()
+            # auto-apply: the run approves what the settings allow and the apply worker moves it
+            # (with progress on the review page), exactly like a proposal approved by hand,
+            # except that its uncertain photos go to _review (pr["auto"])
             auto = {"trip": cfg.auto_apply_trips, "local": cfg.auto_apply_local, "home": cfg.auto_apply_home}
-            for pr in props.values():
-                if pr["status"] == "approved" or (pr["status"] == "pending" and auto.get(pr["kind"])):
-                    mover.apply(cfg, pr, reviewed=pr["status"] == "approved")
-                    pr["status"] = "applied"
-                    applied += 1
-            cluster.save_proposals(props)
+            with _props_lock:
+                props = cluster.load_proposals()
+                for pid, pr in props.items():
+                    if pr["status"] == "pending" and auto.get(pr["kind"]):
+                        pr["status"], pr["auto"], pr["error"] = "approved", True, None
+                        events.log("review", proposal=pid, action="approve", name=pr["name"], by="auto")
+                        queued.append(pid)
+                if queued:
+                    cluster.save_proposals(props)
+                waiting = list(_apply_queue.queue)                # approved earlier but never moved (a restart
+                queued += [pid for pid, pr in props.items()       # mid-way, an edit of the file): pick them up
+                           if pr["status"] == "approved" and pid not in queued and pid not in waiting
+                           and pid not in _applying]
             if cfg.auto_apply_everyday:
                 applied += mover.apply_everyday(cfg, min_age_days=cfg.everyday_keep_days)
-        stats = {"ingest": s1, "cluster": s2, "applied": applied, "trigger": trigger}
+                mover.invalidate_clusters()
+        stats = {"ingest": s1, "cluster": s2, "applied": applied, "queued": len(queued), "trigger": trigger}
         _state["last_run"], _state["last_stats"] = datetime.now(timezone.utc).isoformat(timespec="seconds"), stats
         events.log("run", **{k: v for k, v in stats.items() if k != "ingest"}, new_photos=s1.get("new"))
         return stats
@@ -196,14 +208,27 @@ def run_pipeline(trigger: str = "schedule") -> dict:
     finally:
         cluster.busy = False
         _state["running"], _state["progress"] = False, None
+        _state["runs"] += 1
         _lock.release()
+        for pid in queued:
+            queue_apply(pid)
+        if cfg is not None:
+            try:                                          # missing thumbnails: found and made in the background
+                thumbs.prefetch(cfg, [p for _, folder in config.inbox_dirs(cfg) if folder.exists()
+                                      for p in ingest.list_photos(cfg, folder)])
+            except Exception:  # noqa: BLE001
+                log.exception("thumbnail prefetch")
 
 
 scheduler = BackgroundScheduler()
 
 
 @app.on_event("startup")
-def _start():
+async def _start():
+    import anyio
+    # every request handler runs in this pool; a page full of thumbnails must not use up the
+    # threads the status poll and the clicks need (default: 40)
+    anyio.to_thread.current_default_thread_limiter().total_tokens = 96
     cfg = config.load()
     if not config.CONFIG_PATH.exists():
         config.save(cfg)
@@ -229,6 +254,7 @@ def _warm_cache() -> None:
 @app.on_event("shutdown")
 def _stop():
     scheduler.shutdown(wait=False)
+    thumbs.shutdown()
 
 
 @app.exception_handler(mover.DryRun)
@@ -306,7 +332,7 @@ def everyday(request: Request, month: str = ""):
                     "photos": [{"path": r["path"], "file": r["file"], "ts": r["ts"], "zone": r["zone"],
                                 "media": r.get("media", "photo"), "place": (r.get("place") or {}).get("place")}
                                for r in rs]})
-    movable = len(mover.everyday_movable(cfg, cfg.everyday_keep_days))
+    movable = len(mover.everyday_movable(cfg, cfg.everyday_keep_days, recs=recs))
     return render(request, "everyday.html", months=months, month=month, days=out, pending=_pending(props),
                   total=len(recs), prev_month=prev_month, next_month=next_month,
                   month_n=months_c.get(month, 0), movable=movable, moving=_applying.get(EVERYDAY_JOB),
@@ -436,7 +462,9 @@ def run_now():
 
 @app.post("/proposal/{pid}/{action}")
 async def proposal_action(pid: str, action: str, request: Request):
-    form = dict(await request.form())
+    raw = await request.form()
+    form = dict(raw)
+    form["paths"] = [str(p) for p in raw.getlist("path")]        # toggle: several photos in one request
     with _props_lock:
         return _proposal_action(pid, action, form, request)
 
@@ -473,16 +501,21 @@ def _proposal_action(pid: str, action: str, form: dict, request: Request):
     elif action == "rename":
         _rename(cfg, pid, pr, str(form.get("name", pr["name"])), bool(form.get("remember_place")))
     elif action == "toggle":
-        path = form.get("path", "")
+        # one request may carry several clicks (ui.js batches them); each flips its photo, in
+        # order, so clicking the same photo twice is a no-op as it looks on the page
+        paths = form.get("paths") or [form.get("path", "")]
         ex = set(pr.get("excluded", []))
-        ex.symmetric_difference_update({path})
+        for path in paths:
+            ex.symmetric_difference_update({path})
+            events.log("review", proposal=pid, action="toggle", photo=Path(path).name,
+                       excluded=path in ex, decision_id=pr["decision"].get("id"))
         pr["excluded"] = sorted(ex)
-        events.log("review", proposal=pid, action="toggle", photo=Path(path).name,
-                   excluded=path in ex, decision_id=pr["decision"].get("id"))
     cluster.save_proposals(props)
     if request.headers.get("x-requested-with") == "fetch":            # ui.js: no page reload
+        ex = set(pr.get("excluded", []))
+        last = (form.get("paths") or [form.get("path", "")])[-1]
         return JSONResponse({"ok": True, "status": pr["status"], "name": pr["name"],
-                             "excluded": form.get("path", "") in set(pr.get("excluded", []))})
+                             "excluded": last in ex, "excluded_paths": sorted(ex)})
     return RedirectResponse(form.get("back", "/review"), status_code=303)
 
 
@@ -636,6 +669,7 @@ def thumb(path: str):
     """Thumbnail: NAS thumbnail, cached/generated one, else a placeholder. Never an error."""
     cfg = config.load()
     p = Path(path)
+    thumbs.touch()                                             # the background prefetch yields to pages
     t = thumbs.get(cfg, p) if _allowed(cfg, p) else None
     data = _read_small(t) if t else None
     if data is not None:
@@ -662,11 +696,15 @@ def media(path: str):
 
 @app.get("/api/status")
 def api_status():
+    """Polled by every open page every few seconds: must stay cheap (nothing here reads the
+    inbox or parses the proposals unless the file changed)."""
     cfg = config.load()
-    props = cluster.load_proposals()
-    approved = [p["id"] for p in props.values() if p["status"] == "approved"]
+    counts = cluster.status_counts()
     now = time.time()
     applying = {k: {**v, "current": {**v["current"], "seconds": round(now - v["current"]["since"])}
                     if v.get("current") else None} for k, v in _applying.items()}
-    return {"state": _state, "pending": len(_pending(props)), "dry_run": cfg.dry_run,
-            "approved": len(approved), "applying": applying}
+    queue = {pid: ("failed: " + err if err else "queued") for pid, err in counts["approved"].items()
+             if pid not in applying}
+    return {"state": _state, "pending": counts["pending"], "dry_run": cfg.dry_run,
+            "approved": len(counts["approved"]), "applying": applying, "queue": queue,
+            "everyday_queued": EVERYDAY_JOB in list(_apply_queue.queue)}

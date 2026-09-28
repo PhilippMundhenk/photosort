@@ -48,3 +48,9 @@ code{font-size:12px;background:var(--line);padding:1px 5px;border-radius:4px}det
 .settings-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px 24px}
 .check{display:flex;align-items:center;gap:8px;margin:8px 0}.check label{margin:0;color:var(--fg)}
 .warnbox{border-left:4px solid var(--warn);padding:8px 12px;background:var(--card);margin-bottom:14px}
+/* the banner after work finished: calm, with the reload offer; the page itself never reloads */
+.busy.done{animation:none;background:#dff0d8;color:#1f3d1a}.busy.done .spinner{display:none}
+.busy #busy-hint{color:inherit;font-weight:700;text-decoration:underline}
+.badge.ok{background:#2e7d32;color:#fff}
+.card.done{opacity:.7}
+.card.unsaved{outline:2px solid var(--warn)}.card.unsaved::after{content:"a change was not saved — reload";display:block;color:var(--warn);font-size:12px;margin-top:6px}

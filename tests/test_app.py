@@ -66,7 +66,8 @@ def test_pages_render_empty(client):
 
 def test_api_status(client):
     s = client.get("/api/status").json()
-    assert s == {"state": main._state, "pending": 0, "dry_run": False, "approved": 0, "applying": {}}
+    assert s == {"state": main._state, "pending": 0, "dry_run": False, "approved": 0, "applying": {},
+                 "queue": {}, "everyday_queued": False}
 
 
 def test_new_device_folder_is_picked_up_without_configuration(client, tmp_path):
@@ -378,7 +379,7 @@ def test_reject_rename_toggle(client, library):
     assert f'id="{trip["id"]}"' in page and page.count("<details open>") >= 2
     r = client.post(f"/proposal/{trip['id']}/toggle", data={"path": path}, headers={"X-Requested-With": "fetch"})
     assert r.status_code == 200 and r.json() == {"ok": True, "status": "pending", "name": _proposals("trip")["name"],
-                                                 "excluded": False}
+                                                 "excluded": False, "excluded_paths": []}
     assert _proposals("trip")["excluded"] == []
 
     client.post(f"/proposal/{home['id']}/reject")
@@ -645,10 +646,12 @@ def test_live_mode_auto_applies_trips_with_review_folder(client, library, monkey
     monkeypatch.setattr(cluster, "_gps_conf", lambda r: 0.6 if r["file"] == doubtful else real(r))
 
     stats = main.run_pipeline("test")
-    assert stats["applied"] == 1 + 10                                      # trip + everyday photos
+    assert stats["applied"] == 10 and stats["queued"] == 1                 # everyday photos; the trip is queued
+    main.wait_for_apply()                                                  # for the worker, like a hand approval
     folder = mover.target_folder(cfg, trip)
     assert folder.is_dir() and list(folder.rglob(cfg.review_dir))          # auto-applied: _review used
     assert _proposals("trip")["status"] == "applied" and _proposals("local")["status"] == "pending"
+    assert _proposals("trip")["auto"] is True
     assert "in review" in client.get("/clusters").text
     assert (Path(cfg.root) / "2026" / "06").is_dir()
 
@@ -662,7 +665,9 @@ def test_live_mode_applies_approved_without_review_folder(client, library):
     local = next(p for p in props.values() if p["kind"] == "local")
     local["status"] = "approved"
     cluster.save_proposals(props)
-    main.run_pipeline("test")
+    stats = main.run_pipeline("test")                   # approved but never queued (edited by hand): the run queues it
+    assert stats["queued"] == 1
+    main.wait_for_apply()
     folder = mover.target_folder(cfg, local)
     assert folder.is_dir() and not list(folder.rglob(cfg.review_dir))
 
