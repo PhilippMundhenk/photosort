@@ -153,6 +153,7 @@ docker compose -f docker-compose.test.yml run --rm tests pytest -m e2e -v
 | scale | `tests/test_perf_scale.py` | 20 000 records clustered, 5 000 records loaded from disk, a 3 000-photo proposal through the web layer; latencies printed with `pytest -s`, generous bounds |
 | browser e2e | `tests/e2e/test_browser.py`, `tests/e2e/test_smooth.py`, `tests/e2e/test_features.py` | real uvicorn + headless Chromium (Playwright): the review flow; no reload while the user works, hidden-tab polling, a 4000-photo library; every feature end to end (everyday selection and manual clusters, keyboard, viewer, remembered places, approve all, the everyday move button, settings dialogs, home detection, sidecar buttons, log filters, month navigation, dashboard) |
 | smoke | `python -m tests.smoke` | one synthetic end-to-end run without pytest |
+| coverage | the test image's default command | line and branch coverage of `app/` must stay at 99 % or above (it is 100 % as of 2026-09-28); the browser tests also measure how much of `ui.js` they execute |
 
 Locally without Docker (needs exiftool and `playwright install chromium`):
 
