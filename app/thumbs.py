@@ -15,6 +15,7 @@ import contextlib
 import hashlib
 import io
 import logging
+import os
 import shutil
 import subprocess
 import threading
@@ -96,12 +97,26 @@ def _pil_image(src: Path, size: tuple[int, int]):
     return im
 
 
+def _unlimited() -> None:
+    """preexec for exiftool/ffmpeg started by the helper: the helper's address-space cap is
+    for Pillow; ffmpeg reserves large mappings for its threads and fails under it."""
+    try:
+        import resource
+        _, hard = resource.getrlimit(resource.RLIMIT_AS)
+        resource.setrlimit(resource.RLIMIT_AS, (hard, hard))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+_PREEXEC = {"preexec_fn": _unlimited} if os.name == "posix" else {}
+
+
 def _raw_preview(src: Path):
     """Embedded JPEG preview of a RAW file via exiftool (no RAW decoding)."""
     if not shutil.which("exiftool"):
         return None
     for tag in ("-JpgFromRaw", "-PreviewImage", "-OtherImage", "-ThumbnailImage"):
-        res = subprocess.run(["exiftool", "-b", tag, str(src)], capture_output=True)
+        res = subprocess.run(["exiftool", "-b", tag, str(src)], capture_output=True, **_PREEXEC)
         if res.returncode == 0 and len(res.stdout) > 1000:
             from PIL import Image, ImageOps
             im = ImageOps.exif_transpose(Image.open(io.BytesIO(res.stdout)))
@@ -117,7 +132,7 @@ def _video_frame(src: Path, dst: Path, width: int) -> bool:
     for seek in ("1", "0"):                                   # short clips have no second 1
         cmd = [*nice, ffmpeg, "-y", "-loglevel", "error", "-threads", "1", "-ss", seek, "-i", str(src),
                "-frames:v", "1", "-vf", f"scale='min({width},iw)':-2", "-q:v", "4", str(dst)]
-        res = subprocess.run(cmd, capture_output=True)
+        res = subprocess.run(cmd, capture_output=True, **_PREEXEC)
         if res.returncode == 0 and dst.exists() and dst.stat().st_size > 0:
             return True
     return False
@@ -201,15 +216,20 @@ def _drop_helper(pool) -> None:
 def _run_generate(photo: Path, dst: Path, size: tuple[int, int]) -> Path | None:
     if IN_PROCESS:
         return generate(photo, dst, size)
+    from concurrent.futures import CancelledError
     from concurrent.futures import TimeoutError as FutureTimeout
     from concurrent.futures.process import BrokenProcessPool
-    pool = _helper()
-    try:
-        return pool.submit(generate, photo, dst, size).result(timeout=GENERATE_TIMEOUT_S)
-    except (BrokenProcessPool, FutureTimeout, OSError, RuntimeError) as e:
-        log.warning("thumbnail helper failed on %s: %s", photo.name, type(e).__name__)
-        _drop_helper(pool)
-        return None
+    for attempt in (1, 2):                       # the helper may have been replaced under us by another
+        pool = _helper()                         # thread (its job crashed it): once more on a fresh one
+        try:
+            return pool.submit(generate, photo, dst, size).result(timeout=GENERATE_TIMEOUT_S)
+        except (BrokenProcessPool, FutureTimeout, CancelledError, OSError, RuntimeError) as e:
+            log.warning("thumbnail helper failed on %s (%s): %s", photo.name, attempt, type(e).__name__)
+            if isinstance(e, FutureTimeout) or attempt == 2:
+                _drop_helper(pool)
+                return None
+            _drop_helper(pool)
+    return None
 
 
 def shutdown() -> None:
