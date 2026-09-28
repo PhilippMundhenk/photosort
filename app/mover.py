@@ -123,6 +123,7 @@ def write_manifest(folder: Path, data: dict) -> None:
     tmp = folder / (MANIFEST + ".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(folder / MANIFEST)
+    invalidate_clusters()
 
 
 def target_folder(cfg: Config, pr: dict) -> Path:
@@ -174,18 +175,27 @@ def apply(cfg: Config, pr: dict, reviewed: bool = False, progress=None) -> dict:
         "proposal_id": pr["id"], "decision": pr["decision"], "applied": _now(), "mode": _mode(cfg),
         "reviewed": reviewed, "label": None, "photos": moved,
     }
+    earlier = read_manifest(folder)
+    if earlier and earlier.get("photos"):           # the same trip again (photos that synced late): one folder,
+        manifest["photos"] = earlier["photos"] + moved          # one manifest, so undo still knows everything
+        manifest["start"] = min(manifest["start"], earlier.get("start") or manifest["start"])
+        manifest["end"] = max(manifest["end"], earlier.get("end") or manifest["end"])
+        manifest["corrections"] = earlier.get("corrections", [])
+        manifest["label"] = earlier.get("label")
     write_manifest(folder, manifest)
     events.log("apply", proposal=pr["id"], cluster_kind=pr["kind"], name=pr["name"], n=len(moved),
                mode=_mode(cfg), reviewed=reviewed, decision_id=pr["decision"].get("id"))
     return manifest
 
 
-def everyday_movable(cfg: Config, min_age_days: float) -> list[dict]:
-    """Unclustered inbox photos older than min_age_days: what apply_everyday would move."""
+def everyday_movable(cfg: Config, min_age_days: float, recs: list[dict] | None = None) -> list[dict]:
+    """Unclustered inbox photos older than min_age_days: what apply_everyday would move.
+    `recs` lets a page that already has the everyday records pass them in."""
     if cfg.everyday_layout == "leave":
         return []
     cutoff = datetime.now(timezone.utc).timestamp() - min_age_days * 86400
-    return [r for r in cluster.everyday_records(cfg) if r["_t"].timestamp() <= cutoff]
+    recs = cluster.everyday_records(cfg) if recs is None else recs
+    return [r for r in recs if r["_t"].timestamp() <= cutoff]
 
 
 def apply_everyday(cfg: Config, min_age_days: float, progress=None) -> int:
@@ -234,6 +244,7 @@ def undo(cfg: Config, folder: Path) -> int:
             _transfer(cfg, dst, src.parent)
         n += 1
     (folder / MANIFEST).unlink(missing_ok=True)
+    invalidate_clusters()
     for sub in sorted(folder.rglob("*"), key=lambda x: -len(x.parts)):
         if sub.is_dir():
             with contextlib.suppress(OSError):
@@ -341,7 +352,27 @@ def put_back(cfg: Config, folder: Path, src: Path) -> dict | None:
     return entry
 
 
+_clusters_cache: dict = {"key": None, "at": 0.0, "value": []}
+CLUSTERS_TTL_S = 300.0
+
+
+def invalidate_clusters() -> None:
+    _clusters_cache["at"] = 0.0
+
+
 def list_clusters(cfg: Config) -> list[dict]:
+    """Every applied cluster (folder with a manifest) under the root. Walking the whole sorted
+    tree on a network share takes seconds, so the result is kept for a while and dropped by
+    every function here that writes a manifest."""
+    key = (cfg.root, cfg.unnamed_dir)
+    if _clusters_cache["key"] == key and time.time() - _clusters_cache["at"] < CLUSTERS_TTL_S:
+        return [dict(m) for m in _clusters_cache["value"]]
+    out = _list_clusters(cfg)
+    _clusters_cache.update(key=key, at=time.time(), value=out)
+    return [dict(m) for m in out]
+
+
+def _list_clusters(cfg: Config) -> list[dict]:
     root = Path(cfg.root)
     out = []
     if not root.exists():

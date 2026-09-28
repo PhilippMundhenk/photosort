@@ -17,11 +17,19 @@ def log(kind: str, **fields) -> dict:
     return ev
 
 
+TAIL_BYTES = 2_000_000
+
+
 def read(limit: int = 500, kind: str | None = None) -> list[dict]:
+    """The last `limit` events (newest first). Only the tail of a big log is read: every toggle
+    on the review page is an event, and the dashboard must not parse a year of them."""
     if not EVENTS_PATH.exists():
         return []
     rows = []
-    with EVENTS_PATH.open(encoding="utf-8") as f:
+    with EVENTS_PATH.open(encoding="utf-8", errors="replace") as f:
+        if not kind and EVENTS_PATH.stat().st_size > TAIL_BYTES:
+            f.seek(EVENTS_PATH.stat().st_size - TAIL_BYTES)
+            f.readline()                                     # the rest of a line cut in the middle
         for line in f:
             line = line.strip()
             if not line:
