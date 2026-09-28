@@ -54,7 +54,8 @@ jobs:
           sleep 20
           curl -fs localhost:8080/api/status | grep -Eq '"runs": ?[1-9]'
           test -f /tmp/ps/data/config.yaml
-          docker logs ps | grep -q "executed successfully"
+          docker logs ps 2>&1 | tail -20
+          docker logs ps 2>&1 | grep -q "executed successfully"      # the container logs to stderr
           docker rm -f ps
 
   images:
