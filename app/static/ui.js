@@ -5,6 +5,7 @@
 // meanwhile. When the results changed, the banner offers a reload instead.
 (function () {
   "use strict";
+  function setText(el, s) { if (el.textContent !== s) el.textContent = s; }   // no DOM write for the same text
 
   // --- toggle include/exclude: instant, batched --------------------------------------------
   // The photo flips at once; requests go out one at a time per proposal, and clicks made while
@@ -25,27 +26,44 @@
       .then(function (d) {
         var ex = {};
         (d.excluded_paths || []).forEach(function (p) { ex[p] = true; });
-        q.card.querySelectorAll("button[name=path]").forEach(function (b) {      // the server's view wins,
-          var p = b.value;                                                      // except for clicks still queued
-          if (q.paths.indexOf(p) < 0) b.closest("figure").classList.toggle("excluded", !!ex[p]);
+        q.card.querySelectorAll("figure[data-path]").forEach(function (f) {      // the server's view wins,
+          var p = f.getAttribute("data-path");                                  // except for clicks still queued
+          if (q.paths.indexOf(p) < 0) f.classList.toggle("excluded", !!ex[p]);
         });
         q.card.classList.remove("unsaved");
       })
       .catch(function () { q.card.classList.add("unsaved"); })
       .then(function () { q.busy = false; flushToggles(pid); });
   }
-  document.addEventListener("submit", function (ev) {
-    var form = ev.target;
-    if (!form.matches("form[data-toggle]")) return;
+  document.addEventListener("click", function (ev) {
+    var pick = ev.target.closest(".thumbs[data-toggle] .pick");
+    if (!pick) return;
     ev.preventDefault();
-    var btn = ev.submitter || document.activeElement;                    // the photo's button (name=path)
-    if (!btn || btn.name !== "path") return;
-    var card = form.closest(".card") || form, fig = btn.closest("figure");
-    var pid = card.id || form.action;
+    var grid = pick.closest(".thumbs"), fig = pick.closest("figure");
+    var card = grid.closest(".card") || grid, action = grid.getAttribute("data-toggle");
+    var pid = card.id || action;
     fig.classList.toggle("excluded");
-    var q = toggles[pid] || (toggles[pid] = {paths: [], busy: false, action: form.action, card: card});
-    q.paths.push(btn.value);
+    var q = toggles[pid] || (toggles[pid] = {paths: [], busy: false, action: action, card: card});
+    q.paths.push(fig.getAttribute("data-path"));
     flushToggles(pid);
+  });
+  // photos are plain elements (no input or button per photo: password-manager extensions watch
+  // every form control on the page); Enter and Space work on them like on a button
+  document.addEventListener("keydown", function (ev) {
+    if ((ev.key === "Enter" || ev.key === " ") && ev.target.matches(".pick, .view, .act, [data-select-all]")) {
+      ev.preventDefault();
+      ev.target.click();
+    }
+  });
+  // cluster page: one form per action; the clicked element fills in which photo
+  document.addEventListener("click", function (ev) {
+    var act = ev.target.closest("[data-act]");
+    if (!act) return;
+    var form = document.getElementById(act.getAttribute("data-act"));
+    if (!form) return;
+    if (act.hasAttribute("data-confirm") && !confirm(act.getAttribute("data-confirm"))) return;
+    form.querySelector("input[name=" + act.getAttribute("data-field") + "]").value = act.getAttribute("data-value");
+    form.submit();
   });
 
   // --- rename without a button: saved as you type (proposals) or when the field is left (folders)
@@ -125,9 +143,10 @@
   if (busy) {
     var text = document.getElementById("busy-text"), hint = document.getElementById("busy-hint");
     var page = busy.getAttribute("data-page");
-    var runsSeen = null, everydayWasMoving = false, reloading = false;
+    var runsSeen = parseInt(busy.getAttribute("data-runs"), 10), everydayWasMoving = false, reloading = false;
+    if (isNaN(runsSeen)) runsSeen = null;                       // rendered with the count: a run that ends before
+                                                                // the first poll answers is not missed
     var stateless = page === "dashboard" || page === "log" || page === "clusters";
-    function setText(el, s) { if (el.textContent !== s) el.textContent = s; }   // no mutation for the same text
     function fmt(a) {
       var c = a.current;
       return a.done + " / " + a.total + (c ? " · " + c.file + " (" + Math.round(c.bytes / 1048576) + " MB, " + c.seconds + " s)" : "");
@@ -215,18 +234,44 @@
     });
   }
 
-  // --- everyday page: per-day select-all and the selected counter ------------------------
+  // --- everyday page: selection is a class on the figure; the paths join the form on submit ---
+  function setSelected(fig, on) {
+    fig.classList.toggle("selected", on);
+    var pick = fig.querySelector(".pick");
+    if (pick) pick.setAttribute("aria-checked", on ? "true" : "false");
+  }
   function countSelected() {
     var c = document.getElementById("selcount");
-    if (c) c.textContent = document.querySelectorAll("input[name=paths]:checked").length;
+    if (c) setText(c, String(document.querySelectorAll(".thumbs figure.selected").length));
   }
-  document.addEventListener("change", function (ev) {
-    var t = ev.target;
-    if (t.matches("[data-select-all]")) {
-      t.closest(".card").querySelectorAll("input[name=paths]").forEach(function (cb) { cb.checked = t.checked; });
+  document.addEventListener("click", function (ev) {
+    var pick = ev.target.closest(".thumbs[data-select] .pick");
+    if (pick) {
+      ev.preventDefault();
+      var fig = pick.closest("figure");
+      setSelected(fig, !fig.classList.contains("selected"));
+      countSelected();
+      return;
     }
-    if (t.matches("[data-select-all], input[name=paths]")) countSelected();
+    var all = ev.target.closest("[data-select-all]");
+    if (all) {
+      var figs = all.closest(".card").querySelectorAll(".thumbs figure");
+      var every = Array.prototype.every.call(figs, function (f) { return f.classList.contains("selected"); });
+      figs.forEach(function (f) { setSelected(f, !every); });
+      countSelected();
+    }
   });
+  var assign = document.getElementById("assign");
+  if (assign) {
+    assign.addEventListener("submit", function () {
+      assign.querySelectorAll("input[name=paths]").forEach(function (i) { i.remove(); });
+      document.querySelectorAll(".thumbs figure.selected").forEach(function (f) {
+        var i = document.createElement("input");
+        i.type = "hidden"; i.name = "paths"; i.value = f.getAttribute("data-path");
+        assign.appendChild(i);
+      });
+    });
+  }
   countSelected();
 
   // --- viewer ---------------------------------------------------------------------------

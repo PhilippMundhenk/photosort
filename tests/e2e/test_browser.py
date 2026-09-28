@@ -93,6 +93,7 @@ def page(browser):
     ctx = browser.new_context()
     pg = ctx.new_page()
     pg.set_default_timeout(15_000)
+    pw.expect.set_options(timeout=15_000)     # expect() has its own default (5 s): the pages poll every 5 s
     pg.on("pageerror", lambda e: print("pageerror:", e))          # a script error shows up in the test output
     pg.on("console", lambda m: print("console:", m.type, m.text) if m.type in ("error", "warning") else None)
     yield pg
@@ -146,18 +147,18 @@ def test_full_review_flow(server, page):
     trip.locator("details summary").click()
     page.wait_for_load_state("networkidle")                            # thumbnails loaded
     first_fig = trip.locator("figure").first
-    first_fig.locator("button.pick").click()
+    first_fig.locator(".pick").click()
     expect(page.locator(f"#{props['trip']['id']} figure").first).to_have_class(re.compile(r"(^|\s)excluded(\s|$)"))
     expect(page.locator(f"#{props['trip']['id']} details")).to_have_attribute("open", "")   # no reload, stays open
     assert page.url.endswith("/review")                                                    # no navigation happened
     assert _proposals(data)["trip"]["excluded"] == [props["trip"]["photos"][0]["path"]]
-    first_fig.locator("button.pick").click()                                               # and back in
+    first_fig.locator(".pick").click()                                                     # and back in
     expect(page.locator(f"#{props['trip']['id']} figure").first).not_to_have_class(re.compile(r"excluded"))
     assert _proposals(data)["trip"]["excluded"] == []
 
     # full-size viewer: opens on the eye button, arrows navigate, Esc closes
     trip.locator("figure").first.hover()
-    trip.locator("button.view").first.click()
+    trip.locator(".view").first.click()
     expect(page.locator(".viewer")).to_be_visible()
     expect(page.locator(".viewer img")).to_have_attribute("src", re.compile(r"^/media\?path="))
     expect(page.locator(".viewer .v-caption")).to_contain_text("(1/")

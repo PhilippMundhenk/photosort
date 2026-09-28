@@ -18,10 +18,12 @@ label{display:block;margin:10px 0 4px;font-size:13px;color:var(--muted)}.row{dis
 .thumbs{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.thumbs figure{margin:0;width:110px}.thumbs img{width:110px;height:82px;object-fit:cover;border-radius:6px;background:var(--line);display:block}
 .thumbs figcaption{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .thumbs figure{position:relative}.thumbs figure.excluded img{opacity:.35}.thumbs figure.uncertain img{outline:2px solid var(--warn)}
-.thumbs button.pick{padding:0;border:0;background:none;display:block;cursor:pointer}
-.thumbs label.pick{display:block;position:relative;cursor:pointer;margin:0}
-.thumbs label.pick input{position:absolute;left:5px;top:5px;z-index:2;width:16px;height:16px;margin:0}
-.thumbs label.pick input:checked+img{outline:3px solid var(--accent)}
+.thumbs .pick{display:block;cursor:pointer;position:relative;border-radius:4px}
+.thumbs .pick:focus-visible{outline:3px solid var(--accent)}
+.thumbs figure.selected img{outline:3px solid var(--accent)}
+.thumbs figure.selected .pick::after{content:"\2713";position:absolute;left:5px;top:5px;width:18px;height:18px;line-height:18px;text-align:center;font-size:13px;font-weight:700;background:var(--accent);color:#fff;border-radius:50%}
+.act{display:inline-block;cursor:pointer;padding:2px 9px;border-radius:6px;background:var(--line);font-size:12px;user-select:none}
+.act:hover,.act:focus-visible{filter:brightness(.92)}.thumbs .act{margin-top:4px}
 .card.sticky{position:sticky;top:0;z-index:5}
 .save-state{min-width:60px;display:inline-block}
 .busy{position:sticky;top:0;z-index:20;display:flex;gap:12px;align-items:center;padding:10px 20px;font-weight:600;color:#1a1d24;
@@ -34,8 +36,8 @@ label{display:block;margin:10px 0 4px;font-size:13px;color:var(--muted)}.row{dis
 .monthnav .months{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
 .monthnav .month{display:flex;flex-direction:column;align-items:center;min-width:76px;padding:6px 8px;border-radius:8px;background:var(--bg);border:1px solid var(--line);color:var(--fg);text-decoration:none}
 .monthnav .month small{color:var(--muted)}.monthnav .month.active{background:var(--accent);color:#fff;border-color:var(--accent)}.monthnav .month.active small{color:#e8f1ff}
-.thumbs button.view{position:absolute;top:4px;right:4px;padding:0 5px;font-size:13px;line-height:18px;background:rgba(0,0,0,.55);color:#fff;border-radius:5px;opacity:0}
-.thumbs figure:hover button.view,.thumbs button.view:focus{opacity:1}
+.thumbs .view{position:absolute;top:4px;right:4px;padding:0 5px;font-size:13px;line-height:18px;background:rgba(0,0,0,.55);color:#fff;border-radius:5px;opacity:0;cursor:pointer}
+.thumbs figure:hover .view,.thumbs .view:focus-visible{opacity:1}
 .viewer[hidden]{display:none}
 .viewer{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:100;display:flex;align-items:center;justify-content:center}
 .viewer .v-body{max-width:96vw;max-height:90vh;display:flex;align-items:center;justify-content:center}

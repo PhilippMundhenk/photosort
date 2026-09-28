@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Review queue</h1>
+<noscript><div class="warnbox">Excluding photos and the full-size viewer need JavaScript.</div></noscript>
 {% if not cfg.home_lat and not cfg.home_lon %}<div class="warnbox"><b>Home location is not set</b> — the next run detects it from the photos, or set it in <a href="/settings">Settings</a>.</div>{% endif %}
 {% if cfg.dry_run %}<div class="warnbox"><b>Dry-run is on: nothing is moved, copied or deleted.</b> Approving here only marks a proposal;
   {% if n_approved %}{{ n_approved }} approved proposal{{ 's' if n_approved != 1 }} wait{{ '' if n_approved != 1 else 's' }} for dry-run to be switched off in <a href="/settings">Settings</a>.{% else %}approved proposals are moved once you switch dry-run off in <a href="/settings">Settings</a>.{% endif %}</div>{% endif %}
@@ -14,6 +15,7 @@
     <span class="badge {{ p.kind }}">{{ p.kind }}</span> <b>{{ p.name }}</b>
     {% if p.error %}<span class="badge bad">failed</span> <span class="small">{{ p.error }}</span>
       <form method="post" action="/proposal/{{ p.id }}/approve" class="inline"><button class="small">retry</button></form>
+      <span class="small muted">— a "Permission denied" names the folder that could not be written: check that the sorted root is mounted writable for PUID/PGID (copy mode writes there too)</span>
     {% elif p.progress %}<span class="badge warn">moving</span> <span class="small" data-progress="{{ p.id }}">{{ p.progress.done }} / {{ p.progress.total }}</span>
     {% elif cfg.dry_run %}<span class="badge">approved</span> <span class="small muted">{{ p.n }} files, not moved (dry-run)</span>
     {% else %}<span class="badge">queued</span> <span class="small" data-progress="{{ p.id }}">0 / {{ p.n }}</span>{% endif %}
@@ -45,20 +47,18 @@
   </div>
   <details {% if p.n_uncertain or p.kind=='home' or p.id == open_id %}open{% endif %}>
     <summary>photos</summary>
-    {# one form per proposal, not one per photo: password managers re-scan every form on the page
-       whenever it changes, and hundreds of them made the browser warn about the extension #}
-    <form method="post" action="/proposal/{{ p.id }}/toggle" data-toggle>
-    <input type="hidden" name="back" value="/review?open={{ p.id }}#{{ p.id }}">
-    <div class="thumbs">
+    {# no form control per photo: password-manager extensions watch every input and button on
+       the page and re-scan them on every change and scroll; hundreds of them made the browser
+       flag the extension. Photos are plain elements; ui.js sends the clicks. #}
+    <div class="thumbs" data-toggle="/proposal/{{ p.id }}/toggle">
     {% for ph in p.photos %}
-      <figure class="{{ 'excluded' if ph.path in p.excluded }} {{ 'uncertain' if ph.uncertain }}">
-        <button class="pick" name="path" value="{{ ph.path }}" data-bwignore title="{{ ph.file }} · {{ ph.zone }} · {{ ph.place or '' }} · conf {{ ph.conf }} · click to exclude/include"><img src="/thumb?path={{ ph.path|urlencode }}" loading="lazy" alt=""></button>
-        <button type="button" class="view" data-bwignore data-view="/media?path={{ ph.path|urlencode }}" data-type="{{ ph.media }}" data-title="{{ ph.file }} · {{ ph.ts[:16].replace('T',' ') }} · {{ ph.place or ph.zone }}" title="view full size">&#x2921;</button>
+      <figure class="{{ 'excluded' if ph.path in p.excluded }} {{ 'uncertain' if ph.uncertain }}" data-path="{{ ph.path }}">
+        <span class="pick" role="button" tabindex="0" title="{{ ph.file }} · {{ ph.zone }} · {{ ph.place or '' }} · conf {{ ph.conf }} · click to exclude/include"><img src="/thumb?path={{ ph.path|urlencode }}" loading="lazy" alt=""></span>
+        <span class="view" role="button" tabindex="0" data-view="/media?path={{ ph.path|urlencode }}" data-type="{{ ph.media }}" data-title="{{ ph.file }} · {{ ph.ts[:16].replace('T',' ') }} · {{ ph.place or ph.zone }}" title="view full size">&#x2921;</span>
         <figcaption>{% if ph.media == 'video' %}<span class="badge">video</span> {% endif %}{{ ph.ts[5:16].replace('T',' ') }} {{ ph.zone }}{% if ph.source %} · {{ ph.source }}{% endif %}</figcaption>
       </figure>
     {% endfor %}
     </div>
-    </form>
     <div class="muted small">Click a photo to exclude/include it (greyed = excluded, orange = low confidence — approving here settles them; only auto-applied clusters park them in {{ cfg.review_dir }}/). ⤡ opens the full-size photo or video.</div>
   </details>
   <div class="row" style="margin-top:8px">
@@ -72,7 +72,7 @@
 {% for c in unnamed %}
 <div class="card">
   <div class="row"><b>{{ c.name }}</b> <span class="muted small">{{ c.n }} photos · {{ c.start[:16].replace('T',' ') }}</span></div>
-  <div class="thumbs">{% for ph in c.photos[:8] %}<figure><img src="/thumb?path={{ ph.dst|urlencode }}" loading="lazy" alt=""><button class="view" data-view="/media?path={{ ph.dst|urlencode }}" data-type="{{ ph.media or 'photo' }}" data-title="{{ ph.dst.rsplit('/',1)[-1].rsplit('\\',1)[-1] }}" title="view full size">&#x2921;</button></figure>{% endfor %}</div>
+  <div class="thumbs">{% for ph in c.photos[:8] %}<figure><img src="/thumb?path={{ ph.dst|urlencode }}" loading="lazy" alt=""><span class="view" role="button" tabindex="0" data-view="/media?path={{ ph.dst|urlencode }}" data-type="{{ ph.media or 'photo' }}" data-title="{{ ph.dst.rsplit('/',1)[-1].rsplit('\\',1)[-1] }}" title="view full size">&#x2921;</span></figure>{% endfor %}</div>
   <form method="post" action="/cluster/rename" class="row">
     <input type="hidden" name="folder" value="{{ c.folder }}">
     <input type="text" name="name" placeholder="What was this? e.g. 2026-09-14 Hannas Geburtstag" style="width:380px" value="{{ c.start[:10] }} ">
