@@ -10,12 +10,15 @@ A background thread pre-generates thumbnails for newly scanned files so review p
 """
 from __future__ import annotations
 
+import atexit
+import contextlib
 import hashlib
 import io
 import logging
 import shutil
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 from .config import DATA_DIR, Config
@@ -35,6 +38,13 @@ BROWSER_NATIVE = {"jpg", "jpeg", "png", "webp", "gif", "mp4", "mov", "m4v", "web
 _lock = threading.Lock()
 _inflight: set[str] = set()
 _worker: threading.Thread | None = None
+_last_request = 0.0              # when a page last asked for a thumbnail: the prefetch yields to it
+
+
+def touch() -> None:
+    """A page is loading thumbnails right now; the background prefetch pauses for a moment."""
+    global _last_request
+    _last_request = time.time()
 
 
 def wait(timeout: float = 60) -> None:
@@ -103,9 +113,10 @@ def _video_frame(src: Path, dst: Path, width: int) -> bool:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         return False
+    nice = [shutil.which("nice"), "-n", "19"] if shutil.which("nice") else []   # decoding 4K must not starve the UI
     for seek in ("1", "0"):                                   # short clips have no second 1
-        cmd = [ffmpeg, "-y", "-loglevel", "error", "-ss", seek, "-i", str(src), "-frames:v", "1",
-               "-vf", f"scale='min({width},iw)':-2", "-q:v", "4", str(dst)]
+        cmd = [*nice, ffmpeg, "-y", "-loglevel", "error", "-threads", "1", "-ss", seek, "-i", str(src),
+               "-frames:v", "1", "-vf", f"scale='min({width},iw)':-2", "-q:v", "4", str(dst)]
         res = subprocess.run(cmd, capture_output=True)
         if res.returncode == 0 and dst.exists() and dst.stat().st_size > 0:
             return True
@@ -139,10 +150,102 @@ def generate(photo: Path, dst: Path, size: tuple[int, int]) -> Path | None:
         tmp.unlink(missing_ok=True)
 
 
+# --- helper process ---------------------------------------------------------------------
+# Decoding happens in a helper process, never in the server: a corrupt file that crashes the
+# native decoder, or one huge image that needs more memory than the container has, takes the
+# helper down and the server answers "no thumbnail". Before this, the container restarted a
+# few seconds after every run, without a traceback, as soon as the prefetch reached such files.
+
+GENERATE_TIMEOUT_S = 90          # a long video over a slow share; the helper is killed after this
+HELPER_MEMORY_MB = 768           # a decode needing more raises MemoryError in the helper (Linux)
+IN_PROCESS = False               # tests that patch the generators set this
+_pool = None
+_pool_lock = threading.Lock()
+
+
+def _limit_memory() -> None:
+    try:
+        import resource
+        limit = HELPER_MEMORY_MB * 1024 * 1024
+        soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+        if hard != resource.RLIM_INFINITY:
+            limit = min(limit, hard)
+        resource.setrlimit(resource.RLIMIT_AS, (limit, hard))
+    except Exception:  # noqa: BLE001  (Windows, or not permitted)
+        pass
+
+
+def _helper():
+    global _pool
+    with _pool_lock:
+        if _pool is None:
+            import multiprocessing
+            from concurrent.futures import ProcessPoolExecutor
+            _pool = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"),
+                                        initializer=_limit_memory)
+            atexit.register(shutdown)                          # a clean stop, no noise at interpreter exit
+        return _pool
+
+
+def _drop_helper(pool) -> None:
+    global _pool
+    with _pool_lock:
+        if _pool is pool:
+            _pool = None
+    for p in list(getattr(pool, "_processes", {}).values()):
+        with contextlib.suppress(Exception):
+            p.kill()
+    pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _run_generate(photo: Path, dst: Path, size: tuple[int, int]) -> Path | None:
+    if IN_PROCESS:
+        return generate(photo, dst, size)
+    from concurrent.futures import TimeoutError as FutureTimeout
+    from concurrent.futures.process import BrokenProcessPool
+    pool = _helper()
+    try:
+        return pool.submit(generate, photo, dst, size).result(timeout=GENERATE_TIMEOUT_S)
+    except (BrokenProcessPool, FutureTimeout, OSError, RuntimeError) as e:
+        log.warning("thumbnail helper failed on %s: %s", photo.name, type(e).__name__)
+        _drop_helper(pool)
+        return None
+
+
+def shutdown() -> None:
+    """Stop the helper process (tests, server shutdown)."""
+    global _pool
+    with _pool_lock:
+        pool, _pool = _pool, None
+    if pool is not None:
+        pool.shutdown(wait=True, cancel_futures=True)
+
+
+def _failed_marker(cached: Path) -> Path:
+    return cached.with_suffix(".none")
+
+
+def _stamp(photo: Path) -> str:
+    try:
+        st = photo.stat()
+        return f"{st.st_size}:{st.st_mtime_ns}"
+    except OSError:
+        return ""
+
+
+def known_failure(photo: Path, cached: Path) -> bool:
+    """This very file (same size and mtime) gave no thumbnail before; a replaced file is tried again."""
+    try:
+        return _failed_marker(cached).read_text(encoding="utf-8") == _stamp(photo)
+    except OSError:
+        return False
+
+
 # --- public -----------------------------------------------------------------------------
 
 def get(cfg: Config, photo: Path, variant: str = "t") -> Path | None:
-    """Thumbnail ('t') or large preview ('p') for a photo, generating it if needed."""
+    """Thumbnail ('t') or large preview ('p') for a photo, generating it if needed. A photo
+    that gave no thumbnail is remembered (<cache>.none) and not tried again on every run."""
     if variant == "t":
         nas = nas_thumb(cfg, photo)
         if nas:
@@ -150,7 +253,7 @@ def get(cfg: Config, photo: Path, variant: str = "t") -> Path | None:
     cached = cache_path(photo, variant)
     if cached.exists():
         return cached
-    if not cfg.generate_thumbnails or not photo.exists():
+    if not cfg.generate_thumbnails or not photo.exists() or known_failure(photo, cached):
         return None
     key = f"{variant}:{photo}"
     with _lock:
@@ -158,7 +261,14 @@ def get(cfg: Config, photo: Path, variant: str = "t") -> Path | None:
             return None                                       # someone else is on it; placeholder for now
         _inflight.add(key)
     try:
-        return generate(photo, cached, THUMB_SIZE if variant == "t" else PREVIEW_SIZE)
+        out = _run_generate(photo, cached, THUMB_SIZE if variant == "t" else PREVIEW_SIZE)
+        if out is None:
+            try:
+                cached.parent.mkdir(parents=True, exist_ok=True)
+                _failed_marker(cached).write_text(_stamp(photo), encoding="utf-8")
+            except OSError:
+                pass
+        return out
     finally:
         with _lock:
             _inflight.discard(key)
@@ -168,20 +278,30 @@ def browser_native(photo: Path) -> bool:
     return _ext(photo) in BROWSER_NATIVE
 
 
+PREFETCH_PAUSE_S = 0.05          # between two generated thumbnails
+YIELD_S = 1.5                    # no generating while a page asked for thumbnails this recently
+
+
 def prefetch(cfg: Config, photos: list[Path]) -> threading.Thread | None:
-    """Generate missing thumbnails in the background, one at a time (the T430 has two cores)."""
-    if not cfg.generate_thumbnails:
-        return None
-    todo = [p for p in photos if not nas_thumb(cfg, p) and not cache_path(p).exists()]
-    if not todo:
+    """Generate missing thumbnails in the background, one at a time (the T430 has two cores).
+    Finding out which are missing means one stat per photo on the share, so that happens in
+    the worker too, not in the pipeline; and the worker pauses whenever a page is loading
+    thumbnails, so the review pages stay quick while it works through a big library."""
+    if not cfg.generate_thumbnails or not photos:
         return None
 
     def work():
-        n = 0
-        for p in todo:
+        n, todo = 0, 0
+        for p in photos:
+            if nas_thumb(cfg, p) or cache_path(p).exists() or known_failure(p, cache_path(p)):
+                continue
+            todo += 1
+            while time.time() - _last_request < YIELD_S:
+                time.sleep(0.25)
             if get(cfg, p):
                 n += 1
-        log.info("thumbnails: %d generated, %d skipped", n, len(todo) - n)
+            time.sleep(PREFETCH_PAUSE_S)
+        log.info("thumbnails: %d generated, %d skipped", n, todo - n)
 
     global _worker
     if _worker is not None and _worker.is_alive():

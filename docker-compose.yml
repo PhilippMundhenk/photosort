@@ -22,5 +22,5 @@ services:
     #   - traefik.enable=true
     #   - traefik.http.routers.photosort.rule=Host(`photosort.example.org`)
     #   - traefik.http.routers.photosort.middlewares=authelia@docker
-    mem_limit: 512m
+    mem_limit: 1g          # the record cache of a large library plus the thumbnail helper; 512m was OOM-killed
 
