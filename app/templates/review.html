@@ -45,17 +45,20 @@
   </div>
   <details {% if p.n_uncertain or p.kind=='home' or p.id == open_id %}open{% endif %}>
     <summary>photos</summary>
+    {# one form per proposal, not one per photo: password managers re-scan every form on the page
+       whenever it changes, and hundreds of them made the browser warn about the extension #}
+    <form method="post" action="/proposal/{{ p.id }}/toggle" data-toggle>
+    <input type="hidden" name="back" value="/review?open={{ p.id }}#{{ p.id }}">
     <div class="thumbs">
     {% for ph in p.photos %}
       <figure class="{{ 'excluded' if ph.path in p.excluded }} {{ 'uncertain' if ph.uncertain }}">
-        <form method="post" action="/proposal/{{ p.id }}/toggle" data-toggle><input type="hidden" name="path" value="{{ ph.path }}">
-          <input type="hidden" name="back" value="/review?open={{ p.id }}#{{ p.id }}">
-          <button class="pick" title="{{ ph.file }} · {{ ph.zone }} · {{ ph.place or '' }} · conf {{ ph.conf }} · click to exclude/include"><img src="/thumb?path={{ ph.path|urlencode }}" loading="lazy" alt=""></button></form>
-        <button class="view" data-view="/media?path={{ ph.path|urlencode }}" data-type="{{ ph.media }}" data-title="{{ ph.file }} · {{ ph.ts[:16].replace('T',' ') }} · {{ ph.place or ph.zone }}" title="view full size">&#x2921;</button>
+        <button class="pick" name="path" value="{{ ph.path }}" data-bwignore title="{{ ph.file }} · {{ ph.zone }} · {{ ph.place or '' }} · conf {{ ph.conf }} · click to exclude/include"><img src="/thumb?path={{ ph.path|urlencode }}" loading="lazy" alt=""></button>
+        <button type="button" class="view" data-bwignore data-view="/media?path={{ ph.path|urlencode }}" data-type="{{ ph.media }}" data-title="{{ ph.file }} · {{ ph.ts[:16].replace('T',' ') }} · {{ ph.place or ph.zone }}" title="view full size">&#x2921;</button>
         <figcaption>{% if ph.media == 'video' %}<span class="badge">video</span> {% endif %}{{ ph.ts[5:16].replace('T',' ') }} {{ ph.zone }}{% if ph.source %} · {{ ph.source }}{% endif %}</figcaption>
       </figure>
     {% endfor %}
     </div>
+    </form>
     <div class="muted small">Click a photo to exclude/include it (greyed = excluded, orange = low confidence — approving here settles them; only auto-applied clusters park them in {{ cfg.review_dir }}/). ⤡ opens the full-size photo or video.</div>
   </details>
   <div class="row" style="margin-top:8px">

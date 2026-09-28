@@ -48,14 +48,14 @@
 {% for d in days %}
 <div class="card" data-day="{{ d.date }}">
   <div class="row">
-    <label class="small" style="margin:0"><input type="checkbox" data-select-all> <b>{{ d.date }}</b> ({{ d.weekday }})</label>
+    <label class="small" style="margin:0"><input type="checkbox" data-select-all data-bwignore> <b>{{ d.date }}</b> ({{ d.weekday }})</label>
     <span class="muted small">{{ d.n }} files · {{ d.zones }}{% if d.places %} · {{ d.places }}{% endif %}</span>
   </div>
   <div class="thumbs">
   {% for ph in d.photos %}
     <figure class="{{ 'uncertain' if ph.zone == 'unknown' }}">
-      <label class="pick"><input type="checkbox" name="paths" value="{{ ph.path }}"><img src="/thumb?path={{ ph.path|urlencode }}" loading="lazy" alt=""></label>
-      <button type="button" class="view" data-view="/media?path={{ ph.path|urlencode }}" data-type="{{ ph.media }}" data-title="{{ ph.file }} · {{ ph.ts[:16].replace('T',' ') }} · {{ ph.place or ph.zone }}" title="view full size">&#x2921;</button>
+      <label class="pick"><input type="checkbox" name="paths" value="{{ ph.path }}" data-bwignore><img src="/thumb?path={{ ph.path|urlencode }}" loading="lazy" alt=""></label>
+      <button type="button" class="view" data-bwignore data-view="/media?path={{ ph.path|urlencode }}" data-type="{{ ph.media }}" data-title="{{ ph.file }} · {{ ph.ts[:16].replace('T',' ') }} · {{ ph.place or ph.zone }}" title="view full size">&#x2921;</button>
       <figcaption>{% if ph.media == 'video' %}<span class="badge">video</span> {% endif %}{{ ph.ts[11:16] }} {{ ph.zone }}{% if ph.place %} · {{ ph.place }}{% endif %}</figcaption>
     </figure>
   {% endfor %}
