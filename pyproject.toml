@@ -43,3 +43,4 @@ ignore = ["B008", "SIM108", "UP007", "UP017"]
 "tests/e2e/test_smooth.py" = ["F811"]   # fixtures imported from test_browser
 "tests/e2e/test_features.py" = ["F811"]
 "tests/e2e/test_script_coverage.py" = ["F811", "E402"]
+"tests/e2e/test_scenarios.py" = ["F811"]

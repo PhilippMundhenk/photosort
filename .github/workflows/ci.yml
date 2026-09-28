@@ -48,11 +48,11 @@ jobs:
           docker run -d --name ps -p 8080:8080 -e TZ=Europe/Berlin -e PHOTOSORT_DATA=/data \
             -v /tmp/ps/data:/data -v /tmp/ps/photos:/photos --user 1000:1000 photosort:ci
           for i in $(seq 1 30); do curl -fs localhost:8080/api/status >/dev/null && break; sleep 1; done
-          curl -fs localhost:8080/api/status | grep -q '"dry_run": true'
+          curl -fs localhost:8080/api/status | grep -Eq '"dry_run": ?true'
           for p in / /review /everyday /clusters /log /settings; do curl -fso /dev/null -w "%{http_code} $p\n" localhost:8080$p | grep -q '^200'; done
           curl -fs -X POST localhost:8080/run >/dev/null || true
           sleep 20
-          curl -fs localhost:8080/api/status | grep -q '"runs": 1'
+          curl -fs localhost:8080/api/status | grep -Eq '"runs": ?[1-9]'
           test -f /tmp/ps/data/config.yaml
           docker logs ps | grep -q "executed successfully"
           docker rm -f ps

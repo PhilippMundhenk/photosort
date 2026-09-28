@@ -1,0 +1,123 @@
+"""Whole-pipeline scenarios in the browser that the synthetic library alone does not show:
+copy mode from the settings page to undo, and two phones on different continents at the same
+time (scan, clustering, naming, review) with the partner's photos at home in between."""
+from __future__ import annotations
+
+import re
+from datetime import timedelta
+from pathlib import Path
+
+import httpx
+import pytest
+import yaml
+
+from tests import synth
+from tests.e2e.test_browser import _proposals, _wait_pending, browser, page, serve  # noqa: F401
+
+pw = pytest.importorskip("playwright.sync_api")
+pytestmark = pytest.mark.e2e
+
+SINGAPORE = (1.29, 103.85)
+
+
+def _library(tmp_path_factory, name: str, **cfg_overrides):
+    base = tmp_path_factory.mktemp(name)
+    data = base / "data"
+    data.mkdir()
+    for sub in ("phone-a", "phone-b", "sorted"):
+        (base / sub).mkdir()
+    cfg = synth.make_config(base, sidecar_mode="beside", **cfg_overrides)
+    (data / "config.yaml").write_text(yaml.safe_dump(cfg.as_dict(), sort_keys=False), encoding="utf-8")
+    return base, synth.Library(cfg)
+
+
+@pytest.fixture
+def copy_server(tmp_path_factory):
+    base, lib = _library(tmp_path_factory, "e2e-copy", copy_instead_of_move=True)
+    synth.populate(lib.cfg)
+    with serve(base, lib) as s:
+        yield s
+
+
+def test_copy_mode_end_to_end(copy_server, page):
+    """Approve in copy mode: the copies appear in the sorted tree, the originals stay in the
+    inbox and are never proposed again; undo deletes the copies and frees the originals."""
+    url, data, cfg = copy_server["url"], copy_server["data"], copy_server["cfg"]
+    expect = pw.expect
+    httpx.post(url + "/run", timeout=5)
+    _wait_pending(url, 3)
+    page.goto(url + "/settings")
+    expect(page.locator("#copy")).to_be_checked()
+    page.goto(url + "/review")
+    local = _proposals(data)["local"]
+    originals = [Path(p["path"]) for p in local["photos"]]
+    page.locator(f"#{local['id']}").get_by_role("button", name="Approve & move").click()
+    expect(page.locator(f"#{local['id']} .badge.ok")).to_have_text("moved", timeout=60_000)
+    folder = Path(cfg.root) / local["name"]
+    assert all(p.exists() for p in originals)                                 # originals stay
+    copies = [f for f in folder.rglob("*.jpg")]
+    assert len(copies) == len(originals)
+    assert (folder / "manifest.json").exists()
+    manifest = yaml.safe_load((folder / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["mode"] == "copy"
+    httpx.post(url + "/run", timeout=5)                                        # copied originals: not proposed again
+    _wait_pending(url, 2)
+    page.goto(url + "/everyday?month=2026-06")
+    assert page.locator(".thumbs figure").count() < 12                         # nor shown as everyday
+    page.goto(url + "/clusters/view?folder=" + str(folder))
+    page.once("dialog", lambda d: d.accept())
+    page.get_by_role("button", name="Undo whole cluster").click()
+    page.wait_for_url(re.compile(r"/clusters$"))
+    assert not folder.exists() and all(p.exists() for p in originals)          # copies gone, originals kept
+    httpx.post(url + "/run", timeout=5)
+    _wait_pending(url, 2)                                                      # undone = rejected: everyday now
+    page.goto(url + "/everyday?month=2026-06")
+    assert page.locator(".thumbs figure").count() >= 12 + 10                   # the day out's photos are back
+
+
+@pytest.fixture
+def two_phones_server(tmp_path_factory):
+    """Phone A in Lisbon for a week while phone B stays home and photographs daily, then phone B
+    in Singapore for a week while phone A is home; a shared day out in between."""
+    base, lib = _library(tmp_path_factory, "e2e-phones")
+    a, b = Path(lib.cfg.inboxes[0]["path"]), Path(lib.cfg.inboxes[1]["path"])
+    t = synth.T0
+    for d in range(40):                                                        # daily life at home, by whoever is home
+        if not 3 <= d < 10:
+            lib.photo(a, t + timedelta(days=d, hours=7), synth.HOME)
+        if not 20 <= d < 27:
+            lib.photo(b, t + timedelta(days=d, hours=19), synth.HOME)
+    for d in range(3, 10):                                                     # A abroad, B at home
+        for h in (10, 14, 17):
+            lib.photo(a, t + timedelta(days=d, hours=h), synth.LISBON)
+    for d in range(20, 27):                                                    # B abroad, A at home
+        for h in (9, 13, 18):
+            lib.photo(b, t + timedelta(days=d, hours=h), SINGAPORE, cam="phone-b")
+    for i in range(12):                                                        # a shared day out
+        lib.photo(a if i % 2 else b, t + timedelta(days=33, hours=11, minutes=15 * i), synth.LUDWIGSBURG)
+    with serve(base, lib) as s:
+        yield s
+
+
+def test_two_phones_far_apart_are_two_trips_end_to_end(two_phones_server, page):
+    url, data = two_phones_server["url"], two_phones_server["data"]
+    expect = pw.expect
+    httpx.post(url + "/run", timeout=5)
+    _wait_pending(url, 3)
+    props = list(yaml.safe_load((data / "proposals.json").read_text(encoding="utf-8")).values())
+    trips = sorted((p for p in props if p["kind"] == "trip"), key=lambda p: p["start"])
+    assert [p["name"] for p in trips] == ["2026-06 Lisbon", "2026-06 Singapore"]
+    assert {ph["source"] for ph in trips[0]["photos"]} == {"phone-a"}
+    assert {ph["source"] for ph in trips[1]["photos"]} == {"phone-b"}
+    assert trips[0]["n"] == 21 and trips[1]["n"] == 21                          # none of the home photos
+    local = next(p for p in props if p["kind"] == "local")
+    assert local["n"] == 12 and {ph["source"] for ph in local["photos"]} == {"phone-a", "phone-b"}
+    page.goto(url + "/review")
+    expect(page.get_by_role("heading", name="Proposed clusters (3)")).to_be_visible()
+    expect(page.locator(f"#{trips[0]['id']} input[name=name]")).to_have_value("2026-06 Lisbon")
+    expect(page.locator(f"#{trips[1]['id']} input[name=name]")).to_have_value("2026-06 Singapore")
+    card = page.locator(f"#{trips[1]['id']}")
+    card.locator("details summary").click()
+    expect(card.locator("figcaption", has_text="phone-b")).to_have_count(21)
+    page.goto(url + "/everyday?month=2026-06")
+    assert page.locator(".thumbs figure").count() >= 40                        # the daily home photos of June
