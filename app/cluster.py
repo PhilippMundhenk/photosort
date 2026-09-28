@@ -237,9 +237,7 @@ def fill_gps_from_neighbours(cfg: Config, recs: list[dict], max_hours: float = 4
     times = {k: [recs[i]["_t"] for i in v] for k, v in groups.items()}
 
     def nearest(key, t):
-        idx = groups.get(key)
-        if not idx:
-            return None
+        idx = groups[key]                                   # the key was checked against `groups`
         k = bisect.bisect_left(times[key], t)
         cands = [idx[j] for j in (k - 1, k) if 0 <= j < len(idx)]
         best = min(cands, key=lambda j: abs((recs[j]["_t"] - t).total_seconds()))
@@ -347,15 +345,12 @@ def _device_excursions(cfg: Config, recs: list[dict]) -> list[list[dict]]:
             cur.append(r)
     if cur:
         runs.append(cur)
-    # drop leading/trailing GPS-less photos, then split on long gaps between different areas
+    # drop trailing GPS-less photos (a run always starts with a located one), then split on
+    # long gaps between different areas
     out = []
     for run in runs:
-        while run and run[0]["zone"] == geo.ZONE_UNKNOWN:
-            run.pop(0)
-        while run and run[-1]["zone"] == geo.ZONE_UNKNOWN:
+        while run[-1]["zone"] == geo.ZONE_UNKNOWN:
             run.pop()
-        if not run:
-            continue
         part = [run[0]]
         for prev, nxt in zip(run, run[1:], strict=False):
             gap_days = (nxt["_t"] - prev["_t"]).total_seconds() / 86400
