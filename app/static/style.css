@@ -59,3 +59,4 @@ code{font-size:12px;background:var(--line);padding:1px 5px;border-radius:4px}det
 /* phone width: fixed-width inputs must not push a card past the screen */
 .card{min-width:0;max-width:100%}.row{flex-wrap:wrap}
 .card input[type=text],.card input[type=number],.card textarea,.card select{max-width:100%;box-sizing:border-box}
+td,code,.card{overflow-wrap:anywhere}code{white-space:normal}table{table-layout:auto;max-width:100%}
