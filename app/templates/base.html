@@ -24,6 +24,7 @@
 <div id="busy" class="busy" data-page="{{ page }}" {% if not state.running %}hidden{% endif %}>
   <span class="spinner" aria-hidden="true"></span>
   <span id="busy-text">{% if state.running %}Working…{% endif %}</span>
+  <a id="busy-hint" href="" hidden></a>
 </div>
 <main>
 {% block content %}{% endblock %}

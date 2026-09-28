@@ -1,18 +1,49 @@
 // Progressive enhancement for the review pages. Everything works without it (plain forms);
-// with it, toggling a photo does not reload the page, and thumbnails open a full-size viewer.
+// with it, toggling a photo does not reload the page, moves show their progress in place and
+// thumbnails open a full-size viewer. The page never reloads itself: what the user is doing
+// (ticked photos, a name being typed, an open viewer) must survive a scan that finishes
+// meanwhile. When the results changed, the banner offers a reload instead.
 (function () {
   "use strict";
 
-  // --- toggle include/exclude in place -------------------------------------------------
+  // --- toggle include/exclude: instant, batched --------------------------------------------
+  // The photo flips at once; requests go out one at a time per proposal, and clicks made while
+  // one is in flight travel together in the next one. A page full of lazily loading thumbnails
+  // otherwise queues every click behind the browser's connection limit, and the fourth click
+  // waited for the first three to finish.
+  var toggles = {};
+  function flushToggles(pid) {
+    var q = toggles[pid];
+    if (!q || q.busy || !q.paths.length) return;
+    var paths = q.paths;
+    q.paths = [];
+    q.busy = true;
+    var fd = new FormData();
+    paths.forEach(function (p) { fd.append("path", p); });
+    fetch(q.action, {method: "POST", body: fd, headers: {"X-Requested-With": "fetch"}})
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+      .then(function (d) {
+        var ex = {};
+        (d.excluded_paths || []).forEach(function (p) { ex[p] = true; });
+        q.card.querySelectorAll("form[data-toggle]").forEach(function (f) {      // the server's view wins,
+          var p = f.querySelector("input[name=path]").value;                    // except for clicks still queued
+          if (q.paths.indexOf(p) < 0) f.closest("figure").classList.toggle("excluded", !!ex[p]);
+        });
+        q.card.classList.remove("unsaved");
+      })
+      .catch(function () { q.card.classList.add("unsaved"); })
+      .then(function () { q.busy = false; flushToggles(pid); });
+  }
   document.addEventListener("submit", function (ev) {
     var form = ev.target;
     if (!form.matches("form[data-toggle]")) return;
     ev.preventDefault();
-    var fig = form.closest("figure");
-    fetch(form.action, {method: "POST", body: new FormData(form), headers: {"X-Requested-With": "fetch"}})
-      .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
-      .then(function (d) { fig.classList.toggle("excluded", !!d.excluded); })
-      .catch(function () { form.submit(); });               // fall back to the full round trip
+    var card = form.closest(".card"), fig = form.closest("figure");
+    var pid = card ? card.id : form.action;
+    fig.classList.toggle("excluded");
+    var q = toggles[pid] || (toggles[pid] = {paths: [], busy: false, action: form.action, card: card || fig});
+    q.paths.push(form.querySelector("input[name=path]").value);
+    flushToggles(pid);
   });
 
   // --- rename without a button: saved as you type (proposals) or when the field is left (folders)
@@ -87,10 +118,17 @@
     });
   }, true);
 
-  // --- busy banner: scanning, clustering or moving, on every page ------------------------------
+  // --- one status poll per page: busy banner, move progress, "results changed" offer --------
   var busy = document.getElementById("busy");
   if (busy) {
-    var wasBusy = !busy.hidden, text = document.getElementById("busy-text");
+    var text = document.getElementById("busy-text"), hint = document.getElementById("busy-hint");
+    var page = busy.getAttribute("data-page");
+    var runsSeen = null, everydayWasMoving = false, reloading = false;
+    var stateless = page === "dashboard" || page === "log" || page === "clusters";
+    function fmt(a) {
+      var c = a.current;
+      return a.done + " / " + a.total + (c ? " · " + c.file + " (" + Math.round(c.bytes / 1048576) + " MB, " + c.seconds + " s)" : "");
+    }
     function describe(s) {
       var parts = [];
       if (s.state && s.state.running) {
@@ -99,40 +137,68 @@
         else if (p.phase === "clustering") parts.push("Clustering…");
         else parts.push("Working…");
       }
-      Object.keys(s.applying || {}).forEach(function (k) {
-        var a = s.applying[k], c = a.current;
-        parts.push("Moving " + a.name + ": " + a.done + " / " + a.total + (c ? " · " + c.file + " (" + Math.round(c.bytes / 1048576) + " MB, " + c.seconds + " s)" : ""));
-      });
+      Object.keys(s.applying || {}).forEach(function (k) { parts.push("Moving " + s.applying[k].name + ": " + fmt(s.applying[k])); });
       if (s.approved && !Object.keys(s.applying || {}).length && !s.dry_run) parts.push(s.approved + " approved, queued");
       return parts.join(" · ");
     }
-    setInterval(function () {
+    function offerReload(msg) {
+      // a page without user state just reloads (nothing to lose, no viewer open); any other page
+      // keeps what the user is doing and shows the offer until they take it
+      if (stateless && !document.querySelector(".viewer:not([hidden])")) { reloading = true; location.reload(); return; }
+      hint.textContent = msg + " — reload to see it";
+      hint.hidden = false;
+      busy.hidden = false;                                   // shown now, not on the next poll
+      if (!text.textContent) busy.classList.add("done");
+    }
+    function finished(el, what) {
+      var card = el.closest(".card");
+      if (!card || card.classList.contains("done")) return;
+      card.classList.add("done");
+      var failed = what.indexOf("failed") === 0;
+      var badge = card.querySelector(".badge.warn") || card.querySelector(".badge:not(.trip):not(.local):not(.home)");
+      if (badge) { badge.textContent = failed ? "failed" : "moved"; badge.className = "badge " + (failed ? "bad" : "ok"); }
+      el.textContent = failed ? what : "done";
+      offerReload("Files were moved");
+    }
+    function progressCards(s) {
+      document.querySelectorAll("[data-progress]").forEach(function (el) {
+        var pid = el.getAttribute("data-progress");
+        var a = (s.applying || {})[pid];
+        if (a) { el.textContent = fmt(a); el.dataset.seen = "1"; return; }
+        if (pid === "everyday") {
+          if (!s.everyday_queued && (el.dataset.seen || everydayWasMoving)) finished(el, "moved");
+          return;
+        }
+        var q = (s.queue || {})[pid];
+        if (q === "queued") { el.dataset.seen = "1"; return; }
+        if (q) { finished(el, q); return; }                              // "failed: ..."
+        if (el.dataset.seen) finished(el, "moved");
+        else el.dataset.seen = "1";                     // first sight: approved but not yet queued; next tick tells
+      });
+    }
+    var timer = null;
+    function schedule(fast) { clearTimeout(timer); timer = setTimeout(tick, fast ? 2000 : 5000); }
+    function tick() {
+      if (reloading) return;                                 // a reload is on its way: no second one
+      if (document.hidden) { schedule(false); return; }
       fetch("/api/status").then(function (r) { return r.json(); }).then(function (s) {
         var msg = describe(s), isBusy = !!msg;
-        busy.hidden = !isBusy;
-        if (isBusy) text.textContent = msg;
-        var page = busy.getAttribute("data-page");
-        if (wasBusy && !isBusy && page !== "settings" && page !== "everyday") location.reload();   // fresh counts
-        wasBusy = isBusy;
-      }).catch(function () {});
-    }, 2000);
-  }
-
-  // --- moving in the background: refresh progress, reload when done -------------------------
-  if (document.querySelector("[data-poll]")) {
-    var poll = setInterval(function () {
-      fetch("/api/status").then(function (r) { return r.json(); }).then(function (s) {
-        Object.keys(s.applying || {}).forEach(function (pid) {
-          var el = document.querySelector('[data-progress="' + pid + '"]');
-          var a = s.applying[pid], c = a.current;
-          if (el) el.textContent = a.done + " / " + a.total + (c ? " · " + c.file + " (" + Math.round(c.bytes / 1048576) + " MB, " + c.seconds + " s)" : "");
-        });
-        var everyday = document.querySelector('[data-poll="everyday"]');
-        if (everyday && !(s.applying && s.applying.everyday)) { clearInterval(poll); location.reload(); }
-        var shown = document.querySelectorAll('[data-poll="approved"] .card').length;
-        if (shown && s.approved < shown) { clearInterval(poll); location.reload(); }
-      }).catch(function () {});
-    }, 2000);
+        text.textContent = isBusy ? msg : "";
+        busy.hidden = !isBusy && hint.hidden;
+        busy.classList.toggle("done", !isBusy && !hint.hidden);
+        if (s.applying && s.applying.everyday) everydayWasMoving = true;
+        progressCards(s);
+        if (runsSeen === null) runsSeen = s.state.runs;
+        else if (s.state.runs !== runsSeen && !s.state.running) {
+          runsSeen = s.state.runs;
+          if (page !== "settings") offerReload("Run finished, " + s.pending + " proposal" + (s.pending === 1 ? "" : "s") + " waiting");
+        }
+        schedule(isBusy);
+      }).catch(function () { schedule(false); });
+    }
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) { clearTimeout(timer); tick(); } });
+    hint.addEventListener("click", function (ev) { ev.preventDefault(); location.reload(); });
+    tick();
   }
 
   // --- settings: switching dry-run off is the one action that lets files move ------------------
