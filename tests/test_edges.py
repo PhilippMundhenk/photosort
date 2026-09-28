@@ -580,3 +580,28 @@ def test_apply_records_files_already_in_the_folder_and_skips_vanished_ones(cfg, 
     assert str(dest) in {p["dst"] for p in m["photos"]}                          # recorded although not moved now
     assert str(second) not in {p["src"] for p in m["photos"]}
     assert mover.undo(cfg, folder) == local["n"] - 1 and first.exists()
+
+
+def test_cluster_actions_refuse_folders_outside_the_sorted_root(client, library, tmp_path):
+    """The forms name a folder; a request must not be able to rename, undo or empty anything but
+    a cluster folder under the root (nor the root itself)."""
+    cfg = config.load()
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("x", encoding="utf-8")
+    inbox = Path(cfg.inboxes[0]["path"])
+    for folder in (str(outside), cfg.root, str(inbox), str(Path(cfg.root) / ".." / "phone-a"), "/", "relative/x"):
+        assert client.get("/clusters/view", params={"folder": folder}).status_code == 400, folder
+        assert client.post("/cluster/rename", data={"folder": folder, "name": "gotcha"}).status_code == 400, folder
+        assert client.post("/cluster/undo", data={"folder": folder}).status_code == 400, folder
+        r = client.post("/cluster/move_out", data={"folder": folder, "photo": str(outside / "keep.txt")})
+        assert r.status_code == 400, folder
+        assert client.post("/cluster/put_back", data={"folder": folder, "src": "x"}).status_code == 400, folder
+    assert (outside / "keep.txt").exists() and all(p.exists() for p in library.paths)
+    cluster.run(cfg)
+    local = _kind("local")
+    mover.apply(cfg, local, reviewed=True)
+    folder = mover.target_folder(cfg, local)
+    r = client.post("/cluster/move_out", data={"folder": str(folder), "photo": str(library.paths[0])})
+    assert r.status_code == 400 and library.paths[0].exists()                # a photo outside that folder
+    assert client.get("/clusters/view", params={"folder": str(folder)}).status_code == 200

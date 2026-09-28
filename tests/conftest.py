@@ -32,6 +32,11 @@ def data_dir() -> Path:
     if any(t.name == "apply" for t in threading.enumerate()):
         from app import main
         main.wait_for_apply(60)            # nor a background move started by a web test
+    import sys
+    if "app.main" in sys.modules:
+        from app import main
+        with main._lock:                   # nor a pipeline run a previous test's scheduler kicked off:
+            pass                           # it would write its proposals into the wiped dir
     d = config.DATA_DIR
     if d.exists():
         shutil.rmtree(d)

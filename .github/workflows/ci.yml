@@ -33,6 +33,11 @@ jobs:
         run: docker run --rm photosort-test:local
       - name: Smoke script
         run: docker run --rm photosort-test:local python -m tests.smoke
+      - name: The compose files are valid with the example environment
+        run: |
+          cp .env.example .env
+          docker compose -f docker-compose.yml config -q
+          docker compose -f docker-compose.test.yml config -q
       - name: Build the runtime image (this platform)
         uses: docker/build-push-action@v6
         with:

@@ -51,6 +51,8 @@ def _props_text() -> str:
     try:
         st = PROPOSALS_PATH.stat()
     except OSError:
+        with _save_lock:                  # the file is gone (deleted to start over): so is what it said
+            _props_cache.update(stamp=None, text="", counts=None)
         return ""
     stamp = (st.st_mtime_ns, st.st_size)
     with _save_lock:
