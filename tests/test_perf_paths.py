@@ -142,3 +142,13 @@ def test_record_written_during_a_full_reload_is_not_lost(cfg, library, monkeypat
     monkeypatch.setattr(cluster, "_load_records", real)
     recs, _ = cluster.load_records(cfg)
     assert str(late[0]) in {r["path"] for r in recs}                       # and patched in next time
+
+
+def test_deleting_the_proposals_file_resets_the_counts_too(data_dir):
+    """Deleting proposals.json is the way to start over; the status poll must not keep
+    reporting the old counts from its cache."""
+    cluster.save_proposals({"a": {"status": "pending", "photos": []}, "b": {"status": "approved", "photos": []}})
+    assert cluster.status_counts() == {"pending": 1, "approved": {"b": None}}
+    cluster.PROPOSALS_PATH.unlink()
+    assert cluster.load_proposals() == {}
+    assert cluster.status_counts() == {"pending": 0, "approved": {}}

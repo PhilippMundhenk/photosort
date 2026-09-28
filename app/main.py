@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -384,8 +384,22 @@ def clusters(request: Request):
     return render(request, "clusters.html", clusters=mover.list_clusters(cfg))
 
 
+def _cluster_folder(cfg: config.Config, folder: str) -> Path:
+    """A folder named by a form must lie inside the sorted root: the cluster actions rename, undo
+    and move files, and a request must not be able to point them anywhere else."""
+    p = Path(folder)
+    try:
+        inside = p.resolve().is_relative_to(Path(cfg.root).resolve())
+    except OSError:
+        inside = False
+    if not inside or p.resolve() == Path(cfg.root).resolve():
+        raise HTTPException(status_code=400, detail=f"{folder} is not a cluster folder under {cfg.root}")
+    return p
+
+
 @app.get("/clusters/view", response_class=HTMLResponse)
 def cluster_view(request: Request, folder: str):
+    _cluster_folder(config.load(), folder)
     m = mover.read_manifest(Path(folder))
     return render(request, "cluster.html", m=m, folder=folder)
 
@@ -563,6 +577,7 @@ async def approve_all(request: Request):
 @app.post("/cluster/rename")
 def cluster_rename(request: Request, folder: str = Form(...), name: str = Form(...), remember_place: str = Form("")):
     cfg = config.load()
+    _cluster_folder(cfg, folder)
     try:
         dst = mover.rename(cfg, Path(folder), name)
     except mover.FolderInUse as e:
@@ -589,6 +604,7 @@ def cluster_rename(request: Request, folder: str = Form(...), name: str = Form(.
 @app.post("/cluster/undo")
 def cluster_undo(folder: str = Form(...)):
     cfg = config.load()
+    _cluster_folder(cfg, folder)
     mover.undo(cfg, Path(folder))
     with _props_lock:
         props = cluster.load_proposals()
@@ -618,6 +634,9 @@ def _set_excluded(folder: Path, path: str, excluded: bool) -> None:
 @app.post("/cluster/move_out")
 def cluster_move_out(folder: str = Form(...), photo: str = Form(...)):
     cfg = config.load()
+    _cluster_folder(cfg, folder)
+    if not Path(photo).resolve().is_relative_to(_cluster_folder(cfg, folder).resolve()):
+        raise HTTPException(status_code=400, detail="the photo is not in that folder")
     entry = mover.move_out(cfg, Path(folder), Path(photo))
     if entry:
         _set_excluded(Path(folder), entry["src"], True)
@@ -629,6 +648,7 @@ def cluster_move_out(folder: str = Form(...), photo: str = Form(...)):
 @app.post("/cluster/put_back")
 def cluster_put_back(folder: str = Form(...), src: str = Form(...)):
     cfg = config.load()
+    _cluster_folder(cfg, folder)
     try:
         entry = mover.put_back(cfg, Path(folder), Path(src))
     except FileNotFoundError as e:

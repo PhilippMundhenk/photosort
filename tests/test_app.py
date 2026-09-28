@@ -195,7 +195,10 @@ def test_dry_run_never_moves_anything_whatever_the_ui_does(client, library, tmp_
     r = client.post("/cluster/rename", data={"folder": str(Path(cfg.root) / "nothing"), "name": "x"})
     assert r.status_code == 409 and "Dry-run is on" in r.text                            # refused, not a 500
     r = client.post("/cluster/move_out", data={"folder": str(Path(cfg.root) / "nothing"), "photo": inbox_before[0]})
-    assert r.status_code == 409
+    assert r.status_code == 400                                                          # not in that folder: refused
+    r = client.post("/cluster/move_out", data={"folder": str(Path(cfg.root) / "nothing"),
+                                               "photo": str(Path(cfg.root) / "nothing" / "gone.jpg")})
+    assert r.status_code in (303, 409)                                                   # nothing there: nothing moved
     inbox_after = sorted(str(p) for p in Path(cfg.inboxes[0]["path"]).rglob("*") if p.is_file())
     inbox_after += sorted(str(p) for p in Path(cfg.inboxes[1]["path"]).rglob("*") if p.is_file())
     assert inbox_after == inbox_before
@@ -612,7 +615,10 @@ def test_cluster_rename_remembers_place(client, library):
 
 
 def test_cluster_view_of_non_cluster_folder(client, tmp_path):
-    r = client.get("/clusters/view", params={"folder": str(tmp_path)})
+    assert client.get("/clusters/view", params={"folder": str(tmp_path)}).status_code == 400   # outside the root
+    plain = Path(config.load().root) / "just-a-folder"
+    plain.mkdir(parents=True)
+    r = client.get("/clusters/view", params={"folder": str(plain)})
     assert r.status_code == 200 and "Not a cluster folder" in r.text
 
 
