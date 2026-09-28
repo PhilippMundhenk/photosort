@@ -176,6 +176,7 @@ HELPER_MEMORY_MB = 768           # a decode needing more raises MemoryError in t
 IN_PROCESS = False               # tests that patch the generators set this
 _pool = None
 _pool_lock = threading.Lock()
+_stopping = False                # set by shutdown(): the prefetch stops, no new helper is started
 
 
 def _limit_memory() -> None:
@@ -234,7 +235,8 @@ def _run_generate(photo: Path, dst: Path, size: tuple[int, int]) -> Path | None:
 
 def shutdown() -> None:
     """Stop the helper process (tests, server shutdown)."""
-    global _pool
+    global _pool, _stopping
+    _stopping = True
     with _pool_lock:
         pool, _pool = _pool, None
     if pool is not None:
@@ -313,6 +315,8 @@ def prefetch(cfg: Config, photos: list[Path]) -> threading.Thread | None:
     def work():
         n, todo = 0, 0
         for p in photos:
+            if _stopping:
+                return
             if nas_thumb(cfg, p) or cache_path(p).exists() or known_failure(p, cache_path(p)):
                 continue
             todo += 1
@@ -323,9 +327,10 @@ def prefetch(cfg: Config, photos: list[Path]) -> threading.Thread | None:
             time.sleep(PREFETCH_PAUSE_S)
         log.info("thumbnails: %d generated, %d skipped", n, todo - n)
 
-    global _worker
+    global _worker, _stopping
     if _worker is not None and _worker.is_alive():
         return _worker                                        # one at a time; the next run picks up the rest
+    _stopping = False
     _worker = threading.Thread(target=work, name="thumbs", daemon=True)
     _worker.start()
     return _worker

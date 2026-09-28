@@ -185,3 +185,28 @@ def test_pages_warn_when_inbox_and_root_are_on_different_mounts(client, library,
     for page in ("/", "/review", "/settings"):
         assert "Slow moves" in client.get(page).text
     assert "Slow moves" not in client.get("/everyday").text
+
+
+def test_a_failed_move_is_not_retried_by_every_run(client, library, monkeypatch):
+    """A proposal whose move failed waits for the retry button; the scheduled run must not
+    hammer a read-only share every ten minutes (and log a failure each time)."""
+    cfg = config.load()
+    cfg.dry_run = False
+    config.save(cfg)
+    cluster.run(cfg)
+    local = _kind("local")
+    calls = []
+
+    def failing(*a, **k):
+        calls.append(1)
+        raise PermissionError(13, "Permission denied", cfg.root)
+    monkeypatch.setattr(mover, "apply", failing)
+    client.post(f"/proposal/{local['id']}/approve")
+    main.wait_for_apply()
+    assert len(calls) == 1 and cluster.load_proposals()[local["id"]]["error"]
+    stats = main.run_pipeline("schedule")
+    main.wait_for_apply()
+    assert stats["queued"] == 0 and len(calls) == 1                    # not queued again by the run
+    client.post(f"/proposal/{local['id']}/approve")                   # retry: tried once more
+    main.wait_for_apply()
+    assert len(calls) == 2

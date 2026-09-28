@@ -191,9 +191,9 @@ def run_pipeline(trigger: str = "schedule") -> dict:
                 if queued:
                     cluster.save_proposals(props)
                 waiting = list(_apply_queue.queue)                # approved earlier but never moved (a restart
-                queued += [pid for pid, pr in props.items()       # mid-way, an edit of the file): pick them up
+                queued += [pid for pid, pr in props.items()       # mid-way, an edit of the file): pick them up;
                            if pr["status"] == "approved" and pid not in queued and pid not in waiting
-                           and pid not in _applying]
+                           and pid not in _applying and not pr.get("error")]   # a failed one waits for "retry"
             if cfg.auto_apply_everyday:
                 applied += mover.apply_everyday(cfg, min_age_days=cfg.everyday_keep_days)
                 mover.invalidate_clusters()
