@@ -156,30 +156,51 @@ def apply(cfg: Config, pr: dict, reviewed: bool = False, progress=None) -> dict:
     folder = target_folder(cfg, pr)
     copy = cfg.copy_instead_of_move
     excluded = set(pr.get("excluded", []))
-    moved = []
+    moved: list[dict] = []
     xmp_jobs: list[tuple[Path, list[str]]] = []
     total = len(pr["photos"])
+    # an earlier manifest in the folder (the same trip applied before: photos that synced late; or
+    # this very apply, cut short by a crash or a failure and now continued) is extended, never replaced,
+    # so undo always knows every file that went in
+    earlier = read_manifest(folder) or {}
+
+    def manifest(partial: bool) -> dict:
+        m = {"name": pr["name"], "kind": pr["kind"], "start": pr["start"], "end": pr["end"],
+             "proposal_id": pr["id"], "decision": pr["decision"], "applied": _now(), "mode": _mode(cfg),
+             "reviewed": reviewed, "label": earlier.get("label"), "photos": earlier.get("photos", []) + moved,
+             "corrections": earlier.get("corrections", [])}
+        if earlier.get("photos"):
+            m["start"] = min(m["start"], earlier.get("start") or m["start"])
+            m["end"] = max(m["end"], earlier.get("end") or m["end"])
+        if partial:
+            m["partial"] = True
+        return m
+
+    recorded = {e["src"] for e in earlier.get("photos", [])}
     for i, p in enumerate(pr["photos"], 1):
         if progress:
             progress(i - 1, total, _current(Path(p["path"])))
         src = Path(p["path"])
-        if p["path"] in excluded or not src.exists():
+        if p["path"] in excluded:
             continue
         dst_dir = folder / p["source"] if (cfg.subfolder_by_source and p.get("source")) else folder
         in_review = bool(p.get("uncertain")) and not reviewed
         if in_review:
             dst_dir = dst_dir / cfg.review_dir
+        if not src.exists():
+            # gone from the inbox already. If it sits in the folder without a manifest entry, this
+            # apply was cut short (a crash between two manifest writes): record it now
+            there = dst_dir / src.name
+            if p["path"] not in recorded and there.exists():
+                moved.append({"src": p["path"], "dst": str(there), "conf": p["conf"], "zone": p["zone"],
+                              "media": p.get("media", "photo"), "source": p.get("source"), "inbox": p.get("inbox"),
+                              "uncertain": bool(p.get("uncertain")), "in_review": in_review})
+            continue
         try:
             dst = _transfer(cfg, src, dst_dir, copy)
         except Exception:
             if moved:                         # what did move stays undoable: a manifest for the part done
-                earlier = read_manifest(folder) or {}
-                write_manifest(folder, {"name": pr["name"], "kind": pr["kind"], "start": pr["start"],
-                                        "end": pr["end"], "proposal_id": pr["id"], "decision": pr["decision"],
-                                        "applied": _now(), "mode": _mode(cfg), "reviewed": reviewed,
-                                        "label": earlier.get("label"), "partial": True,
-                                        "corrections": earlier.get("corrections", []),
-                                        "photos": earlier.get("photos", []) + moved})
+                write_manifest(folder, manifest(partial=True))
             raise
         _settle(cfg, dst, {"cluster": pr["name"],
                            "decision": {"by": pr["decision"]["by"], "conf": p["conf"], "kind": pr["kind"]}})
@@ -190,28 +211,22 @@ def apply(cfg: Config, pr: dict, reviewed: bool = False, progress=None) -> dict:
         moved.append({"src": p["path"], "dst": str(dst), "conf": p["conf"], "zone": p["zone"],
                       "media": p.get("media", "photo"), "source": p.get("source"), "inbox": p.get("inbox"),
                       "uncertain": bool(p.get("uncertain")), "in_review": in_review})
+        if len(moved) % MANIFEST_EVERY == 0:  # a crash (power, a kill) mid-way loses at most this many entries
+            write_manifest(folder, manifest(partial=True))
     if xmp_jobs:
         if progress:
             progress(total, total, {"file": f"keywords for {len(xmp_jobs)} files", "bytes": 0, "since": time.time()})
         ingest.write_xmp_keywords_batch(xmp_jobs)               # one exiftool start, not one per file
     if progress:
         progress(total, total, None)
-    manifest = {
-        "name": pr["name"], "kind": pr["kind"], "start": pr["start"], "end": pr["end"],
-        "proposal_id": pr["id"], "decision": pr["decision"], "applied": _now(), "mode": _mode(cfg),
-        "reviewed": reviewed, "label": None, "photos": moved,
-    }
-    earlier = read_manifest(folder)
-    if earlier and earlier.get("photos"):           # the same trip again (photos that synced late): one folder,
-        manifest["photos"] = earlier["photos"] + moved          # one manifest, so undo still knows everything
-        manifest["start"] = min(manifest["start"], earlier.get("start") or manifest["start"])
-        manifest["end"] = max(manifest["end"], earlier.get("end") or manifest["end"])
-        manifest["corrections"] = earlier.get("corrections", [])
-        manifest["label"] = earlier.get("label")
-    write_manifest(folder, manifest)
+    m = manifest(partial=False)
+    write_manifest(folder, m)
     events.log("apply", proposal=pr["id"], cluster_kind=pr["kind"], name=pr["name"], n=len(moved),
                mode=_mode(cfg), reviewed=reviewed, decision_id=pr["decision"].get("id"))
-    return manifest
+    return m
+
+
+MANIFEST_EVERY = 25
 
 
 def everyday_movable(cfg: Config, min_age_days: float, recs: list[dict] | None = None) -> list[dict]:

@@ -305,7 +305,9 @@ def _exif_dt(s: str, offset: str = "") -> datetime | None:
         return dt.replace(tzinfo=timezone.utc)
     if off and off[0] in "+-" and len(off) >= 6 and off[1:3].isdigit() and off[4:6].isdigit():
         sign = 1 if off[0] == "+" else -1
-        return dt.replace(tzinfo=timezone(sign * timedelta(hours=int(off[1:3]), minutes=int(off[4:6]))))
+        delta = timedelta(hours=int(off[1:3]), minutes=int(off[4:6]))
+        if delta <= timedelta(hours=14):                       # real zones end at +14:00; beyond is a corrupt tag
+            return dt.replace(tzinfo=timezone(sign * delta))
     return dt
 
 
@@ -382,8 +384,9 @@ def _camera(tags: dict, source: str | None) -> tuple[str | None, str | None]:
 
 def build_record(cfg: Config, photo: Path, tags: dict, source: str | None = None) -> dict:
     lat, lon = _num(tags.get("GPSLatitude")), _num(tags.get("GPSLongitude"))
-    if lat is None or lon is None or (lat == 0.0 and lon == 0.0):
-        lat = lon = None                                   # "0 0": a phone without a fix, not the Gulf of Guinea
+    if lat is None or lon is None or (lat == 0.0 and lon == 0.0) or abs(lat) > 90 or abs(lon) > 180:
+        lat = lon = None                                   # "0 0": a phone without a fix, not the Gulf of Guinea;
+                                                           # out of range: a corrupt tag, not a position
     video = is_video(photo, tags)
     camera, camera_source = _camera(tags, source)
     ts, ts_source = _parse_dt(tags, video=video, tz=tzinfo(cfg), name=photo.name)

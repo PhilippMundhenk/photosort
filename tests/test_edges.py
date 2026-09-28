@@ -552,3 +552,31 @@ def test_resource_limits_cope_with_finite_hard_limits_and_refusals(monkeypatch):
     monkeypatch.setattr(resource, "setrlimit", lambda kind, lim: (_ for _ in ()).throw(ValueError("not permitted")))
     thumbs._limit_memory()                                                  # refused: the helper runs uncapped
     thumbs._unlimited()
+
+
+def test_geocoder_gives_nothing_when_both_apis_fail(monkeypatch):
+    import reverse_geocode
+    geo._lookup.cache_clear()
+    monkeypatch.setattr(reverse_geocode, "GeocodeData", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    monkeypatch.setattr(reverse_geocode, "get", lambda *a, **k: (_ for _ in ()).throw(ValueError("y")))
+    assert geo.reverse(config.Config(), 38.72, -9.14) == {"city": "", "region": "", "place": "", "country": "",
+                                                          "country_code": ""}
+    geo._lookup.cache_clear()
+
+
+def test_apply_records_files_already_in_the_folder_and_skips_vanished_ones(cfg, library):
+    """A continuation after a crash finds files in the folder without a manifest entry and
+    records them; a source that vanished from the inbox and is not in the folder is skipped."""
+    cluster.run(cfg)
+    local = _kind("local")
+    folder = mover.target_folder(cfg, local)
+    first, second = Path(local["photos"][0]["path"]), Path(local["photos"][1]["path"])
+    dest = folder / local["photos"][0]["source"] / first.name                    # "moved" before the crash
+    dest.parent.mkdir(parents=True)
+    first.rename(dest)
+    second.unlink()                                                              # gone for good
+    m = mover.apply(cfg, local, reviewed=True)
+    assert len(m["photos"]) == local["n"] - 1
+    assert str(dest) in {p["dst"] for p in m["photos"]}                          # recorded although not moved now
+    assert str(second) not in {p["src"] for p in m["photos"]}
+    assert mover.undo(cfg, folder) == local["n"] - 1 and first.exists()

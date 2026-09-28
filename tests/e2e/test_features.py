@@ -259,3 +259,25 @@ def test_sidecar_buttons_and_log_filters(server, page):
     assert set(page.locator("table span.badge").all_inner_texts()) == {"apply"}
     page.goto(url + "/log")
     assert len(set(page.locator("table span.badge").all_inner_texts())) >= 3
+
+
+def test_pages_fit_a_phone_screen(server, browser):
+    """At 400 px width nothing scrolls sideways and the main controls stay reachable."""
+    url = server["url"]
+    ctx = browser.new_context(viewport={"width": 400, "height": 800}, device_scale_factor=2)
+    pg = ctx.new_page()
+    pg.set_default_timeout(15_000)
+    try:
+        for path in ("/", "/review", "/everyday", "/clusters", "/log", "/settings"):
+            pg.goto(url + path)
+            pg.wait_for_load_state("load")
+            width, inner = pg.evaluate("[document.documentElement.scrollWidth, window.innerWidth]")
+            assert width <= inner + 1, f"{path} scrolls sideways: {width} > {inner}"
+            assert pg.get_by_role("button", name="Run now").is_visible()
+        pg.goto(url + "/review")
+        cards = pg.locator(".card[id]")
+        if cards.count():
+            box = cards.first.bounding_box()
+            assert box and box["x"] >= 0 and box["x"] + box["width"] <= 400 + 1
+    finally:
+        ctx.close()

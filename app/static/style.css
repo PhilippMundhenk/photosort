@@ -56,3 +56,6 @@ code{font-size:12px;background:var(--line);padding:1px 5px;border-radius:4px}det
 .badge.ok{background:#2e7d32;color:#fff}
 .card.done{opacity:.7}
 .card.unsaved{outline:2px solid var(--warn)}.card.unsaved::after{content:"a change was not saved — reload";display:block;color:var(--warn);font-size:12px;margin-top:6px}
+/* phone width: fixed-width inputs must not push a card past the screen */
+.card{min-width:0;max-width:100%}.row{flex-wrap:wrap}
+.card input[type=text],.card input[type=number],.card textarea,.card select{max-width:100%;box-sizing:border-box}

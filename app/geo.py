@@ -55,7 +55,10 @@ def _lookup(lat3: float, lon3: float) -> dict:
             c["country"] = data._countries.get(c["country_code"], "")
             c["distance_km"] = haversine_km(lat3, lon3, c["latitude"], c["longitude"])
     except Exception:  # noqa: BLE001  (library internals changed: fall back to the public API)
-        r = reverse_geocode.get((lat3, lon3))
+        try:
+            r = reverse_geocode.get((lat3, lon3))
+        except Exception:  # noqa: BLE001  (a coordinate the library cannot take: no place, no crash)
+            return {}
         return dict(r) if r else {}
     if not cands:
         return {}
