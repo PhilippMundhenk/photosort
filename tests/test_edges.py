@@ -9,6 +9,7 @@ import threading
 import time
 from concurrent.futures import TimeoutError as FutureTimeout
 from concurrent.futures.process import BrokenProcessPool
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -492,3 +493,62 @@ def test_everyday_move_button_while_a_job_is_already_queued(client, library):
     assert r.status_code == 303
     assert list(main._apply_queue.queue).count(main.EVERYDAY_JOB) <= 1      # not queued twice
     main.wait_for_apply()
+
+
+# --- the last corners -----------------------------------------------------------------------------
+
+def test_helper_limits_and_missing_tools(monkeypatch, tmp_path):
+    thumbs._limit_memory()                                                  # runs in the helper normally
+    thumbs._unlimited()                                                     # and in its ffmpeg/exiftool children
+    assert thumbs._stamp(Path("/no/such/file")) == ""
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    assert thumbs._raw_preview(tmp_path / "x.dng") is None                  # no exiftool
+    assert thumbs._video_frame(tmp_path / "x.mp4", tmp_path / "t.jpg", 440) is False   # no ffmpeg
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_broken_video_gives_no_frame(cfg, tmp_path):
+    clip = tmp_path / "broken.mp4"
+    clip.write_bytes(b"\0\0\0\x18ftypisom" + b"\0" * 100)
+    assert thumbs.get(cfg, clip) is None                                    # both seeks failed
+
+
+def test_raw_preview_in_an_odd_mode_is_converted(cfg, tmp_path, monkeypatch):
+    raw = tmp_path / "shot.dng"
+    raw.write_bytes(b"II*\0")
+    monkeypatch.setattr(thumbs, "_raw_preview", lambda src: Image.new("RGBA", (600, 400), (1, 2, 3, 4)))
+    t = thumbs.get(cfg, raw)
+    with Image.open(t) as im:
+        assert im.mode == "RGB" and im.size == (440, 293)
+
+
+def test_index_housekeeping_with_non_record_json_and_a_busy_folder(cfg, library, monkeypatch):
+    (ingest.INDEX_DIR / "list.json").parent.mkdir(parents=True, exist_ok=True)
+    (ingest.INDEX_DIR / "list.json").write_text("[1, 2]", encoding="utf-8")   # valid JSON, not a record
+    assert ingest.migrate_sidecars(cfg)["moved"] == 0
+    sub = Path(cfg.inboxes[0]["path"]) / "alone"
+    lonely = library.photo(sub, T0 + timedelta(days=100), synth.HOME)         # a record in its own folder
+    monkeypatch.setattr(Path, "rmdir", lambda self: (_ for _ in ()).throw(OSError("busy")))
+    assert ingest.delete_sidecar(lonely, cfg) is True                       # the empty folder stays, no error
+    assert ingest.sidecar_path(lonely, cfg).parent.exists()
+
+
+@pytest.mark.skipif(shutil.which("exiftool") is None, reason="exiftool not installed")
+def test_apply_with_keywords_and_without_progress(cfg, library):
+    cfg.write_xmp_sidecar = True
+    cluster.run(cfg)
+    local = _kind("local")
+    mover.apply(cfg, local, reviewed=True)
+    assert len(list(mover.target_folder(cfg, local).rglob("*.xmp"))) == local["n"]
+
+
+def test_resource_limits_cope_with_finite_hard_limits_and_refusals(monkeypatch):
+    import resource
+    calls = []
+    monkeypatch.setattr(resource, "getrlimit", lambda kind: (10 * 1024 ** 2, 20 * 1024 ** 2))   # a finite hard cap
+    monkeypatch.setattr(resource, "setrlimit", lambda kind, lim: calls.append(lim))
+    thumbs._limit_memory()
+    assert calls == [(20 * 1024 ** 2, 20 * 1024 ** 2)]                       # never above the hard cap
+    monkeypatch.setattr(resource, "setrlimit", lambda kind, lim: (_ for _ in ()).throw(ValueError("not permitted")))
+    thumbs._limit_memory()                                                  # refused: the helper runs uncapped
+    thumbs._unlimited()

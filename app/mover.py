@@ -288,12 +288,14 @@ def rename(cfg: Config, folder: Path, new_name: str) -> Path:
     # a named home burst leaves _unnamed
     dst = root / new_name if folder.parent.name == cfg.unnamed_dir else folder.with_name(new_name)
     dst = _unique(dst)
-    for attempt in range(8):                        # Windows: a folder with an open file (a thumbnail being
+    attempt = 0
+    while True:                                     # Windows: a folder with an open file (a thumbnail being
         try:                                        # generated, a video being streamed) cannot be renamed
             folder.rename(dst)
             break
         except PermissionError as e:
-            if attempt == 7:
+            attempt += 1
+            if attempt == 8:
                 raise FolderInUse(f"{folder.name}: a file in it is still open (thumbnail or video); try again") from e
             time.sleep(0.25)
     m = read_manifest(dst)

@@ -220,17 +220,22 @@ def _run_generate(photo: Path, dst: Path, size: tuple[int, int]) -> Path | None:
     from concurrent.futures import CancelledError
     from concurrent.futures import TimeoutError as FutureTimeout
     from concurrent.futures.process import BrokenProcessPool
-    for attempt in (1, 2):                       # the helper may have been replaced under us by another
-        pool = _helper()                         # thread (its job crashed it): once more on a fresh one
-        try:
-            return pool.submit(generate, photo, dst, size).result(timeout=GENERATE_TIMEOUT_S)
-        except (BrokenProcessPool, FutureTimeout, CancelledError, OSError, RuntimeError) as e:
-            log.warning("thumbnail helper failed on %s (%s): %s", photo.name, attempt, type(e).__name__)
-            if isinstance(e, FutureTimeout) or attempt == 2:
-                _drop_helper(pool)
-                return None
-            _drop_helper(pool)
-    return None
+    errors = (BrokenProcessPool, FutureTimeout, CancelledError, OSError, RuntimeError)
+    pool = _helper()
+    try:
+        return pool.submit(generate, photo, dst, size).result(timeout=GENERATE_TIMEOUT_S)
+    except errors as e:
+        log.warning("thumbnail helper failed on %s: %s", photo.name, type(e).__name__)
+        _drop_helper(pool)
+        if isinstance(e, FutureTimeout):         # the file itself is the problem: no second try
+            return None
+    pool = _helper()                             # the helper may have been replaced under us by another
+    try:                                         # thread (its job crashed it): once more on a fresh one
+        return pool.submit(generate, photo, dst, size).result(timeout=GENERATE_TIMEOUT_S)
+    except errors as e:
+        log.warning("thumbnail helper failed twice on %s: %s", photo.name, type(e).__name__)
+        _drop_helper(pool)
+        return None
 
 
 def shutdown() -> None:
