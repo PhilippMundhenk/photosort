@@ -150,7 +150,8 @@ docker compose -f docker-compose.test.yml run --rm tests pytest -m e2e -v
 |---|---|---|
 | unit | `tests/test_{geo,config,ingest,events,cluster,devices,mover,video,thumbs,manual,sidecars,perf_paths}.py` | rules, two devices, coercion, records, moving/copying, videos, thumbnails (helper process), manual clusters, caches and hot paths |
 | web e2e | `tests/test_app.py`, `tests/test_live_pages.py`, `tests/test_moving_matrix.py` | every page and form action through FastAPI's TestClient; batched clicks, a run finishing mid-review; every way a file can move against dry-run, live-with-switches-off and each switch |
-| browser e2e | `tests/e2e/test_browser.py`, `tests/e2e/test_smooth.py` | real uvicorn + headless Chromium (Playwright): the review flow; no reload while the user works, hidden-tab polling, a 4000-photo library |
+| scale | `tests/test_perf_scale.py` | 20 000 records clustered, 5 000 records loaded from disk, a 3 000-photo proposal through the web layer; latencies printed with `pytest -s`, generous bounds |
+| browser e2e | `tests/e2e/test_browser.py`, `tests/e2e/test_smooth.py`, `tests/e2e/test_features.py` | real uvicorn + headless Chromium (Playwright): the review flow; no reload while the user works, hidden-tab polling, a 4000-photo library; every feature end to end (everyday selection and manual clusters, keyboard, viewer, remembered places, approve all, the everyday move button, settings dialogs, home detection, sidecar buttons, log filters, month navigation, dashboard) |
 | smoke | `python -m tests.smoke` | one synthetic end-to-end run without pytest |
 
 Locally without Docker (needs exiftool and `playwright install chromium`):

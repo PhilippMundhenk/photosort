@@ -264,7 +264,14 @@ its id; the larger half keeps it when a late home photo splits an old one in two
 - The app is one ~60 MB container; the decision-model container that was planned next to it
   (~1 GB resident) is gone with the model (section 10).
 - No JS build, no CDN: server-rendered Jinja templates and plain forms.
-- Moves are `rename()` on the same mount; inbox and target must share it.
+- Moves are `rename()` on the same mount; inbox and target must share it. That means one
+  bind mount for both (`PHOTOS_BASE:/photos`): two bind mounts of the same share are two mount
+  points inside the container, `rename()` fails with EXDEV, and `shutil.move` copies every
+  file through the container and back over the network (87 files took minutes, September
+  2026). The pages warn when an inbox and the root are on different devices. On a read-only
+  inbox such a copy-move can leave the original behind while the share reports success, so a
+  transfer verifies the source is gone and removes the copy otherwise. Keywords for a whole
+  cluster are written by one exiftool process (`-execute`), not one per file.
 
 ## 8. Feedback loop and calibration (historical, see section 10)
 
