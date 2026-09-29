@@ -13,6 +13,7 @@ before it trips a bound.
 """
 from __future__ import annotations
 
+import json
 import random
 import statistics
 import time
@@ -178,3 +179,20 @@ def test_web_layer_with_a_three_thousand_photo_proposal(client, cfg):
     for _ in range(10):
         client.get("/api/status")
     _report("10x /api/status after a save", time.perf_counter() - t0, 0.5)
+
+
+def test_reading_the_tail_of_a_huge_event_log_is_quick(data_dir):
+    from app import events
+    line = json.dumps({"ts": "2026-09-29T00:00:00+00:00", "kind": "review", "action": "toggle",
+                       "photo": "IMG_0001.jpg", "excluded": True, "proposal": "t0123456789"}) + "\n"
+    with events.EVENTS_PATH.open("w", encoding="utf-8") as f:
+        for _ in range(300):
+            f.write(line * 1000)                                       # 300 000 events, ~45 MB
+    t0 = time.perf_counter()
+    rows = events.read(limit=8)
+    _report("events.read(limit=8) on 300k events", time.perf_counter() - t0, 0.5)
+    assert len(rows) == 8
+    t0 = time.perf_counter()
+    rows = events.read(limit=300)
+    _report("events.read(limit=300) on 300k events", time.perf_counter() - t0, 0.5)
+    assert len(rows) == 300

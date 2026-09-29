@@ -438,7 +438,15 @@ def sanitize(name: str) -> str:
     single spaces, nothing leading or trailing that a file system would drop."""
     name = re.sub(r"[\x00-\x1f\x7f]+", " ", name)
     name = re.sub(r'[\\/:*?"<>|]+', "-", name)
-    return re.sub(r"\s+", " ", name).strip(" .")
+    name = re.sub(r"\s+", " ", name).strip(" .")
+    if len(name.encode("utf-8")) > MAX_NAME_BYTES:              # ext4/SMB: 255 bytes; leave room for "_1"
+        while len(name.encode("utf-8")) > MAX_NAME_BYTES:
+            name = name[:-1]
+        name = name.strip(" .")
+    return name
+
+
+MAX_NAME_BYTES = 200
 
 
 def _gps_conf(r: dict) -> float:
