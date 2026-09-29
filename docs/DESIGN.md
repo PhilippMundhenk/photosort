@@ -285,6 +285,13 @@ on their own. Clicks on photos flip at once and travel batched, one request in f
 proposal, because a page full of lazily loading thumbnails otherwise queues every click
 behind the browser's six connections per host.
 
+Photos change cluster in one way (September 2026, issue #14). Everyday and a cluster's page
+share one selection bar and one target list: open proposals, clusters already moved (the
+worker moves the photos into their folder, the manifest grows), a new cluster, or, on a
+cluster page, back to the inbox. Moving out of a cluster is a correction like before (the
+old manifest lists it, the old proposal excludes it), so undo of either cluster stays exact;
+the moves out of one action are one journal batch, the move into the target is the worker's.
+
 A proposal keeps its identity across runs. Its id is a hash of first and last photo, so a
 photo that synced late and landed at either end gave the same excursion a new id and the
 review state (toggled photos, an edited name, an approval) was lost on the next run. A new

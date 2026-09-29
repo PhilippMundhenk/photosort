@@ -305,7 +305,9 @@
     }
     var all = ev.target.closest("[data-select-all]");
     if (all) {
-      var figs = all.closest(".card").querySelectorAll(".thumbs figure");
+      var scope = all.closest(".card");                                   // a day's card on Everyday; the
+      if (!scope.querySelector(".thumbs figure")) scope = all.closest("form") || document;  // bar on a cluster page
+      var figs = scope.querySelectorAll(".thumbs figure");
       var every = Array.prototype.every.call(figs, function (f) { return f.classList.contains("selected"); });
       figs.forEach(function (f) { setSelected(f, !every); });
       countSelected();

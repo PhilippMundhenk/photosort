@@ -13,15 +13,35 @@
   </div>
   <div class="muted small">{{ folder }}</div>
 </div>
+{# one form per action for the whole page (a password manager watches every form and field) #}
+<form method="post" action="/cluster/move_out" id="move_out" hidden><input type="hidden" name="folder" value="{{ folder }}"><input type="hidden" name="photo"></form>
+<form method="post" action="/cluster/put_back" id="put_back" hidden><input type="hidden" name="folder" value="{{ folder }}"><input type="hidden" name="src"></form>
+<noscript><div class="warnbox">Selecting, removing and putting back single photos needs JavaScript.</div></noscript>
+<form method="post" action="/cluster/assign" id="assign">
+<input type="hidden" name="folder" value="{{ folder }}">
+<div class="card sticky">
+  <div class="row">
+    <b><span id="selcount">0</span> selected</b>
+    <label style="margin:0" class="small">move to
+      <select name="target" id="target">
+        <option value="inbox">— back to the inbox (everyday) —</option>
+        <option value="new">— new cluster —</option>
+        {% if pending %}<optgroup label="open proposals">{% for p in pending %}<option value="{{ p.id }}">{{ p.kind }} · {{ p.name }} ({{ p.n }})</option>{% endfor %}</optgroup>{% endif %}
+        {% if moved %}<optgroup label="already moved (the photos go into that folder)">{% for p in moved %}<option value="{{ p.id }}">{{ p.kind }} · {{ p.name }} ({{ p.n }})</option>{% endfor %}</optgroup>{% endif %}
+      </select></label>
+    <input type="search" data-filter="target" placeholder="filter the list…" style="width:180px" title="type part of a cluster name to shorten the list">
+    <label style="margin:0" class="small">kind <select name="kind"><option value="local">day out</option><option value="trip">trip</option><option value="home">occasion</option></select></label>
+    <input type="text" name="name" placeholder="name of the new cluster, e.g. 2026-05-24 Grillabend" style="width:320px">
+    <button>Move selected</button>
+    <span class="act" role="button" tabindex="0" data-select-all title="select or unselect every photo">all</span>
+    <span class="muted small">Selected photos leave this cluster; a moved cluster takes them into its folder, a proposal or a new cluster waits for approval in Review.</span>
+  </div>
+</div>
 <div class="card">
-  {# one form per action for the whole page (a password manager watches every form and field) #}
-  <form method="post" action="/cluster/move_out" id="move_out" hidden><input type="hidden" name="folder" value="{{ folder }}"><input type="hidden" name="photo"></form>
-  <form method="post" action="/cluster/put_back" id="put_back" hidden><input type="hidden" name="folder" value="{{ folder }}"><input type="hidden" name="src"></form>
-  <noscript><div class="warnbox">Removing and putting back single photos needs JavaScript.</div></noscript>
-  <div class="thumbs">
+  <div class="thumbs" data-select>
   {% for p in m.photos %}
-    <figure class="{{ 'uncertain' if p.uncertain }}">
-      <img src="/thumb?path={{ p.dst|urlencode }}" loading="lazy" title="{{ p.dst }} · conf {{ p.conf }}" alt="">
+    <figure class="{{ 'uncertain' if p.uncertain }}" data-path="{{ p.dst }}">
+      <span class="pick" role="checkbox" aria-checked="false" tabindex="0" title="{{ p.dst }} · conf {{ p.conf }} · click to select"><img src="/thumb?path={{ p.dst|urlencode }}" loading="lazy" alt=""></span>
       <span class="view" role="button" tabindex="0" data-view="/media?path={{ p.dst|urlencode }}" data-type="{{ p.media or 'photo' }}" data-title="{{ p.dst.rsplit('/',1)[-1].rsplit('\\',1)[-1] }} · conf {{ p.conf }}" title="view full size">&#x2921;</span>
       <figcaption>{% if p.media == 'video' %}<span class="badge">video</span> {% endif %}{{ p.zone }} {{ p.conf }}{% if p.source %} · {{ p.source }}{% endif %}</figcaption>
       <span class="act" role="button" tabindex="0" data-act="move_out" data-field="photo" data-value="{{ p.dst }}" data-confirm="Remove this photo from the cluster and move it back to the inbox?" title="moves the photo back to the inbox; it can be put back from the Corrections list below">remove from cluster</span>
@@ -29,6 +49,7 @@
   {% endfor %}
   </div>
 </div>
+</form>
 {% if m.corrections %}<div class="card">
   <b>Removed from this cluster</b> <span class="muted small">({{ m.corrections|length }}, now back in the inbox and listed under Everyday)</span>
   <div class="thumbs">

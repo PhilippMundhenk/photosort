@@ -89,6 +89,9 @@ def test_trace_tells_where_a_file_is_now(cfg, library):
 
 
 def test_a_batch_opened_inside_another_joins_it_and_a_damaged_journal_still_reads(data_dir):
+    with journal.batch("nothing-happened"):
+        pass
+    assert journal.read_all() == []                                          # an action that moved nothing: no trace
     with journal.batch("outer") as a, journal.batch("inner") as b:
         assert a == b
         journal.record("move", "/x/a.jpg", "/y/a.jpg")

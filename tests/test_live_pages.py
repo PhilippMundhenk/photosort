@@ -128,7 +128,7 @@ def test_pages_have_no_form_control_per_photo(client, library):
     mover.apply(cfg, local, reviewed=True)
     page = client.get("/clusters/view", params={"folder": str(mover.target_folder(cfg, local))}).text
     assert page.count("<figure") == local["n"]
-    assert page.count("<form") <= 5 and page.count("<button") <= 4 and page.count("<input") <= 8   # not per photo
+    assert page.count("<form") <= 6 and page.count("<button") <= 5 and page.count("<input") <= 12  # not per photo
 
 
 def test_retry_after_a_failed_move_moves(client, library, monkeypatch):

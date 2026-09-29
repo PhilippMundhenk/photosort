@@ -382,19 +382,15 @@ def everyday_move_all():
     return RedirectResponse("/everyday", status_code=303)
 
 
-@app.post("/everyday/assign")
-async def everyday_assign(request: Request):
-    """Ticked everyday photos join an existing proposal or form a new manual one."""
-    cfg = config.load()
-    form = await request.form()
-    paths = [str(p) for p in form.getlist("paths")]
-    target, kind, name = form.get("target", "new"), form.get("kind", "local"), str(form.get("name", ""))
+def _assign(cfg: config.Config, paths: list[str], target: str, kind: str, name: str) -> dict | None:
+    """Everyday photos (in no live proposal) join an existing proposal or form a new manual one.
+    Returns the proposal, or None when there was nothing to add or no such target."""
     with _props_lock:
         props = cluster.load_proposals()
         wanted = set(paths)
         recs = [r for r in cluster.everyday_records(cfg, props) if r["path"] in wanted]
         if not recs:
-            return RedirectResponse("/everyday", status_code=303)
+            return None
         if target == "new":
             pr = cluster.create_manual(kind, name, recs)
             props[pr["id"]] = pr
@@ -402,7 +398,7 @@ async def everyday_assign(request: Request):
         else:
             pr = props.get(target)
             if not pr or pr["status"] not in ("pending", "ongoing", "approved", "applied"):
-                return RedirectResponse("/everyday", status_code=303)
+                return None
             n = cluster.add_to_proposal(pr, recs)
             events.log("review", proposal=pr["id"], action="add", name=pr["name"], n=n)
             if pr["status"] == "applied" and n:
@@ -413,6 +409,18 @@ async def everyday_assign(request: Request):
         cluster.save_proposals(props)
     if pr["status"] == "approved":
         queue_apply(pr["id"])
+    return pr
+
+
+@app.post("/everyday/assign")
+async def everyday_assign(request: Request):
+    """Ticked everyday photos join an existing proposal or form a new manual one."""
+    cfg = config.load()
+    form = await request.form()
+    pr = _assign(cfg, [str(p) for p in form.getlist("paths")], str(form.get("target", "new")),
+                 str(form.get("kind", "local")), str(form.get("name", "")))
+    if pr is None:
+        return RedirectResponse("/everyday", status_code=303)
     return RedirectResponse(f"/review?open={pr['id']}#{pr['id']}", status_code=303)
 
 
@@ -439,7 +447,49 @@ def _cluster_folder(cfg: config.Config, folder: str) -> Path:
 def cluster_view(request: Request, folder: str):
     _cluster_folder(config.load(), folder)
     m = mover.read_manifest(Path(folder))
-    return render(request, "cluster.html", m=m, folder=folder)
+    props = cluster.load_proposals()
+    own = (m or {}).get("proposal_id")
+    moved = sorted((p for p in props.values() if p["status"] in ("applied", "approved") and p["id"] != own),
+                   key=lambda p: p["start"], reverse=True)
+    return render(request, "cluster.html", m=m, folder=folder, pending=_pending(props), moved=moved)
+
+
+@app.post("/cluster/assign")
+async def cluster_assign(request: Request):
+    """Selected photos of a cluster go to another cluster (moved in by the worker), to an open
+    proposal, to a new cluster, or back to the inbox: each is moved out like a correction (so the
+    old cluster's manifest and proposal know), then assigned like an everyday photo. One journal
+    batch covers the moves out; the move into an applied cluster is the worker's own batch."""
+    cfg = config.load()
+    form = await request.form()
+    folder = str(form.get("folder", ""))
+    folder_p = _cluster_folder(cfg, folder)
+    target, kind, name = str(form.get("target", "inbox")), str(form.get("kind", "local")), str(form.get("name", ""))
+    paths = [str(p) for p in form.getlist("paths")]
+    back = f"/clusters/view?folder={quote(folder)}"
+    for p in paths:
+        if not Path(p).resolve().is_relative_to(folder_p.resolve()):
+            raise HTTPException(status_code=400, detail="the photo is not in that folder")
+    m = mover.read_manifest(folder_p) or {}
+    if not paths or target == m.get("proposal_id"):          # nothing selected, or its own cluster: no-op
+        return RedirectResponse(back, status_code=303)
+    mover._guard(cfg)                                        # dry-run: refused before anything, like every move
+    moved_out: list[str] = []
+    with journal.batch("move_between", folder=folder, target=target, proposal=m.get("proposal_id")):
+        for p in paths:
+            entry = mover.move_out(cfg, folder_p, Path(p))
+            if entry:
+                _set_excluded(folder_p, entry["src"], True)
+                src = Path(entry["src"])
+                if ingest.read_sidecar(src, cfg) is None:
+                    ingest.index_paths(cfg, [src])
+                moved_out.append(entry["src"])
+        pr = _assign(cfg, moved_out, target, kind, name) if target != "inbox" and moved_out else None
+    events.log("correction", name=folder_p.name, n=len(moved_out), target=target,
+               note="moved to another cluster" if pr else "moved back to the inbox")
+    if pr is None:
+        return RedirectResponse(back, status_code=303)
+    return RedirectResponse(f"/review?open={pr['id']}#{pr['id']}", status_code=303)
 
 
 @app.get("/history", response_class=HTMLResponse)

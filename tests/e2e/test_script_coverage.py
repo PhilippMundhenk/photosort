@@ -307,10 +307,22 @@ async def _session(url: str, data: Path, cfg) -> list[dict]:
         # cluster page: rename on leaving the field, remove a photo (declined, then done), put back
         folder = Path(cfg.root) / "2026-06-27 Barockstadt"
         await go(url + "/clusters/view?folder=" + str(folder))
-        await page.locator("input[name=name]").fill("2026-06-27 Barock")
-        await page.locator("input[name=name]").press("Tab")
+        await page.locator("form[data-autosave] input[name=name]").fill("2026-06-27 Barock")
+        await page.locator("form[data-autosave] input[name=name]").press("Tab")
         await follow()
         assert page.url.endswith("Barock")
+        await page.locator("[data-select-all]").click()                        # the bar's "all": one grid, no day card
+        await expect(page.locator("#selcount")).not_to_have_text("0")
+        await page.locator("[data-select-all]").click()
+        await expect(page.locator("#selcount")).to_have_text("0")
+        await page.locator(".thumbs figure").last.locator(".pick").click()    # one photo back to the inbox via the bar
+        await page.locator("#target").select_option("inbox")
+        await page.get_by_role("button", name="Move selected").click()
+        await follow()
+        await expect(page.get_by_text("Removed from this cluster")).to_be_visible()
+        await page.get_by_role("button", name="put back").first.click()
+        await follow()
+        await expect(page.get_by_text("Removed from this cluster")).to_have_count(0)
         page.once("dialog", dismiss)
         await page.get_by_role("button", name="remove from cluster").first.click()
         await page.wait_for_timeout(300)

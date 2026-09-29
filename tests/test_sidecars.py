@@ -191,6 +191,24 @@ def test_migrate_between_layouts_and_name_patterns(cfg, library):
     assert len(cluster.load_records(cfg)[0]) == n                      # nothing lost on the way
 
 
+def test_the_first_scan_of_a_process_keeps_what_was_written_before_it(cfg, library, monkeypatch):
+    """Records written before the first scan (an index run, a photo that came back) count as
+    current: the first scan must not read every record again just to learn where they live;
+    a switch of the store afterwards does forget them."""
+    assert ingest.scan(cfg)["rezoned"] is True                          # the re-zone pass reads them once
+    ingest._current_store = ()                                          # a fresh process, records written
+    reads = []
+    real = ingest.read_sidecar
+    monkeypatch.setattr(ingest, "read_sidecar", lambda p, c=None: (reads.append(p), real(p, c))[1])
+    assert ingest.scan(cfg)["new"] == 0
+    assert not [p for p in reads if p in library.paths]                 # not one record re-read for "needs index"
+    cfg.sidecar_mode = "beside"
+    ingest.migrate_sidecars(cfg)
+    reads.clear()
+    assert ingest.scan(cfg)["new"] == 0
+    assert len([p for p in reads if p in library.paths]) >= len(library.paths)   # elsewhere now: read again
+
+
 def test_purge_sorted_tree_and_orphans(cfg, library):
     cfg.sidecar_cleanup, cfg.dry_run = "never", False
     config.save(cfg)

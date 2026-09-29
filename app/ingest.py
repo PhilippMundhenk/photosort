@@ -439,7 +439,8 @@ def _needs_index(p: Path, cfg: Config) -> bool:
     global _current_store
     store = (cfg.sidecar_mode, cfg.sidecar_name)
     if store != _current_store:                       # records live elsewhere now: forget what we knew
-        _current.clear()
+        if _current_store:                            # (the first scan of the process just learns where
+            _current.clear()                          # they live: what was written before it still counts)
         _current_store = store
     key = str(p)
     if key in _current:
