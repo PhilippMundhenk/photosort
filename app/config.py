@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import logging
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -114,12 +115,53 @@ def load() -> Config:
         return copy.deepcopy(_cache["cfg"])
     cfg = Config()
     if key is not None:
-        data = yaml.safe_load(text) or {}
+        try:
+            data = yaml.safe_load(text) or {}
+        except yaml.YAMLError as e:                            # hand-edited and broken: defaults, loudly
+            logging.getLogger("photosort.config").error("config.yaml is not valid YAML (%s): using defaults", e)
+            data = {}
+        if not isinstance(data, dict):
+            logging.getLogger("photosort.config").error("config.yaml is not a mapping: using defaults")
+            data = {}
         for k, v in data.items():
             if hasattr(cfg, k):
-                setattr(cfg, k, v)
+                setattr(cfg, k, _coerce(getattr(cfg, k), v, k))
         _cache.update(key=key, cfg=copy.deepcopy(cfg))
     return cfg
+
+
+def _coerce(default, value, key: str):
+    """A value from the YAML in the type of the field's default; a value of the wrong kind falls
+    back to the default (a typo in a hand-edited file must not turn dry_run into a string)."""
+    if isinstance(default, bool):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.strip().lower() in ("true", "false", "yes", "no", "on", "off", "1", "0"):
+            return value.strip().lower() in ("true", "yes", "on", "1")
+    elif isinstance(default, int) and not isinstance(value, bool):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            pass
+    elif isinstance(default, float) and not isinstance(value, bool):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            pass
+    elif isinstance(default, str):
+        if isinstance(value, str | int | float) and not isinstance(value, bool):
+            return str(value)
+    elif isinstance(default, list):
+        if isinstance(value, list):
+            return value
+    elif isinstance(default, dict):
+        if isinstance(value, dict):
+            return value
+    elif default is None:
+        return value
+    logging.getLogger("photosort.config").error("config.yaml: %s=%r is not a valid value, keeping %r",
+                                                key, value, default)
+    return default
 
 
 def save(cfg: Config) -> None:

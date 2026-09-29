@@ -121,3 +121,57 @@ def test_two_phones_far_apart_are_two_trips_end_to_end(two_phones_server, page):
     expect(card.locator("figcaption", has_text="phone-b")).to_have_count(21)
     page.goto(url + "/everyday?month=2026-06")
     assert page.locator(".thumbs figure").count() >= 40                        # the daily home photos of June
+
+
+@pytest.fixture
+def berlin_server(tmp_path_factory):
+    """Home zone Europe/Berlin: photos carry naive EXIF wall times, videos carry UTC."""
+    base, lib = _library(tmp_path_factory, "e2e-berlin", timezone="Europe/Berlin")
+    a = Path(lib.cfg.inboxes[0]["path"])
+    from datetime import datetime
+    from datetime import timezone as tz
+    for d in range(6):                                                         # daily life, naive 14:22 wall time
+        lib.photo(a, datetime(2026, 6, 1 + d, 14, 22, 31), synth.HOME)
+    lib.video(a, datetime(2026, 6, 3, 12, 22, 31, tzinfo=tz.utc), synth.HOME)    # 12:22Z = 14:22 in Berlin
+    from zoneinfo import ZoneInfo
+    lib.video(a, datetime(2026, 6, 4, 14, 22, 31, tzinfo=ZoneInfo("Europe/Berlin")), synth.HOME, kind="iphone")
+    with serve(base, lib) as s:
+        yield s
+
+
+def test_wall_times_in_the_home_zone_end_to_end(berlin_server, page):
+    """The everyday page shows the time the photo was taken by the clock on the wall: naive EXIF
+    times as they are, UTC video times converted to the home zone."""
+    url = berlin_server["url"]
+    expect = pw.expect
+    httpx.post(url + "/run", timeout=5)
+    _wait_pending(url, 0)
+    page.goto(url + "/everyday?month=2026-06")
+    captions = page.locator(".thumbs figcaption").all_inner_texts()
+    assert len(captions) == 8 and all("14:22" in c for c in captions), captions      # never 12:22
+    expect(page.locator(".thumbs figure", has=page.locator(".badge", has_text="video"))).to_have_count(2)
+    page.goto(url + "/settings")
+    expect(page.locator("input[name=timezone]")).to_have_value("Europe/Berlin")
+
+
+def test_a_named_place_from_settings_names_the_day_out(tmp_path_factory, page):
+    """Your own place name entered in Settings beats the geocoder in the folder name."""
+    base, lib = _library(tmp_path_factory, "e2e-place")
+    synth.populate(lib.cfg)
+    with serve(base, lib) as s:
+        url, data = s["url"], s["data"]
+        expect = pw.expect
+        page.goto(url + "/settings")
+        page.locator("textarea[name=named_places]").fill(
+            f"Barockstadt = {synth.LUDWIGSBURG[0]}, {synth.LUDWIGSBURG[1]}, 3\nBlack Forest = 48.0, 8.2, 40")
+        page.get_by_role("button", name="Save settings").click()
+        page.wait_for_url(re.compile(r"/settings"))
+        expect(page.locator("textarea[name=named_places]")).to_have_value(re.compile(r"Barockstadt = 48\.897"))
+        httpx.post(url + "/run", timeout=5)
+        _wait_pending(url, 3)
+        local = _proposals(data)["local"]
+        assert local["name"] == "2026-06-27 Barockstadt"                         # not "Ludwigsburg"
+        page.goto(url + "/review")
+        expect(page.locator(f"#{local['id']} input[name=name]")).to_have_value("2026-06-27 Barockstadt")
+        page.goto(url + "/everyday?month=2026-06")
+        expect(page.get_by_text("Bietigheim-Bissingen").first).to_be_visible()   # unnamed spots keep the geocoder
