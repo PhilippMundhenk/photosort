@@ -101,6 +101,21 @@ timeline, since a birthday photographed with two phones is one occasion.
 - A run whose last photo is recent is marked *ongoing* (the home photo may not have synced
   yet) and is never applied automatically.
 
+### The rules as data (September 2026)
+
+The three rules above and their parameters were code; now they are a ruleset (`rules.py`)
+evaluated in order: excursion runs go through `excursion_rules` (trip if the run spans the
+trip minimum with enough located photos; a long run without positions is everyday; a day out
+far away needs the trip minimum of photos, near home the day-out minimum), bursts of the
+rest through `burst_rules` (a home occasion above the baseline multiple). The first rule
+whose conditions hold decides, `everyday` is a kind of its own, so a custom ruleset can say
+"a burst of 30 photos in the local zone on a weekend is a day out" or "a trip needs two
+devices". The default ruleset is held to the old code by a golden test that runs a frozen copy
+of that code (`tests/legacy_rules.py`) and the engine over every synthetic library and many
+parameter sets and requires identical proposals. Several homes (issue #3) are a list in the
+ruleset: a photo inside any home is at home, ends excursions and is everyday there; the
+zone beyond follows the distance to the nearest home, and the record keeps that home's name.
+
 ### Naming
 
 `<span> <places>`. The span is the month (`2026-08`) when a multi-day cluster stays within one
@@ -175,6 +190,11 @@ One package, `app/`, no framework beyond FastAPI and Jinja:
   timestamps and offsets, GPS sanity, the scan with its change tracking and re-zoning key.
 - `cluster.py`: the record cache, per-device excursions and their merge, bursts, naming,
   proposals and their identity across runs, the proposals file and its lock.
+- `rules.py`: the clustering rules as data (September 2026, issue #2): a ruleset of homes,
+  excursion cutting parameters, excursion rules and burst rules; `defaults(cfg)` is built from
+  the settings fields and is exactly what the code did before, `effective(cfg)` lays the
+  custom blocks from the config over it; validation, a YAML round trip, the feature
+  extraction and the first-match evaluation live here. `cluster.py` asks it what a run is.
 - `mover.py`: every file operation (move, copy, undo, rename, move out, put back), the dry-run
   guard, manifests written incrementally, the cluster list and the cross-mount warning.
 - `geo.py`: distance, zones, the offline geocoder with the covering-town rule, own places,
@@ -284,6 +304,14 @@ reload in the banner; only the pages without user state (dashboard, log, cluster
 on their own. Clicks on photos flip at once and travel batched, one request in flight per
 proposal, because a page full of lazily loading thumbnails otherwise queues every click
 behind the browser's six connections per host.
+
+Settings come in three modes (September 2026, issues #12 and #15): basic shows what a first
+setup needs (dry-run, what moves by itself, folders, home), advanced adds the clustering
+thresholds, expert everything else (folder details, records, rarely touched limits). A hidden
+setting is still in the form, so a save in basic mode keeps every value; the mode is
+remembered in the config. An overview card at the top states the facts a glance should give
+(mode, what moves without review, inboxes found, target, home, scan) and links each to its
+field, switching to the mode that shows it.
 
 Photos change cluster in one way (September 2026, issue #14). Everyday and a cluster's page
 share one selection bar and one target list: open proposals, clusters already moved (the

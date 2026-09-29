@@ -734,3 +734,43 @@ def test_log_page_filters(client, library):
     page = client.get("/log?kind=review").text
     assert "proposal=p1" in page and "photo=a.jpg" not in page
     assert client.get("/log?kind=correction").text.count("photo=a.jpg") == 1
+
+
+def test_settings_modes_hide_the_rare_settings_but_keep_their_values(client, cfg):
+    """Basic shows what a first setup needs; advanced and expert reveal the rest. Whatever the
+    mode hides is still in the form, so a save in basic mode keeps every value; the mode is
+    remembered; the overview names the facts and links to their fields."""
+    cfg.dry_run = True
+    config.save(cfg)
+    html = client.get("/settings").text
+    assert 'class="on"' in html and html.count("<button") >= 3 and 'action="/settings/mode"' in html
+    assert 'data-level="advanced" hidden' in html and 'data-level="expert" hidden' in html
+    assert 'name="trip_min_hours"' in html and 'name="sidecar_mode"' in html     # hidden, but in the form
+    assert 'href="/settings?mode=advanced"' in html and "keep their values" in html
+    assert '<span class="badge warn">dry-run</span>' in html and "nothing: dry-run is on" in html
+    assert 'href="/settings?mode=expert#f-sidecar_mode"' in html                # the overview elevates the mode
+    adv = client.get("/settings?mode=advanced").text
+    assert 'data-level="advanced" hidden' not in adv and 'data-level="expert" hidden' in adv
+    assert 'href="/settings?mode=advanced#f-scan_interval_min"' in adv         # shown: the link keeps the mode
+    exp = client.get("/settings?mode=expert").text
+    assert " hidden" not in exp.split('<div class="settings-grid">')[1] and "keep their values" not in exp
+    assert config.load().settings_mode == "basic"                               # a look does not change it
+    r = client.post("/settings/mode", data={"mode": "expert"})
+    assert r.status_code == 303 and config.load().settings_mode == "expert"
+    assert 'data-level="expert" hidden' not in client.get("/settings").text
+    assert client.post("/settings/mode", data={"mode": "wizard"}).status_code == 303
+    assert config.load().settings_mode == "expert"                              # nonsense: unchanged
+    cfg = config.load()
+    cfg.trip_min_hours, cfg.auto_apply_trips, cfg.dry_run = 33.0, True, False
+    config.save(cfg)
+    html = client.get("/settings?mode=basic").text
+    assert "without review: trips; the rest after approval" in html and '<span class="badge bad">LIVE</span>' in html
+    form = {"settings_mode": "basic", "inbox_root": cfg.inbox_root, "root": cfg.root, "everyday_layout": "YYYY/MM",
+            "timezone": cfg.timezone, "home_lat": str(cfg.home_lat), "home_lon": str(cfg.home_lon),
+            "everyday_keep_days": "4", "auto_apply_trips": "on", "trip_min_hours": "33",       # what a browser
+            "sidecar_mode": "central", "sidecar_name": cfg.sidecar_name, "scan_interval_min": "10",    # sends:
+            "generate_thumbnails": "on", "warn_cross_mount": "on", "write_xmp_sidecar": "on"}  # hidden fields too
+    assert client.post("/settings", data=form).status_code == 303
+    after = config.load()
+    assert after.trip_min_hours == 33.0 and after.settings_mode == "basic" and after.auto_apply_trips
+    assert after.everyday_layout == "YYYY/MM" and after.dry_run is False

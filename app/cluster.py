@@ -29,7 +29,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import geo, ingest
+from . import geo, ingest, rules
 from .config import DATA_DIR, Config, inbox_dirs, tzinfo
 
 PROPOSALS_PATH = DATA_DIR / "proposals.json"
@@ -310,7 +310,7 @@ def borrow_video_offsets(recs: list[dict], max_hours: float = 48) -> None:
 
 # --- excursions (trips and day outs) ---------------------------------------------
 
-def find_excursions(cfg: Config, recs: list[dict]) -> list[list[dict]]:
+def find_excursions(cfg: Config, recs: list[dict], rs: dict | None = None) -> list[list[dict]]:
     """Maximal runs of photos away from home (local or away zone), ended by any photo at home.
     GPS-less photos ride along inside a run but never start or end one.
 
@@ -319,21 +319,23 @@ def find_excursions(cfg: Config, recs: list[dict]) -> list[list[dict]]:
     same time are two excursions, not one. Runs of different devices that overlap in time and
     are in the same area (some photos within a day of each other closer than
     trip_split_distance_km) are one excursion: the family trip with two phones."""
+    ex = (rs or rules.effective(cfg))["excursions"]
     by_source: dict[str | None, list[dict]] = {}
     for r in recs:
         by_source.setdefault(r.get("source"), []).append(r)
     runs: list[list[dict]] = []
     for group in by_source.values():
-        runs.extend(_device_excursions(cfg, group))
-    if len(by_source) <= 1:
-        return runs
-    return _merge_device_runs(cfg, runs)
+        runs.extend(_device_excursions(cfg, group, ex))
+    if len(by_source) <= 1 or not ex.get("merge_devices", True):
+        return sorted(runs, key=lambda run: run[0]["_t"])
+    return _merge_device_runs(cfg, runs, ex)
 
 
-def _same_area(cfg: Config, a: list[dict], b: list[dict], hours: float = 24) -> bool:
+def _same_area(cfg: Config, a: list[dict], b: list[dict], hours: float = 24, dist_km: float | None = None) -> bool:
     """Some located photo of a is within `hours` of a located photo of b and closer than
-    trip_split_distance_km."""
+    dist_km (the excursions' split distance)."""
     import bisect
+    dist_km = cfg.trip_split_distance_km if dist_km is None else dist_km
     lb = [r for r in b if r.get("lat") is not None]
     if not lb:
         return False
@@ -345,16 +347,18 @@ def _same_area(cfg: Config, a: list[dict], b: list[dict], hours: float = 24) -> 
         for j in range(max(0, k - 3), min(len(lb), k + 3)):
             o = lb[j]
             if abs((o["_t"] - r["_t"]).total_seconds()) <= hours * 3600 and \
-                    geo.haversine_km(r["lat"], r["lon"], o["lat"], o["lon"]) <= cfg.trip_split_distance_km:
+                    geo.haversine_km(r["lat"], r["lon"], o["lat"], o["lon"]) <= dist_km:
                 return True
     return False
 
 
-def _merge_device_runs(cfg: Config, runs: list[list[dict]]) -> list[list[dict]]:
-    slack = timedelta(hours=cfg.local_gap_hours)
+def _merge_device_runs(cfg: Config, runs: list[list[dict]], ex: dict | None = None) -> list[list[dict]]:
+    ex = ex or rules.effective(cfg)["excursions"]
+    slack = timedelta(hours=ex["local_gap_hours"])
     merged: list[list[dict]] = []
     for run in sorted(runs, key=lambda run: run[0]["_t"]):
-        target = next((m for m in merged if run[0]["_t"] <= m[-1]["_t"] + slack and _same_area(cfg, run, m)), None)
+        target = next((m for m in merged if run[0]["_t"] <= m[-1]["_t"] + slack
+                       and _same_area(cfg, run, m, dist_km=ex["split_distance_km"])), None)
         if target is None:
             merged.append(list(run))
         else:
@@ -364,7 +368,8 @@ def _merge_device_runs(cfg: Config, runs: list[list[dict]]) -> list[list[dict]]:
     return merged
 
 
-def _device_excursions(cfg: Config, recs: list[dict]) -> list[list[dict]]:
+def _device_excursions(cfg: Config, recs: list[dict], ex: dict | None = None) -> list[list[dict]]:
+    ex = ex or rules.effective(cfg)["excursions"]
     runs, cur = [], []
     for r in recs:
         z = r["zone"]
@@ -386,10 +391,10 @@ def _device_excursions(cfg: Config, recs: list[dict]) -> list[list[dict]]:
             gap_days = (nxt["_t"] - prev["_t"]).total_seconds() / 86400
             far = False
             if prev.get("lat") is not None and nxt.get("lat") is not None:     # GPS-less photos never split
-                far = geo.haversine_km(prev["lat"], prev["lon"], nxt["lat"], nxt["lon"]) > cfg.trip_split_distance_km
+                far = geo.haversine_km(prev["lat"], prev["lon"], nxt["lat"], nxt["lon"]) > ex["split_distance_km"]
             # near home you sleep at home: a gap over a night ends the outing even without a home photo
             near_home = geo.ZONE_LOCAL in (prev["zone"], nxt["zone"])
-            if (gap_days > cfg.trip_gap_days and far) or (near_home and gap_days * 24 > cfg.local_gap_hours):
+            if (gap_days > ex["split_gap_days"] and far) or (near_home and gap_days * 24 > ex["local_gap_hours"]):
                 out.append(part)
                 part = []
             part.append(nxt)
@@ -405,18 +410,39 @@ def _device_excursions(cfg: Config, recs: list[dict]) -> list[list[dict]]:
     return trimmed
 
 
-def excursion_kind(cfg: Config, run: list[dict]) -> str | None:
-    """'trip' (spans >= trip_min_hours, enough located photos), 'local' (a day out with enough
-    photos) or None (too small: everyday)."""
-    a, b = _span(run)
-    located = sum(1 for r in run if r["zone"] != geo.ZONE_UNKNOWN)
-    if (b - a) >= timedelta(hours=cfg.trip_min_hours):
-        return "trip" if located >= cfg.trip_min_photos else None
-    # a day out far away is an outing even with three photos; near home it needs more
-    # (the school run and the supermarket must stay everyday)
-    away = sum(1 for r in run if r["zone"] == geo.ZONE_AWAY)
-    need = cfg.trip_min_photos if away > len(run) / 2 else cfg.dayout_min_photos
-    return "local" if len(run) >= need else None
+def excursion_kind(cfg: Config, run: list[dict], rs: dict | None = None) -> str | None:
+    """'trip', 'local' (a day out) or None (everyday): the first excursion rule that matches."""
+    rule = rules.pick((rs or rules.effective(cfg))["excursion_rules"], rules.features(run))
+    return rule["kind"] if rule else None
+
+
+def _rule_of_kind(cfg: Config, block: str, kind: str, rs: dict | None = None) -> dict:
+    """The first rule of a kind (the wrappers trip_proposal / local_proposal / home_proposal
+    build a proposal of a given kind whatever the run looks like)."""
+    rs = rs or rules.effective(cfg)
+    rule = next((r for r in rs[block] if r["kind"] == kind), None)
+    if rule is None:                                    # no such rule in a custom set: the default one
+        rule = next(r for r in rules.defaults(cfg)[block] if r["kind"] == kind)
+    return rule
+
+
+def excursion_proposal(cfg: Config, rule: dict, run: list[dict], now: datetime | None,
+                       f: dict | None = None) -> dict:
+    """A trip or day-out proposal for a run under the rule that matched it."""
+    f = f or rules.features(run)
+    a, b = f["start"], f["end"]
+    photos = [_photo_entry(r, _gps_conf(r)) for r in run]
+    hours = f["span_hours"]
+    note = (f"{hours:.0f} h away from home, ended by a home photo" if rule["kind"] == "trip"
+            else f"{hours:.1f} h away from home, {len(run)} photos")
+    return {
+        "id": _pid(rule["kind"], run), "kind": rule["kind"],
+        "name": rules.render_name(cfg, rule, run, f),
+        "start": a.isoformat(), "end": b.isoformat(), "photos": photos,
+        "n": len(photos), "n_uncertain": sum(p["uncertain"] for p in photos),
+        "status": "ongoing" if rules.ongoing(rule, f, now) else "pending",
+        "decision": {"by": "rule", "conf": 1.0, "note": note, "rule": rule.get("name")},
+    }
 
 
 def _span(recs: list[dict]) -> tuple[datetime, datetime]:
@@ -496,26 +522,16 @@ def _pid(kind: str, recs: list[dict]) -> str:
 
 
 def trip_proposal(cfg: Config, run: list[dict], now: datetime) -> dict:
-    a, b = _span(run)
-    photos = [_photo_entry(r, _gps_conf(r)) for r in run]
-    ongoing = (now - b) < timedelta(days=cfg.trip_gap_days)     # the home photo may not have synced yet
-    return {
-        "id": _pid("trip", run), "kind": "trip",
-        "name": sanitize(f"{span_label(a, b, cfg.name_multiday_by_month)} {places_label(cfg, run)}"),
-        "start": a.isoformat(), "end": b.isoformat(), "photos": photos,
-        "n": len(photos), "n_uncertain": sum(p["uncertain"] for p in photos),
-        "status": "ongoing" if ongoing else "pending",
-        "decision": {"by": "rule", "conf": 1.0,
-                     "note": f"{(b - a).total_seconds() / 3600:.0f} h away from home, ended by a home photo"},
-    }
+    return excursion_proposal(cfg, _rule_of_kind(cfg, "excursion_rules", "trip"), run, now)
 
 
 # --- bursts --------------------------------------------------------------------
 
-def group_bursts(cfg: Config, recs: list[dict]) -> list[list[dict]]:
+def group_bursts(cfg: Config, recs: list[dict], gap_hours: float | None = None) -> list[list[dict]]:
+    gap_hours = rules.effective(cfg)["bursts"]["gap_hours"] if gap_hours is None else gap_hours
     bursts, cur = [], []
     for r in recs:
-        if cur and (r["_t"] - cur[-1]["_t"]).total_seconds() > cfg.burst_gap_hours * 3600:
+        if cur and (r["_t"] - cur[-1]["_t"]).total_seconds() > gap_hours * 3600:
             bursts.append(cur)
             cur = []
         cur.append(r)
@@ -547,17 +563,7 @@ def home_baseline(recs: list[dict], persist: bool = True) -> float:
 
 
 def local_proposal(cfg: Config, run: list[dict], now: datetime | None = None) -> dict:
-    a, b = _span(run)
-    place = Counter((r.get("place") or {}).get("place") for r in run if r["zone"] != geo.ZONE_HOME and r.get("place"))
-    name = place.most_common(1)[0][0] if place else "Ausflug"
-    photos = [_photo_entry(r, _gps_conf(r)) for r in run]
-    ongoing = now is not None and (now - b) < timedelta(days=1)
-    return {"id": _pid("local", run), "kind": "local",
-            "name": sanitize(f"{span_label(a, b, cfg.name_multiday_by_month)} {name}"),
-            "start": a.isoformat(), "end": b.isoformat(), "photos": photos, "n": len(photos),
-            "n_uncertain": sum(p["uncertain"] for p in photos), "status": "ongoing" if ongoing else "pending",
-            "decision": {"by": "rule", "conf": 1.0,
-                         "note": f"{(b - a).total_seconds() / 3600:.1f} h away from home, {len(run)} photos"}}
+    return excursion_proposal(cfg, _rule_of_kind(cfg, "excursion_rules", "local"), run, now)
 
 
 def count_devices(recs: list[dict]) -> int:
@@ -602,20 +608,55 @@ def home_state(cfg: Config, burst: list[dict], threshold: float) -> dict:
     }
 
 
-def home_proposal(cfg: Config, burst: list[dict], threshold: float) -> dict:
+def home_proposal(cfg: Config, burst: list[dict], threshold: float, rule: dict | None = None) -> dict:
     """A dense burst at home. Metadata cannot tell a birthday from a burst of shots of the same
     thing (neither could a decision model, see docs/DESIGN.md section 10), so every burst well
     above your usual day is proposed and you name or reject it."""
-    a, b = _span(burst)
+    rule = rule or _rule_of_kind(cfg, "burst_rules", "home")
+    f = rules.features(burst)
+    a, b = f["start"], f["end"]
     photos = [_photo_entry(r, 1.0) for r in burst]
     st = home_state(cfg, burst, threshold)
     note = (f"{st['photos']} files in {st['duration_h']} h at home, {st['burst_ratio']}x your usual day, "
             f"{st['devices']} device{'s' if st['devices'] != 1 else ''}")
     return {"id": _pid("home", burst), "kind": "home",
-            "name": sanitize(f"{span_label(a, b, cfg.name_multiday_by_month)} ({media_label(burst)})"),
+            "name": rules.render_name(cfg, rule, burst, f),
             "start": a.isoformat(), "end": b.isoformat(), "photos": photos, "n": len(photos),
             "n_uncertain": 0, "status": "pending",
-            "decision": {"by": "rule", "conf": 1.0, "note": note, "state": st}}
+            "decision": {"by": "rule", "conf": 1.0, "note": note, "state": st, "rule": rule.get("name")}}
+
+
+def automatic_proposals(cfg: Config, recs: list[dict], now: datetime, baseline: float,
+                        rs: dict | None = None) -> tuple[dict[str, dict], float]:
+    """The proposals the rules make from records nobody placed by hand: excursions first (the
+    first matching excursion rule decides), then bursts of what is left (the first matching
+    burst rule). Returns them and the threshold of the first home-burst rule (shown in stats)."""
+    rs = rs or rules.effective(cfg)
+    new: dict[str, dict] = {}
+    taken: set[str] = set()
+    for run_ in find_excursions(cfg, recs, rs):
+        f = rules.features(run_)
+        rule = rules.pick(rs["excursion_rules"], f)
+        if rule is None:
+            continue
+        pr = excursion_proposal(cfg, rule, run_, now, f)
+        new[pr["id"]] = pr
+        taken.update(p["path"] for p in pr["photos"])
+    rest = [r for r in recs if r["path"] not in taken]
+    home_rule = next((r for r in rs["burst_rules"] if r["kind"] == "home"), None)
+    threshold = rules.threshold(home_rule, baseline) if home_rule else 0.0
+    for burst in group_bursts(cfg, rest, rs["bursts"]["gap_hours"]):
+        f = rules.features(burst, baseline)
+        rule = rules.pick(rs["burst_rules"], f)
+        if rule is None:
+            continue
+        if rule["kind"] == "home":
+            pr = home_proposal(cfg, burst, rules.threshold(rule, baseline), rule)
+        else:                                               # a custom rule: a burst as a day out or a trip
+            pr = excursion_proposal(cfg, rule, burst, now, f)
+        new[pr["id"]] = pr
+        taken.update(p["path"] for p in pr["photos"])
+    return new, threshold
 
 
 # --- manual clusters (Everyday page) ---------------------------------------------
@@ -753,27 +794,10 @@ def _run_locked(cfg: Config, now: datetime, skipped: list[dict], recs: list[dict
         taken.update(paths)
     auto_recs = [r for r in recs if r["path"] not in taken]
 
-    for run_ in find_excursions(cfg, auto_recs):
-        kind = excursion_kind(cfg, run_)
-        if kind is None:
-            continue
-        pr = trip_proposal(cfg, run_, now) if kind == "trip" else local_proposal(cfg, run_, now)
-        new[pr["id"]] = pr
-        taken.update(p["path"] for p in pr["photos"])
-
-    rest = [r for r in auto_recs if r["path"] not in taken]
     baseline = home_baseline(recs)
-    threshold = max(cfg.burst_min_photos, baseline * cfg.burst_baseline_factor)
-    for burst in group_bursts(cfg, rest):
-        zones = Counter(r["zone"] for r in burst)
-        major = zones.most_common(1)[0][0]
-        if len(burst) < cfg.burst_min_photos:
-            continue
-        if major == geo.ZONE_HOME and len(burst) >= threshold:
-            pr = home_proposal(cfg, burst, threshold)
-        else:
-            continue
-        new[pr["id"]] = pr
+    made, threshold = automatic_proposals(cfg, auto_recs, now, baseline)
+    new.update(made)
+    for pr in made.values():
         taken.update(p["path"] for p in pr["photos"])
 
     _keep_identities(old, new)

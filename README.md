@@ -39,7 +39,10 @@ inbox/camera/**.dng  ─┘                          sorted/_unnamed/2026-06-30 
 - **Move or copy.** Moves are renames on the same share; copy mode leaves originals untouched.
 - **One small container.** Runs on a CPU-only laptop; the whole test suite runs in Docker.
 
-See [docs/DESIGN.md](docs/DESIGN.md) for the rules and why they were chosen.
+See [docs/DESIGN.md](docs/DESIGN.md) for the rules and why they were chosen. The rules are
+declared, not coded (`app/rules.py`): the settings fields feed a default ruleset, and expert
+mode of Settings takes a YAML ruleset of your own (several homes, your own conditions such as
+weekday or number of devices, your own folder-name templates).
 
 ## Deploy
 
@@ -52,7 +55,8 @@ docker compose pull && docker compose up -d      # image from ghcr.io/philippmun
 
 Open `http://<host>:8080`. A first run starts by itself; when the home location is not set
 it is detected from the photos (the spot with photos on the most different days) and can be
-corrected in **Settings**. Press **Run now** any time. The first scan runs `exiftool` over every photo once (a few minutes for
+corrected in **Settings** (three modes: *basic* for a first setup, *advanced* adds the
+clustering thresholds, *expert* everything; an overview card at the top says what moves where). Press **Run now** any time. The first scan runs `exiftool` over every photo once (a few minutes for
 20k files); afterwards only new files are read.
 
 - Photos are mounted, not copied. Moves are `rename()` on the same mount; keep inbox and
@@ -162,6 +166,7 @@ docker compose -f docker-compose.test.yml run --rm tests pytest -m e2e -v
 | browser e2e | `tests/e2e/test_browser.py`, `tests/e2e/test_smooth.py`, `tests/e2e/test_features.py`, `tests/e2e/test_scenarios.py`, `tests/e2e/test_restart.py` | real uvicorn + headless Chromium (Playwright): the review flow; no reload while the user works, hidden-tab polling, a 4000-photo library; every feature end to end (everyday selection and manual clusters, keyboard, viewer, remembered places, approve all, the everyday move button, settings dialogs, home detection, sidecar buttons, log filters, month navigation, dashboard, phone width); copy mode, two phones on different continents, wall-clock times in the home zone and an own place name from Settings through the whole pipeline; a kill and restart in the middle of a 2 500-file move |
 | smoke | `python -m tests.smoke` | one synthetic end-to-end run without pytest |
 | journal | `tests/test_journal.py` | every action is one batch of file operations; revert of a batch, of one file, of a revert; skipped files reported; dry-run refused; the History page |
+| rules | `tests/test_rules.py` | the rule engine: golden test against the frozen pre-engine rules on every library and many parameter sets, custom rules, validation, multi-home zoning, the Settings editor |
 | docs | `tests/test_docs.py` | the README's test table matches the files on disk, every configuration field has a form control, the design document names every module |
 | coverage | the test image's default command | line and branch coverage of `app/` must stay at 99 % or above (it is 100 % as of 2026-09-29); `tests/e2e/test_script_coverage.py` measures how much of `ui.js` one browser session executes (99 % or above; every function runs); `tests/test_templates.py` renders every template branch; CI also starts the published runtime image and calls every page |
 

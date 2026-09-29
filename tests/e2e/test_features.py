@@ -211,6 +211,31 @@ def test_remember_this_place_from_a_rename(server, page):
     expect(page.locator("textarea[name=named_places]")).to_have_value(re.compile(r"Barockstadt = 48\.\d+, 9\.\d+"))
 
 
+def test_settings_modes_keep_hidden_values(server, page):
+    """Saving in basic mode must not lose an expert setting the page does not show."""
+    url, data = server["url"], server["data"]
+    expect = pw.expect
+    page.goto(url + "/settings")
+    page.locator(".modes button", has_text="expert").click()
+    page.wait_for_url(re.compile(r"/settings$"))
+    expect(page.locator("input[name=trip_gap_days]")).to_be_visible()
+    page.locator("input[name=trip_gap_days]").fill("7")
+    page.get_by_role("button", name="Save settings").click()
+    page.wait_for_url(re.compile(r"/settings"))
+    page.locator(".modes button", has_text="basic").click()
+    page.wait_for_url(re.compile(r"/settings$"))
+    expect(page.locator("input[name=trip_gap_days]")).to_be_hidden()
+    expect(page.locator(".modes button.on")).to_have_text("basic")
+    page.locator("input[name=everyday_keep_days]").fill("6")
+    page.get_by_role("button", name="Save settings").click()
+    page.wait_for_url(re.compile(r"/settings"))
+    saved = yaml.safe_load((data / "config.yaml").read_text(encoding="utf-8"))
+    assert saved["trip_gap_days"] == 7.0 and saved["everyday_keep_days"] == 6.0 and saved["settings_mode"] == "basic"
+    page.locator("input[name=everyday_keep_days]").fill("4")
+    page.get_by_role("button", name="Save settings").click()
+    page.wait_for_url(re.compile(r"/settings"))
+
+
 def test_settings_dry_run_dialog_and_detect_home(server, page):
     url, data = server["url"], server["data"]
     expect = pw.expect
@@ -310,7 +335,7 @@ def test_everyday_move_button_moves_only_old_unclustered_photos(server, page):
 def test_sidecar_buttons_and_log_filters(server, page):
     url = server["url"]
     expect = pw.expect
-    page.goto(url + "/settings")
+    page.goto(url + "/settings?mode=expert")                                # the records card is expert-only
     page.get_by_role("button", name="Move existing records to this location").click()
     expect(page.get_by_text(re.compile(r"Sidecars: \d+ moved"))).to_be_visible()
     page.once("dialog", lambda d: d.accept())

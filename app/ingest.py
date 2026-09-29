@@ -422,12 +422,14 @@ def build_record(cfg: Config, photo: Path, tags: dict, source: str | None = None
 
 
 def enrich_location(cfg: Config, rec: dict) -> None:
+    from . import rules  # local: rules imports config, config is imported here
     if rec.get("lat") is None or rec.get("lon") is None:
-        rec["dist_km"], rec["zone"], rec["place"] = None, geo.ZONE_UNKNOWN, None
+        rec["dist_km"], rec["zone"], rec["place"], rec["home"] = None, geo.ZONE_UNKNOWN, None, None
         return
-    d = geo.haversine_km(cfg.home_lat, cfg.home_lon, rec["lat"], rec["lon"]) if cfg.home_lat or cfg.home_lon else None
+    d, zone, home = rules.zone_at(cfg, rec["lat"], rec["lon"])     # the nearest of the homes (issue #3)
     rec["dist_km"] = round(d, 3) if d is not None else None
-    rec["zone"] = geo.zone_for(cfg, d)
+    rec["zone"] = zone
+    rec["home"] = home
     rec["place"] = geo.reverse(cfg, rec["lat"], rec["lon"])
 
 
@@ -461,7 +463,7 @@ def zoning_key(cfg: Config) -> str:
     (read, geocode, compare) on every run cost twenty thousand reads and lookups per ten
     minutes on a large library; it is only needed when one of these changed."""
     parts = [SIDECAR_VERSION, cfg.home_lat, cfg.home_lon, cfg.home_radius_km, cfg.local_radius_km,
-             cfg.named_places, cfg.min_city_population, cfg.sidecar_mode, cfg.sidecar_name]
+             cfg.named_places, cfg.min_city_population, cfg.sidecar_mode, cfg.sidecar_name, cfg.homes]
     return hashlib.sha1(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()
 
 

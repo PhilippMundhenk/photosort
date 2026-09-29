@@ -354,7 +354,8 @@ def test_every_page_passes_the_accessibility_basics(client, library):
     for path in ("/", "/review", f"/review?open={p['home']['id']}", "/everyday", "/everyday?month=2026-06",
                  "/everyday?q=IMG", "/clusters", f"/clusters/view?folder={folder}", "/log", "/log?kind=review",
                  "/history", f"/history?file={name}", "/history?msg=3+files+put+back",
-                 "/settings", "/settings?msg=Saved"):
+                 "/settings", "/settings?msg=Saved", "/settings?mode=advanced", "/settings?mode=expert",
+                 "/settings?mode=expert&msg=Rules+not+saved"):
         r = client.get(path)
         assert r.status_code == 200, path
         _check(r.text, path)
