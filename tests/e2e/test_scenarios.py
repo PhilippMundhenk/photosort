@@ -175,3 +175,33 @@ def test_a_named_place_from_settings_names_the_day_out(tmp_path_factory, page):
         expect(page.locator(f"#{local['id']} input[name=name]")).to_have_value("2026-06-27 Barockstadt")
         page.goto(url + "/everyday?month=2026-06")
         expect(page.get_by_text("Bietigheim-Bissingen").first).to_be_visible()   # unnamed spots keep the geocoder
+
+
+def test_config_edited_on_disk_applies_without_a_restart(tmp_path_factory, page):
+    """config.yaml is edited by hand while the service runs (a NAS user with a text editor): the
+    next request sees it, pages and the run use it, and nothing needs restarting."""
+    base, lib = _library(tmp_path_factory, "e2e-hotconfig")
+    synth.populate(lib.cfg)
+    with serve(base, lib) as s:
+        url, data = s["url"], s["data"]
+        expect = pw.expect
+        page.goto(url + "/")
+        expect(page.locator("header .badge", has_text="LIVE")).to_be_visible()
+        cfg_file = data / "config.yaml"
+        raw = yaml.safe_load(cfg_file.read_text(encoding="utf-8"))
+        raw["dry_run"], raw["scan_interval_min"], raw["dayout_min_photos"] = True, 42, 100
+        cfg_file.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+        page.reload()
+        expect(page.locator("header .badge", has_text="dry-run")).to_be_visible()       # seen at once
+        page.goto(url + "/settings")
+        expect(page.locator("input[name=scan_interval_min]")).to_have_value("42")
+        httpx.post(url + "/run", timeout=5)
+        _wait_pending(url, 2)                                                            # a day out needs 100 now
+        assert {p["kind"] for p in _proposals(data).values()} == {"trip", "home"}
+        cfg_file.write_text("dry_run: [broken", encoding="utf-8")                        # a slip of the editor
+        assert httpx.get(url + "/api/status", timeout=10).status_code == 200            # still up, on defaults
+        assert httpx.get(url + "/settings", timeout=10).status_code == 200
+        raw["dry_run"] = False
+        cfg_file.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+        page.goto(url + "/")
+        expect(page.locator("header .badge", has_text="LIVE")).to_be_visible()

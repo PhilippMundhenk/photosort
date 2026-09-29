@@ -605,3 +605,10 @@ def test_cluster_actions_refuse_folders_outside_the_sorted_root(client, library,
     r = client.post("/cluster/move_out", data={"folder": str(folder), "photo": str(library.paths[0])})
     assert r.status_code == 400 and library.paths[0].exists()                # a photo outside that folder
     assert client.get("/clusters/view", params={"folder": str(folder)}).status_code == 200
+
+
+def test_a_folder_that_cannot_be_resolved_is_refused_too(client, library, monkeypatch):
+    real = Path.resolve
+    monkeypatch.setattr(Path, "resolve", lambda self, *a, **k: (_ for _ in ()).throw(OSError("loop"))
+                        if "loop" in str(self) else real(self, *a, **k))
+    assert client.get("/clusters/view", params={"folder": str(Path(config.load().root) / "loop")}).status_code == 400
