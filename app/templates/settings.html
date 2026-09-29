@@ -10,56 +10,56 @@
 
 <div class="card">
   <h2 style="margin-top:0">Folders</h2>
-  <label>Inbox root (one subfolder per device; each becomes an input named after it)</label><input type="text" name="inbox_root" value="{{ cfg.inbox_root }}">
+  <label for="f-inbox_root">Inbox root (one subfolder per device; each becomes an input named after it)</label><input type="text" name="inbox_root" id="f-inbox_root" value="{{ cfg.inbox_root }}">
   <div class="muted small">Found now: {% for name, path in discovered %}<code>{{ name }}={{ path }}</code>{{ ", " if not loop.last }}{% else %}nothing (no subfolders or files in {{ cfg.inbox_root }}){% endfor %}</div>
-  <label>Input folders override (optional, one per line, <code>name=/path</code>; empty = use the folders found above)</label>
-  <textarea name="inboxes" rows="3" placeholder="{% for name, path in discovered %}{{ name }}={{ path }}&#10;{% endfor %}">{{ inboxes_text }}</textarea>
-  <label>Target root</label><input type="text" name="root" value="{{ cfg.root }}">
-  <label>Everyday layout (<code>YYYY/MM</code> or <code>leave</code>)</label><input type="text" name="everyday_layout" value="{{ cfg.everyday_layout }}">
-  <label>Unnamed-bursts folder (inside root)</label><input type="text" name="unnamed_dir" value="{{ cfg.unnamed_dir }}">
-  <label>Review subfolder for low-confidence photos of <i>auto-applied</i> clusters (manual approval settles them)</label><input type="text" name="review_dir" value="{{ cfg.review_dir }}">
+  <label for="f-inboxes">Input folders override (optional, one per line, <code>name=/path</code>; empty = use the folders found above)</label>
+  <textarea name="inboxes" id="f-inboxes" rows="3" placeholder="{% for name, path in discovered %}{{ name }}={{ path }}&#10;{% endfor %}">{{ inboxes_text }}</textarea>
+  <label for="f-root">Target root</label><input type="text" name="root" id="f-root" value="{{ cfg.root }}">
+  <label for="f-everyday_layout">Everyday layout (<code>YYYY/MM</code> or <code>leave</code>)</label><input type="text" name="everyday_layout" id="f-everyday_layout" value="{{ cfg.everyday_layout }}">
+  <label for="f-unnamed_dir">Unnamed-bursts folder (inside root)</label><input type="text" name="unnamed_dir" id="f-unnamed_dir" value="{{ cfg.unnamed_dir }}">
+  <label for="f-review_dir">Review subfolder for low-confidence photos of <i>auto-applied</i> clusters (manual approval settles them)</label><input type="text" name="review_dir" id="f-review_dir" value="{{ cfg.review_dir }}">
   <div class="check"><input type="checkbox" id="sbs" name="subfolder_by_source" {% if cfg.subfolder_by_source %}checked{% endif %}><label for="sbs">Per-source subfolders (<code>2026-10 Lisbon/smartphone-a/</code>)</label></div>
-  <label>Photo extensions</label><input type="text" name="photo_extensions" value="{{ extensions }}">
-  <label>NAS thumbnail pattern (relative to the photo, <code>{name}</code> = file name)</label><input type="text" name="thumb_pattern" value="{{ cfg.thumb_pattern }}">
+  <label for="f-photo_extensions">Photo extensions</label><input type="text" name="photo_extensions" id="f-photo_extensions" value="{{ extensions }}">
+  <label for="f-thumb_pattern">NAS thumbnail pattern (relative to the photo, <code>{name}</code> = file name)</label><input type="text" name="thumb_pattern" id="f-thumb_pattern" value="{{ cfg.thumb_pattern }}">
   <div class="check"><input type="checkbox" id="gt" name="generate_thumbnails" {% if cfg.generate_thumbnails %}checked{% endif %}><label for="gt">Generate thumbnails when the NAS has none (cached in <code>data/thumbs</code>; videos need ffmpeg)</label></div>
 </div>
 
 <div class="card">
   <h2 style="margin-top:0">Home &amp; zones</h2>
-  <label>Home time zone (IANA name; photo times without an offset are read in it, video times are converted to it)</label><input type="text" name="timezone" value="{{ cfg.timezone }}" placeholder="Europe/Berlin">
-  <div class="row"><div style="flex:1"><label>Home latitude</label><input type="number" step="0.000001" name="home_lat" value="{{ cfg.home_lat }}"></div>
-    <div style="flex:1"><label>Home longitude</label><input type="number" step="0.000001" name="home_lon" value="{{ cfg.home_lon }}"></div></div>
+  <label for="f-timezone">Home time zone (IANA name; photo times without an offset are read in it, video times are converted to it)</label><input type="text" name="timezone" id="f-timezone" value="{{ cfg.timezone }}" placeholder="Europe/Berlin">
+  <div class="row"><div style="flex:1"><label for="f-home_lat">Home latitude</label><input type="number" step="0.000001" name="home_lat" id="f-home_lat" value="{{ cfg.home_lat }}"></div>
+    <div style="flex:1"><label for="f-home_lon">Home longitude</label><input type="number" step="0.000001" name="home_lon" id="f-home_lon" value="{{ cfg.home_lon }}"></div></div>
   <div style="margin:8px 0"><button form="detect" class="secondary small" type="submit">Detect home from photos</button> <span class="muted small">= where photos were taken on the most different days</span></div>
-  <label>Home radius km (below: <b>home</b>)</label><input type="number" step="0.1" name="home_radius_km" value="{{ cfg.home_radius_km }}">
-  <label>Local radius km (zone label only: <b>local</b> below, <b>away</b> beyond)</label><input type="number" step="1" name="local_radius_km" value="{{ cfg.local_radius_km }}">
+  <label for="f-home_radius_km">Home radius km (below: <b>home</b>)</label><input type="number" step="0.1" name="home_radius_km" id="f-home_radius_km" value="{{ cfg.home_radius_km }}">
+  <label for="f-local_radius_km">Local radius km (zone label only: <b>local</b> below, <b>away</b> beyond)</label><input type="number" step="1" name="local_radius_km" id="f-local_radius_km" value="{{ cfg.local_radius_km }}">
 </div>
 
 <div class="card">
   <h2 style="margin-top:0">Place names</h2>
-  <label>Min town population for a name (smaller villages use the region)</label><input type="number" name="min_city_population" value="{{ cfg.min_city_population }}">
-  <label>Your own places, one per line: <code>Name = lat, lon, radius km</code></label>
-  <textarea name="named_places" rows="5" placeholder="Black Forest = 48.0, 8.2, 40&#10;Allotment garden = 52.52, 13.40, 0.3">{{ named_places_text }}</textarea>
+  <label for="f-min_city_population">Min town population for a name (smaller villages use the region)</label><input type="number" name="min_city_population" id="f-min_city_population" value="{{ cfg.min_city_population }}">
+  <label for="f-named_places">Your own places, one per line: <code>Name = lat, lon, radius km</code></label>
+  <textarea name="named_places" id="f-named_places" rows="5" placeholder="Black Forest = 48.0, 8.2, 40&#10;Allotment garden = 52.52, 13.40, 0.3">{{ named_places_text }}</textarea>
   <div class="muted small">Photos inside a circle are labelled with its name (nearest wins). Tick “remember this place” when renaming a cluster to add one from its photos.</div>
 </div>
 
 <div class="card">
   <h2 style="margin-top:0">Excursions (trips &amp; day outs)</h2>
   <div class="muted small">A run of photos away from home, ended by any photo at home.</div>
-  <label>Trip if the run spans at least (hours), else day out</label><input type="number" step="1" name="trip_min_hours" value="{{ cfg.trip_min_hours }}">
-  <label>Min located photos for a trip</label><input type="number" name="trip_min_photos" value="{{ cfg.trip_min_photos }}">
-  <label>Min photos for a day out near home (far away: the trip minimum)</label><input type="number" name="dayout_min_photos" value="{{ cfg.dayout_min_photos }}">
-  <label>Near home, a photo-less gap longer than (hours) ends the outing (you sleep at home)</label><input type="number" step="1" name="local_gap_hours" value="{{ cfg.local_gap_hours }}">
-  <label>Split a run on a photo-less gap longer than (days)…</label><input type="number" step="0.5" name="trip_gap_days" value="{{ cfg.trip_gap_days }}">
-  <label>…if the two sides are further apart than (km)</label><input type="number" name="trip_split_distance_km" value="{{ cfg.trip_split_distance_km }}">
-  <label>Max places in a folder name (then countries)</label><input type="number" name="max_places_in_name" value="{{ cfg.max_places_in_name }}">
+  <label for="f-trip_min_hours">Trip if the run spans at least (hours), else day out</label><input type="number" step="1" name="trip_min_hours" id="f-trip_min_hours" value="{{ cfg.trip_min_hours }}">
+  <label for="f-trip_min_photos">Min located photos for a trip</label><input type="number" name="trip_min_photos" id="f-trip_min_photos" value="{{ cfg.trip_min_photos }}">
+  <label for="f-dayout_min_photos">Min photos for a day out near home (far away: the trip minimum)</label><input type="number" name="dayout_min_photos" id="f-dayout_min_photos" value="{{ cfg.dayout_min_photos }}">
+  <label for="f-local_gap_hours">Near home, a photo-less gap longer than (hours) ends the outing (you sleep at home)</label><input type="number" step="1" name="local_gap_hours" id="f-local_gap_hours" value="{{ cfg.local_gap_hours }}">
+  <label for="f-trip_gap_days">Split a run on a photo-less gap longer than (days)…</label><input type="number" step="0.5" name="trip_gap_days" id="f-trip_gap_days" value="{{ cfg.trip_gap_days }}">
+  <label for="f-trip_split_distance_km">…if the two sides are further apart than (km)</label><input type="number" name="trip_split_distance_km" id="f-trip_split_distance_km" value="{{ cfg.trip_split_distance_km }}">
+  <label for="f-max_places_in_name">Max places in a folder name (then countries)</label><input type="number" name="max_places_in_name" id="f-max_places_in_name" value="{{ cfg.max_places_in_name }}">
   <div class="check"><input type="checkbox" id="nmm" name="name_multiday_by_month" {% if cfg.name_multiday_by_month %}checked{% endif %}><label for="nmm">Name multi-day clusters within one month by month only (<code>2026-08 Singapore</code> instead of <code>2026-08-08..29 Singapore</code>)</label></div>
 </div>
 
 <div class="card">
   <h2 style="margin-top:0">Home occasions</h2>
-  <label>Photos closer than (hours) form one burst</label><input type="number" step="0.5" name="burst_gap_hours" value="{{ cfg.burst_gap_hours }}">
-  <label>Min photos per burst</label><input type="number" name="burst_min_photos" value="{{ cfg.burst_min_photos }}">
-  <label>Home burst must exceed baseline photos/day ×</label><input type="number" step="0.5" name="burst_baseline_factor" value="{{ cfg.burst_baseline_factor }}">
+  <label for="f-burst_gap_hours">Photos closer than (hours) form one burst</label><input type="number" step="0.5" name="burst_gap_hours" id="f-burst_gap_hours" value="{{ cfg.burst_gap_hours }}">
+  <label for="f-burst_min_photos">Min photos per burst</label><input type="number" name="burst_min_photos" id="f-burst_min_photos" value="{{ cfg.burst_min_photos }}">
+  <label for="f-burst_baseline_factor">Home burst must exceed baseline photos/day ×</label><input type="number" step="0.5" name="burst_baseline_factor" id="f-burst_baseline_factor" value="{{ cfg.burst_baseline_factor }}">
   <div class="muted small">Every burst above this goes to <code>{{ cfg.unnamed_dir }}/</code> as a proposal for you to name or reject.</div>
 </div>
 
@@ -72,21 +72,21 @@
   <div class="check"><input type="checkbox" id="al" name="auto_apply_local" {% if cfg.auto_apply_local %}checked{% endif %}><label for="al">Move proposed <b>day outs</b> the same way</label></div>
   <div class="check"><input type="checkbox" id="ah" name="auto_apply_home" {% if cfg.auto_apply_home %}checked{% endif %}><label for="ah">Move <b>home bursts</b> into <code>{{ cfg.unnamed_dir }}/&lt;date&gt; (n Fotos)/</code>; they stay there until you name them in Review</label></div>
   <div class="check"><input type="checkbox" id="ae" name="auto_apply_everyday" {% if cfg.auto_apply_everyday %}checked{% endif %}><label for="ae">Move <b>everyday photos</b> (in no cluster) older than the days below into <code>{{ cfg.everyday_layout }}/</code>. Off: they stay in the inbox until you press the button on the Everyday page{% if cfg.everyday_layout == 'leave' %} — layout is <code>leave</code>, so nothing is moved either way{% endif %}</label></div>
-  <label>Keep everyday photos in the inbox for (days) before they can be moved — a recent photo may still become part of a cluster</label><input type="number" step="1" min="0" name="everyday_keep_days" value="{{ cfg.everyday_keep_days }}">
+  <label for="f-everyday_keep_days">Keep everyday photos in the inbox for (days) before they can be moved — a recent photo may still become part of a cluster</label><input type="number" step="1" min="0" name="everyday_keep_days" id="f-everyday_keep_days" value="{{ cfg.everyday_keep_days }}">
   <div class="check"><input type="checkbox" id="xmp" name="write_xmp_sidecar" {% if cfg.write_xmp_sidecar %}checked{% endif %}><label for="xmp">Also write keywords to .xmp sidecars</label></div>
-  <label>Scan interval (minutes)</label><input type="number" name="scan_interval_min" value="{{ cfg.scan_interval_min }}">
+  <label for="f-scan_interval_min">Scan interval (minutes)</label><input type="number" name="scan_interval_min" id="f-scan_interval_min" value="{{ cfg.scan_interval_min }}">
 </div>
 
 <div class="card">
   <h2 style="margin-top:0">Sidecars (per-photo records)</h2>
-  <label>Where</label>
-  <select name="sidecar_mode">
+  <label for="f-sidecar_mode">Where</label>
+  <select name="sidecar_mode" id="f-sidecar_mode">
     <option value="central" {% if cfg.sidecar_mode == 'central' %}selected{% endif %}>central: data/index/&lt;inbox&gt;/&lt;relative path&gt; (photo folders stay clean)</option>
     <option value="beside" {% if cfg.sidecar_mode == 'beside' %}selected{% endif %}>beside the photo (follows the file anywhere)</option>
   </select>
-  <label>File name (<code>{name}</code> = photo file name, <code>{stem}</code>, <code>{ext}</code>)</label><input type="text" name="sidecar_name" value="{{ cfg.sidecar_name }}">
-  <label>After a photo is sorted</label>
-  <select name="sidecar_cleanup">
+  <label for="f-sidecar_name">File name (<code>{name}</code> = photo file name, <code>{stem}</code>, <code>{ext}</code>)</label><input type="text" name="sidecar_name" id="f-sidecar_name" value="{{ cfg.sidecar_name }}">
+  <label for="f-sidecar_cleanup">After a photo is sorted</label>
+  <select name="sidecar_cleanup" id="f-sidecar_cleanup">
     <option value="after_move" {% if cfg.sidecar_cleanup == 'after_move' %}selected{% endif %}>drop its record (manifest.json in the folder has everything)</option>
     <option value="never" {% if cfg.sidecar_cleanup == 'never' %}selected{% endif %}>keep the record with the photo</option>
   </select>

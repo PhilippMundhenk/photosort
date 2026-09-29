@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import time
 from datetime import timedelta
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -276,3 +277,86 @@ def test_log_filters_and_empty_log(client, library):
     assert 'class="badge ok" href="/log?kind=review"' in html and "<code>action=approve</code>" in html
     assert html.count('<span class="badge">review</span>') >= 1 and '<span class="badge">run</span>' not in html
     assert 'class="badge ok" href="/log?kind="' in client.get("/log").text
+
+
+# --- accessibility basics on every page ------------------------------------------------------------
+
+class _A11y(HTMLParser):
+    """Collects what an accessibility check needs: images without alt, controls without a name,
+    duplicate ids, the document language, headings."""
+
+    def __init__(self):
+        super().__init__()
+        self.img_no_alt, self.unnamed, self.ids, self.dups, self.h1 = [], [], set(), [], 0
+        self.lang = None
+        self._open_named = []                      # (tag, attrs, text) for elements that need visible text
+        self._labels = 0                           # inside a <label>: a wrapped control is named by it
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag == "html":
+            self.lang = a.get("lang")
+        if tag == "h1":
+            self.h1 += 1
+        if "id" in a:
+            if a["id"] in self.ids:
+                self.dups.append(a["id"])
+            self.ids.add(a["id"])
+        if tag == "img" and "alt" not in a:
+            self.img_no_alt.append(a.get("src", "?"))
+        if tag == "label":
+            self._labels += 1
+        if tag in ("input", "select", "textarea") and a.get("type") not in ("hidden", "submit"):
+            if not (a.get("title") or a.get("aria-label") or a.get("placeholder") or a.get("id") or self._labels):
+                self.unnamed.append(f"{tag} {a}")
+        if tag == "button" or a.get("role") in ("button", "checkbox", "link"):
+            if a.get("title") or a.get("aria-label"):
+                return
+            self._open_named.append([tag, a, ""])
+
+    def handle_data(self, data):
+        for item in self._open_named:
+            item[2] += data
+
+    def handle_endtag(self, tag):
+        if tag == "label":
+            self._labels -= 1
+        if self._open_named and self._open_named[-1][0] == tag:
+            t, a, text = self._open_named.pop()
+            if not text.strip():
+                self.unnamed.append(f"{t} {a}")
+
+
+def _check(html: str, page: str) -> None:
+    p = _A11y()
+    p.feed(html)
+    assert p.lang == "en", page
+    assert p.h1 == 1, f"{page}: {p.h1} h1 elements"
+    assert not p.img_no_alt, f"{page}: images without alt: {p.img_no_alt[:3]}"
+    assert not p.unnamed, f"{page}: controls without a name: {p.unnamed[:3]}"
+    assert not p.dups, f"{page}: duplicate ids: {p.dups[:3]}"
+
+
+def test_every_page_passes_the_accessibility_basics(client, library):
+    """One h1, a document language, alt on every image, a name on every control (visible text,
+    title or aria-label), no duplicate ids: on every page, in every state the suite can produce."""
+    cfg = config.load()
+    cfg.dry_run = False
+    config.save(cfg)
+    cluster.run(cfg)
+    p = _props()
+    _set(p["trip"]["id"], status="approved", error="Permission denied")
+    mover.apply(cfg, p["local"], reviewed=True)
+    folder = mover.target_folder(cfg, p["local"])
+    mover.move_out(cfg, folder, Path(mover.read_manifest(folder)["photos"][0]["dst"]))
+    mover.apply(cfg, p["home"], reviewed=True)
+    for path in ("/", "/review", f"/review?open={p['home']['id']}", "/everyday", "/everyday?month=2026-06",
+                 "/clusters", f"/clusters/view?folder={folder}", "/log", "/log?kind=review",
+                 "/settings", "/settings?msg=Saved"):
+        r = client.get(path)
+        assert r.status_code == 200, path
+        _check(r.text, path)
+    cfg.dry_run = True
+    config.save(cfg)
+    for path in ("/", "/review", "/everyday", "/settings"):
+        _check(client.get(path).text, path + " (dry-run)")
