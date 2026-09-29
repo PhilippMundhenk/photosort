@@ -459,7 +459,9 @@ def scan(cfg: Config, force: bool = False, progress=None) -> dict:
     for name, folder in inbox_dirs(cfg):
         if not folder.exists():
             stats["missing"].append(str(folder))
-            continue
+            if _known.pop(str(folder), None) is not None:  # the share dropped out: its records leave the
+                _bump()                                     # cache too, so nothing is proposed or approved
+            continue                                        # from photos nobody can reach right now
         photos = list_photos(cfg, folder)
         plan.append((name, folder, photos, [p for p in photos if force or _needs_index(p, cfg)]))
     total_new = sum(len(todo) for _, _, _, todo in plan)

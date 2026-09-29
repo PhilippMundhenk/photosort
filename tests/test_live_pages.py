@@ -371,3 +371,47 @@ def test_photos_taken_in_the_same_second_keep_a_stable_order(client, library):
     assert home["id"] in cluster.load_proposals()                            # and the id does not flip
     html = client.get("/review").text
     assert html.count(f'data-path="{a}') >= 20
+
+
+def test_an_inbox_share_that_disappears_and_returns(client, library):
+    """The NAS share drops out between two runs (unmounted, network down): the run reports the
+    missing folder, the pages keep working and warn, no proposal is approved or moved by
+    itself; when the share is back, the same proposals return with the same ids."""
+    cfg = config.load()
+    cfg.dry_run = False
+    config.save(cfg)
+    main.run_pipeline("test")
+    before = {pid: (p["kind"], p["n"]) for pid, p in cluster.load_proposals().items()}
+    inbox = Path(cfg.inboxes[0]["path"])
+    parked = inbox.with_name("phone-a.unmounted")
+    inbox.rename(parked)                                                 # the share is gone
+    stats = main.run_pipeline("test")
+    main.wait_for_apply()
+    assert stats["ingest"]["missing"] == [str(inbox)] and stats["queued"] == 0
+    for path in ("/", "/review", "/everyday", "/clusters", "/settings", "/api/status"):
+        assert client.get(path).status_code == 200, path
+    assert "Inbox folders not found" in client.get("/").text
+    props = cluster.load_proposals()
+    assert all(p["status"] in ("pending", "ongoing") for p in props.values())
+    assert all(str(inbox) not in ph["path"] for p in props.values() for ph in p["photos"])
+    assert not list(Path(cfg.root).rglob("*.jpg"))                       # nothing moved anywhere
+    # approving a proposal whose files are all unreachable must fail visibly, not mark it applied
+    trip_id = next(pid for pid, (kind, _) in before.items() if kind == "trip")
+    props[trip_id] = {**next(p for p in cluster.load_proposals().values()), "id": trip_id, "kind": "trip",
+                      "photos": [{"path": str(inbox / f"IMG_{i:04d}.jpg"), "file": f"IMG_{i:04d}.jpg", "conf": 1.0,
+                                  "zone": "away", "source": "phone-a"} for i in range(1, 4)],
+                      "n": 3, "status": "pending", "name": "2026-06 Ghost"}
+    cluster.save_proposals(props)
+    client.post(f"/proposal/{trip_id}/approve")
+    main.wait_for_apply()
+    ghost = cluster.load_proposals()[trip_id]
+    assert ghost["status"] == "approved" and "mounted" in ghost["error"]
+    assert not (Path(cfg.root) / "2026-06 Ghost").exists()
+    parked.rename(inbox)                                                 # mounted again
+    stats = main.run_pipeline("test")
+    assert stats["ingest"]["missing"] == [] and stats["ingest"]["new"] == 0   # records were kept: no re-index
+    after = {pid: (p["kind"], p["n"]) for pid, p in cluster.load_proposals().items() if p["status"] != "approved"}
+    assert after == {k: v for k, v in before.items() if k != trip_id}   # same proposals, same ids
+    ghost = cluster.load_proposals()[trip_id]
+    assert ghost["status"] == "approved" and ghost["error"]              # still waiting for a retry, not buried
+    assert "Inbox folders not found" not in client.get("/").text
