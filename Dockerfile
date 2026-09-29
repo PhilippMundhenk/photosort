@@ -17,6 +17,8 @@ RUN pip install --no-cache-dir -r requirements-dev.txt \
 COPY pyproject.toml ./
 COPY app ./app
 COPY tests ./tests
+COPY README.md ./
+COPY docs ./docs
 ENV PHOTOSORT_DATA=/tmp/photosort-data PYTHONDONTWRITEBYTECODE=1
 CMD ["sh", "-c", "ruff check app tests && pytest -q --cov=app --cov-branch --cov-fail-under=99 --cov-report=term-missing:skip-covered"]
 

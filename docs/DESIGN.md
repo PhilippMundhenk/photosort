@@ -165,6 +165,25 @@ kind. Local bursts are named from the geocoder. Home bursts have no location sig
 Leftover non-occasion photos inside a burst are accepted as a small cost; an optional CLIP
 pass (Immich already computes vectors) is the noted follow-up if it bothers.
 
+## 3b. Code map
+
+One package, `app/`, no framework beyond FastAPI and Jinja:
+
+- `config.py`: the dataclass behind `config.yaml`, loaded per request from a content-hashed cache,
+  coerced to field types, discovered inputs, time zone.
+- `ingest.py`: exiftool in batches, one JSON record per photo (central index or beside the photo),
+  timestamps and offsets, GPS sanity, the scan with its change tracking and re-zoning key.
+- `cluster.py`: the record cache, per-device excursions and their merge, bursts, naming,
+  proposals and their identity across runs, the proposals file and its lock.
+- `mover.py`: every file operation (move, copy, undo, rename, move out, put back), the dry-run
+  guard, manifests written incrementally, the cluster list and the cross-mount warning.
+- `geo.py`: distance, zones, the offline geocoder with the covering-town rule, own places,
+  home detection.
+- `thumbs.py`: thumbnails and previews in a helper process, the cache and its failure markers,
+  the paced prefetch.
+- `events.py`: the append-only log and its tail reader.
+- `main.py`: the pages and actions, the pipeline, the apply worker, the status endpoint.
+
 ## 4. State: filesystem, not a database
 
 Explicit requirement: databases get lost and break. So:
