@@ -379,7 +379,7 @@ def test_reject_rename_toggle(client, library):
     r = client.post(f"/proposal/{trip['id']}/toggle", data={"path": path, "back": f"/review?open={trip['id']}#x"})
     assert r.headers["location"] == f"/review?open={trip['id']}#x" and _proposals("trip")["excluded"] == [path]
     page = client.get(f"/review?open={trip['id']}").text                  # fallback keeps the cluster open
-    assert f'id="{trip["id"]}"' in page and page.count("<details open>") >= 2
+    assert f'id="{trip["id"]}"' in page and page.count("<details open") >= 2
     r = client.post(f"/proposal/{trip['id']}/toggle", data={"path": path}, headers={"X-Requested-With": "fetch"})
     assert r.status_code == 200 and r.json() == {"ok": True, "status": "pending", "name": _proposals("trip")["name"],
                                                  "excluded": False, "excluded_paths": []}
@@ -487,9 +487,8 @@ def test_removed_photo_is_everyday_and_can_be_put_back(client, library, monkeypa
     cfg = config.load()
     cfg.sidecar_cleanup = "never"                        # the record travels with the photo (no exiftool here)
     config.save(cfg)
-    scans = []
-    real_scan = ingest.scan
-    monkeypatch.setattr(ingest, "scan", lambda c, **k: scans.append(1) or real_scan(c, **k))
+    indexed = []
+    monkeypatch.setattr(ingest, "index_paths", lambda c, paths: indexed.append(paths) or 0)
     cluster.run(cfg)
     local = _proposals("local")
     client.post(f"/proposal/{local['id']}/approve")
@@ -501,7 +500,7 @@ def test_removed_photo_is_everyday_and_can_be_put_back(client, library, monkeypa
     r = client.post("/cluster/move_out", data={"folder": str(folder), "photo": photo})
     assert r.status_code == 303
     src = mover.read_manifest(folder)["corrections"][0]["src"]
-    assert Path(src).exists() and src in _proposals("local")["excluded"] and scans == [1]   # indexed at once
+    assert Path(src).exists() and src in _proposals("local")["excluded"] and indexed == []   # its record came along
     assert len(cluster.everyday_records(cfg)) == n_everyday + 1         # visible on the Everyday page at once
     assert src in client.get("/everyday?month=2026-06").text
     page = client.get("/clusters/view", params={"folder": str(folder)}).text

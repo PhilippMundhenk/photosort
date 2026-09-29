@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import cluster, config, events, geo, ingest, mover, thumbs
+from . import cluster, config, events, geo, ingest, journal, mover, thumbs
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("photosort")
@@ -274,8 +274,29 @@ def render(request: Request, name: str, **ctx):
 
 
 def _pending(props: dict) -> list[dict]:
-    return sorted((p for p in props.values() if p["status"] in ("pending", "ongoing")),
-                  key=lambda p: p["start"], reverse=True)
+    out = sorted((p for p in props.values() if p["status"] in ("pending", "ongoing")),
+                 key=lambda p: p["start"], reverse=True)
+    for p in out:                                     # a set for the template: `path in list` per photo
+        p["excluded_set"] = set(p.get("excluded", []))   # was quadratic on a 2000-photo proposal
+    return out
+
+
+REVIEW_INLINE = 80                                    # photos rendered with the page for an open card
+PHOTOS_CHUNK = 200                                    # photos per lazily loaded chunk
+
+
+@app.get("/proposal/{pid}/photos", response_class=HTMLResponse)
+def proposal_photos(request: Request, pid: str, offset: int = 0, limit: int = PHOTOS_CHUNK):
+    """A chunk of a proposal's photo figures (the review page loads them when a list is opened)."""
+    pr = cluster.load_proposals().get(pid)
+    if not pr:
+        return HTMLResponse("", status_code=404)
+    offset, limit = max(0, offset), max(1, min(limit, 1000))
+    photos = pr["photos"][offset:offset + limit]
+    resp = tpl.TemplateResponse(request, "_figures.html", {"photos": photos, "ex": set(pr.get("excluded", []))})
+    resp.headers["X-Total"] = str(len(pr["photos"]))
+    resp.headers["X-Next"] = str(offset + len(photos)) if offset + len(photos) < len(pr["photos"]) else ""
+    return resp
 
 
 # --- pages ----------------------------------------------------------------------
@@ -298,7 +319,7 @@ def review(request: Request, open: str = ""):
     approved_all = [p for p in props.values() if p["status"] == "approved"]
     return render(request, "review.html", pending=_pending(props), unnamed=unnamed, open_id=open,
                   applying=sorted(applying, key=lambda p: p["start"], reverse=True),
-                  n_approved=len(approved_all))
+                  n_approved=len(approved_all), inline=REVIEW_INLINE)
 
 
 def _month_key(ts: str) -> str:
@@ -306,10 +327,14 @@ def _month_key(ts: str) -> str:
 
 
 @app.get("/everyday", response_class=HTMLResponse)
-def everyday(request: Request, month: str = ""):
+def everyday(request: Request, month: str = "", q: str = ""):
     cfg = config.load()
     props = cluster.load_proposals()
     recs = cluster.everyday_records(cfg, props)
+    q = q.strip()
+    if q:                                              # find a photo by file name, whatever its month
+        needle = q.lower()
+        recs = [r for r in recs if needle in r["file"].lower()][:SEARCH_LIMIT]
     months_c = Counter(_month_key(r["ts"]) for r in recs)
     months = [{"key": k, "n": months_c[k]} for k in sorted(months_c)]
     if not month and months:
@@ -320,7 +345,7 @@ def everyday(request: Request, month: str = ""):
     next_month = keys[idx + 1] if 0 <= idx < len(keys) - 1 else None
     days: dict[str, list] = {}
     for r in recs:
-        if _month_key(r["ts"]) == month:
+        if q or _month_key(r["ts"]) == month:
             days.setdefault(r["ts"][:10], []).append(r)
     out = []
     for date in sorted(days, reverse=True):
@@ -334,10 +359,16 @@ def everyday(request: Request, month: str = ""):
                                 "media": r.get("media", "photo"), "place": (r.get("place") or {}).get("place")}
                                for r in rs]})
     movable = len(mover.everyday_movable(cfg, cfg.everyday_keep_days, recs=recs))
+    moved = sorted((p for p in props.values() if p["status"] in ("applied", "approved")),
+                   key=lambda p: p["start"], reverse=True)
     return render(request, "everyday.html", months=months, month=month, days=out, pending=_pending(props),
+                  moved=moved, q=q, matches=sum(len(d["photos"]) for d in out) if q else 0,
                   total=len(recs), prev_month=prev_month, next_month=next_month,
                   month_n=months_c.get(month, 0), movable=movable, moving=_applying.get(EVERYDAY_JOB),
                   queued=EVERYDAY_JOB in list(_apply_queue.queue))
+
+
+SEARCH_LIMIT = 500
 
 
 @app.post("/everyday/move_all")
@@ -370,11 +401,18 @@ async def everyday_assign(request: Request):
             events.log("review", proposal=pr["id"], action="create", name=pr["name"], cluster_kind=kind, n=len(recs))
         else:
             pr = props.get(target)
-            if not pr or pr["status"] not in ("pending", "ongoing", "approved"):
+            if not pr or pr["status"] not in ("pending", "ongoing", "approved", "applied"):
                 return RedirectResponse("/everyday", status_code=303)
             n = cluster.add_to_proposal(pr, recs)
             events.log("review", proposal=pr["id"], action="add", name=pr["name"], n=n)
+            if pr["status"] == "applied" and n:
+                # the cluster's folder exists already: the additions are moved into it by the worker like
+                # an approval (in dry-run they wait, like any approval); the manifest is extended
+                pr["status"], pr["error"], pr["auto"] = "approved", None, False
+                events.log("review", proposal=pr["id"], action="approve", name=pr["name"], by="add")
         cluster.save_proposals(props)
+    if pr["status"] == "approved":
+        queue_apply(pr["id"])
     return RedirectResponse(f"/review?open={pr['id']}#{pr['id']}", status_code=303)
 
 
@@ -402,6 +440,30 @@ def cluster_view(request: Request, folder: str):
     _cluster_folder(config.load(), folder)
     m = mover.read_manifest(Path(folder))
     return render(request, "cluster.html", m=m, folder=folder)
+
+
+@app.get("/history", response_class=HTMLResponse)
+def history(request: Request, file: str = ""):
+    """Every action that moved files, newest first, with Revert; and the trace of one file."""
+    rows = journal.batches(limit=300)
+    trace = journal.trace(file) if file.strip() else []
+    return render(request, "history.html", rows=rows, file=file.strip(), trace=trace)
+
+
+@app.post("/history/{batch}/revert")
+def history_revert(batch: str, only: str = Form(""), back: str = Form("/history")):
+    cfg = config.load()
+    try:
+        result = journal.revert(cfg, batch, only=only or None)
+    except KeyError:
+        return HTMLResponse("<h1>Unknown action</h1><p><a href='/history'>History</a></p>", status_code=404)
+    events.log("revert", of=batch, reverted=result["reverted"], skipped=len(result["skipped"]), only=only or None)
+    mover.invalidate_clusters()
+    msg = f"{result['reverted']} file{'s' if result['reverted'] != 1 else ''} put back"
+    if result["skipped"]:
+        msg += f", {len(result['skipped'])} could not be (see the trace of each file)"
+    target = back if back.startswith("/") and not back.startswith("//") else "/history"
+    return RedirectResponse(target + ("&" if "?" in target else "?") + "msg=" + quote(msg), status_code=303)
 
 
 @app.get("/log", response_class=HTMLResponse)
@@ -511,6 +573,7 @@ def _proposal_action(pid: str, action: str, form: dict, request: Request):
     pr = props.get(pid)
     if not pr:
         return RedirectResponse("/review", status_code=303)
+    queue_after_save = None
     # approve/reject may carry the name field of the same card: an edit made right before the
     # click must not be lost to a race with the autosave request
     if action in ("approve", "reject") and form.get("name") is not None:
@@ -520,10 +583,9 @@ def _proposal_action(pid: str, action: str, form: dict, request: Request):
         # pending: approve; approved with an error (the move failed): retry - the button did
         # nothing before because the proposal was already "approved"
         retry = pr["status"] == "approved"
-        pr["status"], pr["error"] = "approved", None  # the apply worker moves the files
+        pr["status"], pr["error"] = "approved", None  # the apply worker moves the files, after the save below
         events.log("review", proposal=pid, action="retry" if retry else "approve", name=pr["name"])
-        cluster.save_proposals(props)
-        queue_apply(pid)
+        queue_after_save = pid
     elif action == "reject":
         pr["status"] = "rejected"
         events.log("review", proposal=pid, action="reject", name=pr["name"], cluster_kind=pr["kind"])
@@ -540,6 +602,8 @@ def _proposal_action(pid: str, action: str, form: dict, request: Request):
                        excluded=path in ex, decision_id=pr["decision"].get("id"))
         pr["excluded"] = sorted(ex)
     cluster.save_proposals(props)
+    if queue_after_save:
+        queue_apply(queue_after_save)
     if request.headers.get("x-requested-with") == "fetch":            # ui.js: no page reload
         ex = set(pr.get("excluded", []))
         last = (form.get("paths") or [form.get("path", "")])[-1]
@@ -650,8 +714,9 @@ def cluster_move_out(folder: str = Form(...), photo: str = Form(...)):
     entry = mover.move_out(cfg, Path(folder), Path(photo))
     if entry:
         _set_excluded(Path(folder), entry["src"], True)
-        with _lock:
-            ingest.scan(cfg)                              # index the returned file now, not in 10 minutes
+        back = Path(entry["src"])
+        if ingest.read_sidecar(back, cfg) is None:       # its record was dropped on the way in: index this one
+            ingest.index_paths(cfg, [back])               # file now (a whole scan of 20 000 took seconds)
     return RedirectResponse(f"/clusters/view?folder={quote(folder)}", status_code=303)
 
 

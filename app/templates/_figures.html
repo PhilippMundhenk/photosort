@@ -1,0 +1,8 @@
+{# one figure per photo; `ex` is the set of excluded paths. No form control per photo (see review.html). #}
+{% for ph in photos %}
+  <figure class="{{ 'excluded' if ph.path in ex }} {{ 'uncertain' if ph.uncertain }}" data-path="{{ ph.path }}">
+    <span class="pick" role="button" tabindex="0" title="{{ ph.file }} · {{ ph.zone }} · {{ ph.place or '' }} · conf {{ ph.conf }} · click to exclude/include"><img src="/thumb?path={{ ph.path|urlencode }}" loading="lazy" alt=""></span>
+    <span class="view" role="button" tabindex="0" data-view="/media?path={{ ph.path|urlencode }}" data-type="{{ ph.media }}" data-title="{{ ph.file }} · {{ ph.ts[:16].replace('T',' ') }} · {{ ph.place or ph.zone }}" title="view full size">&#x2921;</span>
+    <figcaption>{% if ph.media == 'video' %}<span class="badge">video</span> {% endif %}{{ ph.ts[5:16].replace('T',' ') }} {{ ph.zone }}{% if ph.source %} · {{ ph.source }}{% endif %}</figcaption>
+  </figure>
+{% endfor %}

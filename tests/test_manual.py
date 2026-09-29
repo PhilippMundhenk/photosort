@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app import cluster, events, ingest, main
+from app import cluster, config, events, ingest, main
 from tests import synth
 
 
@@ -183,3 +183,65 @@ def test_manual_cluster_with_videos_and_span(cfg, library):
     recs = [r for r in cluster.everyday_records(cfg) if r["ts"][:10] in ("2026-06-01", "2026-06-02")]
     pr = cluster.create_manual("home", "", recs)
     assert pr["name"].startswith("2026-06 (") and "1 Videos" in pr["name"]
+
+
+def test_everyday_photos_can_join_a_cluster_that_was_already_moved(client, library):
+    """A photo that surfaced late (or was missed) joins a cluster whose folder exists: the target
+    list offers moved clusters, the addition is moved into the folder by the worker, the
+    manifest is extended, and undo still covers everything."""
+    from app import main, mover
+    cfg = config.load()
+    cfg.dry_run = False
+    config.save(cfg)
+    cluster.run(cfg)
+    local = next(p for p in cluster.load_proposals().values() if p["kind"] == "local")
+    client.post(f"/proposal/{local['id']}/approve")
+    main.wait_for_apply()
+    folder = mover.target_folder(cfg, local)
+    html = client.get("/everyday").text
+    assert 'label="already moved' in html and f'<option value="{local["id"]}">local · {local["name"]}' in html
+    assert 'data-filter="target"' in html
+    extra = [r["path"] for r in cluster.everyday_records(cfg)][:2]
+    r = client.post("/everyday/assign", data={"paths": extra, "target": local["id"]})
+    assert r.status_code == 303 and local["id"] in r.headers["location"]
+    main.wait_for_apply()
+    pr = cluster.load_proposals()[local["id"]]
+    assert pr["status"] == "applied" and pr["n"] == local["n"] + 2 and set(pr["added"]) == set(extra)
+    m = mover.read_manifest(folder)
+    assert len(m["photos"]) == local["n"] + 2 and not any(Path(p).exists() for p in extra)
+    assert all(str(folder) in e["dst"] for e in m["photos"])
+    assert client.post("/cluster/undo", data={"folder": str(folder)}).status_code == 303
+    assert all(Path(p).exists() for p in extra) and all(Path(p["path"]).exists() for p in local["photos"])
+
+
+def test_adding_to_a_moved_cluster_waits_in_dry_run(client, library):
+    from app import main, mover
+    cfg = config.load()
+    cfg.dry_run = False
+    config.save(cfg)
+    cluster.run(cfg)
+    local = next(p for p in cluster.load_proposals().values() if p["kind"] == "local")
+    client.post(f"/proposal/{local['id']}/approve")
+    main.wait_for_apply()
+    cfg.dry_run = True
+    config.save(cfg)
+    extra = [r["path"] for r in cluster.everyday_records(cfg)][:1]
+    client.post("/everyday/assign", data={"paths": extra, "target": local["id"]})
+    main.wait_for_apply()
+    pr = cluster.load_proposals()[local["id"]]
+    assert pr["status"] == "approved" and Path(extra[0]).exists()           # waits for dry-run to go off
+    assert len(mover.read_manifest(mover.target_folder(cfg, local))["photos"]) == local["n"]
+
+
+def test_everyday_search_finds_a_photo_in_any_month(client, library):
+    cfg = config.load()
+    lib = synth.Library(cfg)
+    lib.n = 7000
+    old = lib.photo(Path(cfg.inboxes[0]["path"]), synth.T0 - timedelta(days=400), synth.HOME)   # 2025-04
+    cluster.run(cfg)
+    html = client.get("/everyday").text
+    assert old.name not in html                                              # the latest month is shown
+    html = client.get("/everyday", params={"q": old.stem[-4:]}).text
+    assert old.name in html and "1 match for" in html and "back to the months" in html
+    assert html.count("<figure") == 1
+    assert "0 matches for" in client.get("/everyday", params={"q": "no-such-file"}).text

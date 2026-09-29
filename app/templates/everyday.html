@@ -1,6 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Everyday photos <span class="muted small">— {{ total }} photos and videos that are in no cluster</span></h1>
+<div class="card">
+  <form method="get" action="/everyday" class="row">
+    <input type="search" name="q" value="{{ q }}" placeholder="find a photo by file name, in every month" style="width:320px" title="part of a file name">
+    <button class="secondary small">Find</button>
+    {% if q %}<span class="small">{{ matches }} match{{ 'es' if matches != 1 }} for “{{ q }}” · <a href="/everyday">back to the months</a></span>{% endif %}
+  </form>
+</div>
 {% if months %}
 <div class="card monthnav">
   <div class="row" style="justify-content:space-between">
@@ -12,7 +19,7 @@
     {% for m in months %}<a class="month {{ 'active' if m.key == month }}" href="/everyday?month={{ m.key }}"><span>{{ m.key }}</span><small>{{ m.n }}</small></a>{% endfor %}
   </div>
 </div>
-{% else %}
+{% elif not q %}
 <div class="card muted">Nothing indexed yet — press “Run now”.</div>
 {% endif %}
 
@@ -35,10 +42,12 @@
   <div class="row">
     <b><span id="selcount">0</span> selected</b>
     <label style="margin:0" class="small">add to
-      <select name="target">
+      <select name="target" id="target">
         <option value="new">— new cluster —</option>
-        {% for p in pending %}<option value="{{ p.id }}">{{ p.kind }} · {{ p.name }} ({{ p.n }})</option>{% endfor %}
+        {% if pending %}<optgroup label="open proposals">{% for p in pending %}<option value="{{ p.id }}">{{ p.kind }} · {{ p.name }} ({{ p.n }})</option>{% endfor %}</optgroup>{% endif %}
+        {% if moved %}<optgroup label="already moved (the photos go into that folder)">{% for p in moved %}<option value="{{ p.id }}">{{ p.kind }} · {{ p.name }} ({{ p.n }})</option>{% endfor %}</optgroup>{% endif %}
       </select></label>
+    <input type="search" data-filter="target" placeholder="filter the list…" style="width:180px" title="type part of a cluster name to shorten the list">
     <label style="margin:0" class="small">kind <select name="kind"><option value="local">day out</option><option value="trip">trip</option><option value="home">occasion</option></select></label>
     <input type="text" name="name" placeholder="name of the new cluster, e.g. 2026-05-24 Grillabend" style="width:320px">
     <button>Assign</button>

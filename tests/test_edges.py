@@ -3,6 +3,7 @@ tools that are missing or fail, races between the worker and the pages, odd inpu
 names the behaviour it pins, not the line."""
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import threading
@@ -612,3 +613,65 @@ def test_a_folder_that_cannot_be_resolved_is_refused_too(client, library, monkey
     monkeypatch.setattr(Path, "resolve", lambda self, *a, **k: (_ for _ in ()).throw(OSError("loop"))
                         if "loop" in str(self) else real(self, *a, **k))
     assert client.get("/clusters/view", params={"folder": str(Path(config.load().root) / "loop")}).status_code == 400
+
+
+def test_move_out_indexes_the_returned_file_only_when_its_record_is_gone(client, library, monkeypatch):
+    """With records dropped after a move, the photo coming back has none: exactly that file is
+    indexed (not the whole inbox); with records kept, nothing is re-indexed."""
+    cfg = config.load()
+    cfg.dry_run = False
+    config.save(cfg)
+    cluster.run(cfg)
+    local = _kind("local")
+    mover.apply(cfg, local, reviewed=True)
+    folder = mover.target_folder(cfg, local)
+    indexed = []
+    real = ingest.index_paths
+    monkeypatch.setattr(ingest, "index_paths",
+                        lambda c, paths: indexed.append([p.name for p in paths]) or real(c, paths))
+    dst = mover.read_manifest(folder)["photos"][0]["dst"]
+    client.post("/cluster/move_out", data={"folder": str(folder), "photo": dst})
+    back = Path(mover.read_manifest(folder)["corrections"][0]["src"])
+    assert indexed == [[back.name]] and back.exists()
+    assert ingest.read_sidecar(back, cfg) is not None                       # indexed on its own, at once
+    assert str(back) in {r["path"] for r in cluster.everyday_records(cfg)}
+
+
+def test_the_gps_fill_never_caches_a_stale_copy_of_the_records(cfg, library, monkeypatch):
+    """Startup warm-up and a request race: the warm-up loaded its list, a photo arrived, the
+    request patched the cache; whoever fills now must fill the cache's list, not its own."""
+    stale = cluster.load_records(cfg)
+    new = library.photo(Path(cfg.inboxes[0]["path"]), synth.T0 + timedelta(days=200), synth.HOME)
+    cluster.load_records(cfg)                                              # the cache knows the new photo
+    monkeypatch.setattr(cluster, "load_records", lambda c: stale)          # the filler's own copy is old
+    assert str(new) in {r["path"] for r in cluster.records_filled(cfg)}
+
+
+def test_status_counts_parses_a_changed_file_itself_and_reads_a_corrupt_one_as_empty(data_dir):
+    """The status poll is usually the first to see a proposals file another process (or an
+    editor) changed: it parses it without waiting for a page load; garbage counts as nothing."""
+    cluster.PROPOSALS_PATH.write_text(json.dumps({"p1": {"status": "pending"}, "p2": {"status": "approved",
+                                                                                     "error": "boom"}}))
+    cluster._props_cache.update(stamp=None, counts=None, parsed=None)
+    assert cluster.status_counts() == {"pending": 1, "approved": {"p2": "boom"}}
+    assert cluster._props_cache["parsed"]["p1"]["status"] == "pending"      # parsed once, kept for the pages
+    cluster.PROPOSALS_PATH.write_text("{not json", encoding="utf-8")
+    cluster._props_cache.update(stamp=None, counts=None, parsed=None)
+    assert cluster.status_counts() == {"pending": 0, "approved": {}}
+
+
+def test_indexing_paths_outside_every_inbox_does_nothing(cfg, tmp_path):
+    from app import ingest
+    (tmp_path / "elsewhere.jpg").write_bytes(b"x")
+    assert ingest.index_paths(cfg, [tmp_path / "elsewhere.jpg", Path(cfg.inboxes[0]["path"]) / "missing.jpg"]) == 0
+
+
+def test_cluster_list_cache_edge_cases(cfg, monkeypatch):
+    """An upsert before the list was ever built is a no-op; a failed background walk leaves the
+    list dirty so the next request walks again."""
+    mover._clusters_cache.update(key=None, value=[], dirty=False)
+    mover._remember_cluster(Path(cfg.root) / "x", {"name": "x"})           # nothing to upsert into
+    assert mover._clusters_cache["value"] == []
+    monkeypatch.setattr(mover, "_list_clusters", lambda c: (_ for _ in ()).throw(OSError("share gone")))
+    mover._refresh_clusters(cfg, ("k",))
+    assert mover._clusters_cache["dirty"] is True

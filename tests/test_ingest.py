@@ -256,3 +256,25 @@ def test_xmp_keywords_for_many_photos_use_one_exiftool_process(tmp_path, monkeyp
         out = real(["exiftool", "-json", "-XMP-dc:Subject", str(p.with_suffix(".xmp"))], capture_output=True, text=True)
         assert sorted(json.loads(out.stdout)[0]["Subject"]) == [f"photosort/cluster/c{i}", "photosort/zone/away"]
     ingest.write_xmp_keywords_batch([])                                # nothing to do, no process
+
+
+def test_index_paths_indexes_only_the_given_inbox_files(tmp_path, data_dir, monkeypatch):
+    cfg = config.Config(inboxes=[{"path": str(tmp_path / "in"), "name": "cam"}], home_lat=48.9, home_lon=9.1)
+    inbox = tmp_path / "in"
+    inbox.mkdir()
+    a, b, outside = inbox / "a.jpg", inbox / "b.jpg", tmp_path / "elsewhere.jpg"
+    for p in (a, b, outside):
+        p.write_bytes(b"\xff\xd8x")
+    calls = []
+    monkeypatch.setattr(ingest, "exif_batch", lambda paths: calls.append([p.name for p in paths]) or
+                        {str(p): {"DateTimeOriginal": "2026:06:04 09:15:30"} for p in paths})
+    assert ingest.index_paths(cfg, [a, outside, inbox / "missing.jpg"]) == 1
+    assert calls == [["a.jpg"]]                                             # not b, not the outsider, not the ghost
+    rec = ingest.read_sidecar(a, cfg)
+    assert rec["source"] == "cam" and rec["ts"].startswith("2026-06-04T09:15:30")
+    assert ingest.read_sidecar(b, cfg) is None
+    monkeypatch.setattr(ingest, "exif_batch", lambda paths: (_ for _ in ()).throw(ingest.ExifToolMissing("no")))
+    assert ingest.index_paths(cfg, [b]) == 0
+    monkeypatch.setattr(ingest, "exif_batch", lambda paths: {str(p): {} for p in paths})
+    monkeypatch.setattr(ingest, "build_record", lambda *a, **k: (_ for _ in ()).throw(ValueError("odd")))
+    assert ingest.index_paths(cfg, [b]) == 0                                # one bad file, no crash

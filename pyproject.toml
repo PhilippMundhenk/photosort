@@ -17,6 +17,7 @@ testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 markers = [
     "e2e: browser tests against a real uvicorn server (Playwright); deselect with -m 'not e2e'",
+    "perf: latency harness on a 20 000-photo library; run alone without coverage (pytest -s -m perf)",
 ]
 filterwarnings = [
     "ignore:.*on_event is deprecated.*:DeprecationWarning",

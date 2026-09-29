@@ -20,7 +20,7 @@ COPY tests ./tests
 COPY README.md ./
 COPY docs ./docs
 ENV PHOTOSORT_DATA=/tmp/photosort-data PYTHONDONTWRITEBYTECODE=1
-CMD ["sh", "-c", "ruff check app tests && pytest -q --cov=app --cov-branch --cov-fail-under=99 --cov-report=term-missing:skip-covered"]
+CMD ["sh", "-c", "ruff check app tests && pytest -q -m 'not perf' --cov=app --cov-branch --cov-fail-under=99 --cov-report=term-missing:skip-covered"]
 
 # --- runtime image (default target) -----------------------------------------------------------
 FROM base AS runtime

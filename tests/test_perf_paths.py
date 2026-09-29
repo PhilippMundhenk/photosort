@@ -215,3 +215,46 @@ def test_undo_clears_half_written_temp_files(cfg, library):
     (folder / "manifest.json.tmp").write_text("{", encoding="utf-8")
     assert mover.undo(cfg, folder) == local["n"]
     assert not folder.exists()
+
+
+def test_a_cluster_written_here_is_listed_before_any_walk_of_the_share(cfg, library, monkeypatch):
+    cluster.run(cfg)
+    mover.list_clusters(cfg)                                                # an (empty) list is cached
+    monkeypatch.setattr(mover, "_list_clusters", lambda c: time.sleep(3) or [])   # the share is slow today
+    local = next(p for p in cluster.load_proposals().values() if p["kind"] == "local")
+    mover.apply(cfg, local, reviewed=True)
+    t0 = time.perf_counter()
+    names = [c["name"] for c in mover.list_clusters(cfg)]
+    assert names == [local["name"]] and time.perf_counter() - t0 < 0.5      # from the write, not the walk
+    folder = mover.target_folder(cfg, local)
+    dst = mover.rename(cfg, folder, "2026-06-27 Barock")
+    assert [c["name"] for c in mover.list_clusters(cfg)] == ["2026-06-27 Barock"]
+    mover.undo(cfg, dst)
+    assert mover.list_clusters(cfg) == []
+    mover.wait_for_clusters()
+
+
+def test_proposals_are_parsed_once_and_copies_do_not_leak(data_dir):
+    """Two calls after one save parse nothing; each caller may edit status, name, excluded and the
+    photo list of its copy without the next caller seeing it (the photo entries are shared)."""
+    cluster.save_proposals({"a": {"status": "pending", "name": "x", "excluded": [], "photos": [{"path": "/p1"}]}})
+    calls = []
+    real = json.loads
+    monkeypatch_loads = lambda s, *a, **k: calls.append(1) or real(s, *a, **k)  # noqa: E731
+    import app.cluster as mod
+    saved = mod.json.loads
+    mod.json.loads = monkeypatch_loads
+    try:
+        one = cluster.load_proposals()
+        two = cluster.load_proposals()
+    finally:
+        mod.json.loads = saved
+    assert calls == []                                                      # the save left a parsed copy
+    one["a"]["status"] = "approved"
+    one["a"]["excluded"].append("/p1")
+    one["a"]["photos"].append({"path": "/p2"})
+    assert two["a"]["status"] == "pending" and two["a"]["excluded"] == [] and len(two["a"]["photos"]) == 1
+    assert cluster.load_proposals()["a"]["status"] == "pending"
+    cluster.PROPOSALS_PATH.write_text('{"b": {"status": "pending", "photos": []}}', encoding="utf-8")
+    assert set(cluster.load_proposals()) == {"b"}                           # a changed file is re-read
+    assert "\n" not in cluster.PROPOSALS_PATH.read_text(encoding="utf-8").strip()   # compact on disk

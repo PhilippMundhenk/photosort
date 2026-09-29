@@ -121,6 +121,7 @@ def write_sidecar(photo: Path, rec: dict, cfg: Config | None = None) -> None:
     tmp = sp.with_name(sp.name + ".tmp")
     tmp.write_text(json.dumps(rec, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(sp)
+    (_current.add if int(rec.get("v") or 0) >= SIDECAR_VERSION else _current.discard)(str(photo))
     _bump(photo)
 
 
@@ -130,6 +131,7 @@ def delete_sidecar(photo: Path, cfg: Config | None = None) -> bool:
         return False
     sp.unlink()
     _prune_empty(sp.parent)
+    _current.discard(str(photo))
     _bump(photo, gone=True)
     return True
 
@@ -200,6 +202,7 @@ def migrate_sidecars(cfg: Config) -> dict:
                     _prune_empty(cand.parent)
                     stats["moved"] += 1
                     break
+    _current.clear()
     _bump()
     return stats
 
@@ -226,6 +229,7 @@ def purge_sidecars(cfg: Config, sorted_tree: bool = True, orphans: bool = True) 
                 f.unlink()
                 _prune_empty(f.parent)
                 stats["orphans"] += 1
+    _current.clear()
     _bump()
     return stats
 
@@ -427,9 +431,24 @@ def enrich_location(cfg: Config, rec: dict) -> None:
     rec["place"] = geo.reverse(cfg, rec["lat"], rec["lon"])
 
 
+_current: set[str] = set()      # photos whose record is known to be at SIDECAR_VERSION: a scan with
+_current_store: tuple = ()      # nothing new must not read twenty thousand records every ten minutes
+
+
 def _needs_index(p: Path, cfg: Config) -> bool:
+    global _current_store
+    store = (cfg.sidecar_mode, cfg.sidecar_name)
+    if store != _current_store:                       # records live elsewhere now: forget what we knew
+        _current.clear()
+        _current_store = store
+    key = str(p)
+    if key in _current:
+        return False
     rec = read_sidecar(p, cfg)
-    return rec is None or int(rec.get("v") or 0) < SIDECAR_VERSION
+    if rec is None or int(rec.get("v") or 0) < SIDECAR_VERSION:
+        return True
+    _current.add(key)
+    return False
 
 
 SCAN_CHUNK = 200
@@ -539,6 +558,33 @@ def _xmp_args(photo: Path, keywords: list[str]) -> list[str]:
     if xmp.exists():
         return ["-q", "-overwrite_original", *args, str(xmp)]
     return ["-q", "-o", str(xmp), *args, str(photo)]
+
+
+def index_paths(cfg: Config, paths: list[Path]) -> int:
+    """Index the given photos (they must lie under an inbox) without scanning anything else: for a
+    file that just came back from a cluster. Returns how many were indexed."""
+    todo = []
+    for p in paths:
+        hit = next(((n, f) for n, f in inbox_dirs(cfg) if p.is_relative_to(f)), None)
+        if hit and p.is_file():
+            todo.append((p, *hit))
+    if not todo:
+        return 0
+    try:
+        tags = exif_batch([p for p, _, _ in todo])
+    except ExifToolMissing:
+        return 0
+    n = 0
+    for p, name, folder in todo:
+        try:
+            rec = build_record(cfg, p, tags.get(str(p), {}), source=name)
+        except Exception:  # noqa: BLE001
+            log.exception("cannot index %s", p)
+            continue
+        rec["source"], rec["inbox"] = name, str(folder)
+        write_sidecar(p, rec, cfg)
+        n += 1
+    return n
 
 
 def write_xmp_keywords(photo: Path, keywords: list[str]) -> None:

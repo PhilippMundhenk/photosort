@@ -135,6 +135,7 @@ def test_the_review_page_works_with_the_keyboard_alone(server, browser):
         assert pg.evaluate(summary) == ["SUMMARY", tid]
         pg.keyboard.press("Enter")                                               # opens it
         expect(first.locator("details")).to_have_attribute("open", "")
+        expect(first.locator("figure").first).to_be_visible()                   # the photos load lazily
         pick = ("[document.activeElement.classList.contains('pick'), "
                 "(document.activeElement.closest('.card') || {}).id || '']")
         for _ in range(30):                                                      # on to the first photo
