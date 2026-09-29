@@ -71,3 +71,37 @@ def test_a_move_survives_a_kill_and_restart(tmp_path_factory):
         httpx.post(url + "/cluster/undo", data={"folder": str(folder)}, timeout=120)   # and undo covers it all
         assert all(Path(p["path"]).exists() for p in trip["photos"])
         assert not folder.exists(), [str(f) for f in folder.rglob("*")][:10]
+
+
+def test_the_everyday_move_survives_a_kill_and_a_second_press(tmp_path_factory):
+    """Killed in the middle of moving everyday photos, then started again: the button moves the
+    rest, every photo ends up in its month folder exactly once."""
+    base, lib = make_library(tmp_path_factory, "e2e-restart-everyday")
+    inbox = Path(lib.cfg.inboxes[0]["path"])
+    start = synth.T0 - timedelta(days=700)
+    everyday = [lib.photo(inbox, start + timedelta(hours=6 * i), synth.HOME) for i in range(2500)]
+    cfg = lib.cfg
+    with serve(base, lib) as s:
+        url = s["url"]
+        httpx.post(url + "/run", timeout=5)
+        _wait(lambda: _status(url)["pending"] == 3 and not _status(url)["state"]["running"])
+        httpx.post(url + "/everyday/move_all", timeout=10)
+        _wait(lambda: (_status(url)["applying"].get("everyday") or {}).get("done", 0) > 60
+              or (not _status(url)["applying"] and not _status(url)["everyday_queued"]))
+        s["proc"].kill()
+        s["proc"].wait(10)
+    moved = [p for p in everyday if not p.exists()]
+    assert moved                                                          # some went before the plug was pulled
+    with serve(base, lib) as s:
+        url = s["url"]
+        _wait(lambda: not _status(url)["state"]["running"] and _status(url)["state"]["runs"] >= 0)
+        httpx.post(url + "/run", timeout=5)
+        _wait(lambda: _status(url)["state"]["runs"] >= 1 and not _status(url)["state"]["running"])
+        httpx.post(url + "/everyday/move_all", timeout=10)                  # pressed again
+        _wait(lambda: not _status(url)["applying"] and not _status(url)["everyday_queued"], 180)
+        assert not any(p.exists() for p in everyday)
+        names = [f.name for f in (Path(cfg.root)).rglob("IMG_*.jpg")]
+        assert len(names) == len(set(names))                               # once each, no _1 copies
+        assert len(names) >= len(everyday)
+        r = httpx.get(url + "/everyday", timeout=30)
+        assert r.status_code == 200 and "Nothing to move" in r.text

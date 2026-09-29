@@ -177,7 +177,7 @@ def load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
                 if rec is None:
                     continue
                 (recs if rec.get("ts") else skipped).append(rec)
-            recs.sort(key=lambda r: r["_t"])
+            recs.sort(key=lambda r: (r["_t"], r["path"]))   # same second: by path, so order and ids never flip
             borrow_video_offsets(recs)
             _records_cache.update(recs=recs, skipped=skipped, filled=None, built=time.time())
         return [dict(r) for r in _records_cache["recs"]], [dict(r) for r in _records_cache["skipped"]]
@@ -221,7 +221,7 @@ def _load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
                 continue
             rec["_t"] = _dt(rec["ts"], tz)
             recs.append(rec)
-    recs.sort(key=lambda r: r["_t"])
+    recs.sort(key=lambda r: (r["_t"], r["path"]))   # same second: by path, so order and ids never flip
     borrow_video_offsets(recs)
     return recs, skipped
 
