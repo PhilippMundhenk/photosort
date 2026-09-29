@@ -95,6 +95,8 @@ def test_live_with_switches_off_moves_nothing_by_itself(client, library):
     assert main.EVERYDAY_JOB not in list(main._apply_queue.queue)
     stats = main._state["last_stats"]
     assert stats["applied"] == 0 and stats["queued"] == 0
+    from app import journal
+    assert journal.batches() == []                                          # not one file operation on record
 
 
 def test_live_switches_off_each_button_moves_only_its_target(client, library):

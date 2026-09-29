@@ -164,8 +164,20 @@ async def _session(url: str, data: Path, cfg) -> list[dict]:
         await go(url + "/review")
         props = _proposals(data)
         trip = page.locator(f"#{props['trip']['id']}")
-        await trip.locator("details summary").click()
+        await trip.locator("details summary").click()                         # opens: the first chunk loads
         figs = trip.locator("figure")
+        await expect(figs.first).to_be_visible()
+        photos_url = re.compile(r"/proposal/.*/photos")
+        await page.route(photos_url, lambda route: route.fulfill(status=500, body="no"))   # a chunk fails: it says so
+        await trip.locator("[data-more]").first.click()
+        await expect(trip.locator("[data-more]")).to_contain_text("could not load")
+        await page.unroute(photos_url)
+        await trip.locator("[data-more]").first.click()
+        await trip.locator("[data-more]").first.click()                        # a second click while loading: ignored
+        while await trip.locator("[data-more]").count():                      # "show all" until nothing is left
+            await trip.locator("[data-more]").first.click()
+            await page.wait_for_timeout(300)
+        await expect(figs).to_have_count(props["trip"]["n"])
         await figs.nth(0).locator(".pick").click()
         await figs.nth(1).locator(".pick").click()
         await figs.nth(1).locator(".pick").click()
@@ -250,6 +262,8 @@ async def _session(url: str, data: Path, cfg) -> list[dict]:
                             "document.dispatchEvent(new Event('visibilitychange'))")
         await _arun(page, url)
         await expect(page.locator("#busy-hint")).to_be_visible()
+        await page.locator("#busy-hint").click()                              # the offered reload
+        await follow()
 
         # approve all with names, then the moved cards
         await go(url + "/review")
@@ -260,8 +274,18 @@ async def _session(url: str, data: Path, cfg) -> list[dict]:
         await follow()
         await _await(page, lambda: all(p["status"] == "applied" for p in _proposals(data).values()), 120)
 
-        # everyday: pick, select all by click and key, assign; the move button and its card
+        # everyday: the target list and its filter box, pick, select all by click and key, assign; the
+        # move button and its card
         await go(url + "/everyday")
+        select, box = page.locator("select#target"), page.locator("input[data-filter=target]")
+        await select.select_option(index=1)                                    # some proposal is chosen
+        await box.fill("zzz-nothing-matches")                                  # every group hidden
+        await expect(select.locator("optgroup:not([hidden])")).to_have_count(0)
+        await box.fill("hannas")                                               # one match: it becomes the choice
+        await expect(select.locator("option:not([hidden]):not([value=new])")).to_have_count(1)
+        assert "hannas" in (await select.locator("option:checked").inner_text()).lower()
+        await box.fill("")
+        await select.select_option("new")
         await page.locator(".thumbs figure").first.locator(".pick").click()
         await page.locator("[data-select-all]").first.click()
         await page.locator("[data-select-all]").first.focus()

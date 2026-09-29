@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>History <span class="muted small">— every action that moved files, and the way back</span></h1>
+{% if request.query_params.get('msg') %}<div class="warnbox">{{ request.query_params.get('msg') }}</div>{% endif %}
+<div class="card">
+  <form method="get" action="/history" class="row">
+    <input type="search" name="file" value="{{ file }}" placeholder="trace a file: part of its name or path" style="width:360px" title="part of a file name or path">
+    <button class="secondary small">Trace</button>
+    {% if file %}<span class="small">{{ trace|length }} operation{{ 's' if trace|length != 1 }} touched “{{ file }}” · <a href="/history">all actions</a></span>{% endif %}
+  </form>
+</div>
+{% if file %}
+<div class="card">
+  {% for e in trace %}
+  <div class="row" style="border-bottom:1px solid var(--line);padding:6px 0">
+    <span class="muted small" style="white-space:nowrap">{{ e.ts[:16].replace('T',' ') }}</span>
+    <span class="badge">{{ e.action }}</span><span class="badge">{{ e.op }}</span>
+    <span class="small"><code>{{ e.src }}</code>{% if e.dst %} → <code>{{ e.dst }}</code>{% endif %}</span>
+    {% if loop.first %}{% if e.now %}<span class="small muted">now at <code>{{ e.now }}</code></span>{% else %}<span class="badge bad">not found anywhere it was</span>{% endif %}{% endif %}
+    {% if e.op in ('move', 'copy', 'rename_dir') and (e.dst and e.now == e.dst) %}
+    <form method="post" action="/history/{{ e.batch }}/revert" class="inline" onsubmit="return confirm('Put this file back where it was before “{{ e.action }}”?')">
+      <input type="hidden" name="only" value="{{ e.src }}"><input type="hidden" name="back" value="/history?file={{ file|urlencode }}">
+      <button class="secondary small">put back where it was</button></form>
+    {% endif %}
+  </div>
+  {% else %}<div class="muted">No operation touched a file of that name.</div>{% endfor %}
+</div>
+{% endif %}
+<div class="card">
+<table>
+<tr><th>when</th><th>action</th><th>what</th><th>files</th><th></th></tr>
+{% for b in rows %}
+<tr>
+  <td class="muted small" style="white-space:nowrap">{{ b.ts[:16].replace('T',' ') }}</td>
+  <td><span class="badge {{ 'ok' if b.action == 'apply' else 'warn' if b.action in ('undo', 'revert') else '' }}">{{ b.action }}</span></td>
+  <td class="small">{{ b.meta.name or b.meta.folder or b.meta.photo or '' }}{% if b.meta.of %} <span class="muted">(of {{ b.meta.of }}{% if b.meta.only %}, one file{% endif %})</span>{% endif %}</td>
+  <td class="small">{{ b.n }}
+    {% if b.n %}<details class="inline"><summary class="small muted">files</summary>
+      <div class="small">{% for e in b.ops[:200] %}<div><code>{{ e.op }}</code> <code>{{ e.src.rsplit('/',1)[-1] }}</code>{% if e.dst %} → <code>{{ e.dst }}</code>{% endif %}</div>{% endfor %}{% if b.n > 200 %}<div class="muted">… {{ b.n - 200 }} more</div>{% endif %}</div></details>{% endif %}</td>
+  <td>{% if b.reverted_by %}<span class="badge">reverted</span>
+      {% elif b.n and b.action != 'revert' or (b.action == 'revert' and b.n) %}
+      <form method="post" action="/history/{{ b.batch }}/revert" class="inline" onsubmit="return confirm('Revert “{{ b.action }}” ({{ b.n }} file operation{{ 's' if b.n != 1 }})? Files still where this action left them go back; the others are reported.')">
+        <button class="secondary small">Revert</button></form>{% endif %}</td>
+</tr>
+{% else %}<tr><td class="muted" colspan="5">Nothing has moved yet.</td></tr>{% endfor %}
+</table>
+</div>
+{% endblock %}

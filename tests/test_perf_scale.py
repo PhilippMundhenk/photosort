@@ -225,7 +225,12 @@ def test_pages_stay_quick_while_a_big_move_runs(client, cfg):
     _report("POST approve (3000-photo trip)", time.perf_counter() - t0, 1.0)
     assert r.status_code == 303
     lat: dict[str, list[float]] = {"/review": [], "/": [], "/everyday": [], "/api/status": []}
-    while trip["id"] in main._applying or trip["id"] in list(main._apply_queue.queue):
+    t0 = time.perf_counter()
+    while trip["id"] not in main._applying and time.perf_counter() - t0 < 5:      # the worker picks it up
+        if cluster.load_proposals()[trip["id"]]["status"] == "applied":
+            break
+        time.sleep(0.005)
+    while trip["id"] in main._applying:
         for path in lat:
             t0 = time.perf_counter()
             assert client.get(path).status_code == 200

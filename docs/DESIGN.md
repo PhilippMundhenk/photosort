@@ -182,6 +182,8 @@ One package, `app/`, no framework beyond FastAPI and Jinja:
 - `thumbs.py`: thumbnails and previews in a helper process, the cache and its failure markers,
   the paced prefetch.
 - `events.py`: the append-only log and its tail reader.
+- `journal.py`: the transaction journal, one line per file operation in batches (one per action),
+  and revert of a batch or of one file (see section 4b).
 - `main.py`: the pages and actions, the pipeline, the apply worker, the status endpoint.
 
 ## 4. State: filesystem, not a database
@@ -227,6 +229,23 @@ without moving a file. Should such an approval happen anyway, a move that finds 
 files raises instead of succeeding emptily; the proposal stays approved with the error and the
 retry works once the share is back. When it returns, the records are still in the index, the
 same proposals come back with the same ids, and nothing is re-indexed.
+
+### 4b. The transaction journal (September 2026)
+
+The user's ask after a month of use: "How about transactional? To make sure we can always trace,
+revert to previous state." The per-folder manifests recorded what a cluster contained, but the
+everyday move had no manifest and could not be undone, a folder rename left no trace, and there
+was no single place to ask where a file is now. `data/journal.jsonl` is that place: every file
+operation passes through two primitives in `mover` (`_transfer`, `_delete_with_sidecars`) and
+each writes one line (op, src, dst); every action (apply, everyday move, undo, rename, move out,
+put back, revert) opens a batch, so a batch is one user or worker action. The History page lists
+the batches with a Revert button and traces a file by name, offering to put it back where it was
+before any one action. Revert moves back what is still where the batch left it and reports the
+rest; it never guesses, never overwrites (a clash gets the `_1` suffix like any move), never
+deletes an original (a deleted copy cannot be restored and says so). A revert is a batch itself
+and can be reverted. Manifests stay as the per-folder view and follow a revert (an emptied folder
+stops being a cluster; a reverted undo gets its manifest back). Losing the journal costs history,
+never photos. Nothing prunes it.
 
 ## 5. Triggers
 

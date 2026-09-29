@@ -39,7 +39,7 @@ UNCERTAIN_BELOW = 0.7
 # --- persistence ----------------------------------------------------------------
 
 _save_lock = threading.Lock()
-_props_cache: dict = {"stamp": None, "text": "", "counts": None}
+_props_cache: dict = {"stamp": None, "text": "", "counts": None, "parsed": None}
 # Every read-modify-write of the proposals: the pages' actions and the run's recompute. Without
 # it a click saved while the run was between reading and writing the file was overwritten.
 proposals_lock = threading.RLock()
@@ -52,7 +52,7 @@ def _props_text() -> str:
         st = PROPOSALS_PATH.stat()
     except OSError:
         with _save_lock:                  # the file is gone (deleted to start over): so is what it said
-            _props_cache.update(stamp=None, text="", counts=None)
+            _props_cache.update(stamp=None, text="", counts=None, parsed=None)
         return ""
     stamp = (st.st_mtime_ns, st.st_size)
     with _save_lock:
@@ -61,19 +61,32 @@ def _props_text() -> str:
                 text = PROPOSALS_PATH.read_text(encoding="utf-8")
             except OSError:
                 return ""
-            _props_cache.update(stamp=stamp, text=text, counts=None)
+            _props_cache.update(stamp=stamp, text=text, counts=None, parsed=None)
         return _props_cache["text"]
 
 
 def load_proposals() -> dict[str, dict]:
-    """A fresh copy per call (callers edit it and save it back)."""
+    """The proposals, parsed once per version of the file. Every call gets its own dict, its own
+    proposal dicts and its own lists (status, name, excluded, photos list can be edited and saved
+    back); the photo entries inside the lists are shared and must be treated as read-only. Parsing
+    five megabytes per click was most of the cost of a click on a large library."""
     text = _props_text()
     if not text:
         return {}
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return {}
+    with _save_lock:
+        parsed = _props_cache["parsed"]
+        if parsed is None:
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                return {}
+            _props_cache["parsed"] = parsed
+    return _copy_proposals(parsed)
+
+
+def _copy_proposals(parsed: dict) -> dict[str, dict]:
+    return {pid: {k: (list(v) if isinstance(v, list) else dict(v) if isinstance(v, dict) else v)
+                  for k, v in pr.items()} for pid, pr in parsed.items()}
 
 
 def status_counts() -> dict:
@@ -82,11 +95,13 @@ def status_counts() -> dict:
     _props_text()
     with _save_lock:
         if _props_cache["counts"] is None:
-            props: dict = {}
-            try:
-                props = json.loads(_props_cache["text"]) if _props_cache["text"] else {}
-            except json.JSONDecodeError:
-                props = {}
+            props: dict = _props_cache["parsed"] or {}
+            if not props and _props_cache["text"]:
+                try:
+                    props = json.loads(_props_cache["text"])
+                    _props_cache["parsed"] = props
+                except json.JSONDecodeError:
+                    props = {}
             _props_cache["counts"] = {
                 "pending": sum(1 for p in props.values() if p["status"] in ("pending", "ongoing")),
                 "approved": {pid: p.get("error") for pid, p in props.items() if p["status"] == "approved"},
@@ -99,16 +114,17 @@ def save_proposals(props: dict[str, dict]) -> None:
     """Atomic replace; serialized, with a per-writer temp file (the apply worker and a request
     may save at the same moment, and Windows refuses to replace a file another thread holds)."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    text = json.dumps(props, ensure_ascii=False, indent=1)
+    text = json.dumps(props, ensure_ascii=False, separators=(",", ":"))   # compact: read by machines only
     with _save_lock:
         tmp = PROPOSALS_PATH.with_name(f"proposals.{threading.get_ident()}.tmp")
         tmp.write_text(text, encoding="utf-8")
         tmp.replace(PROPOSALS_PATH)
         try:
             st = PROPOSALS_PATH.stat()
-            _props_cache.update(stamp=(st.st_mtime_ns, st.st_size), text=text, counts=None)
+            _props_cache.update(stamp=(st.st_mtime_ns, st.st_size), text=text, counts=None,
+                                parsed=_copy_proposals(props))
         except OSError:
-            _props_cache.update(stamp=None, text="", counts=None)
+            _props_cache.update(stamp=None, text="", counts=None, parsed=None)
 
 
 # --- records -------------------------------------------------------------------
@@ -199,9 +215,10 @@ def records_filled(cfg: Config) -> list[dict]:
     """load_records plus the neighbour GPS fill, cached the same way. The fill runs in one
     thread at a time: with several tabs polling during a scan, every request used to fill its
     own copy of twenty thousand records, and the server looked dead."""
-    recs, _ = load_records(cfg)
-    with _records_lock:
-        if _records_cache["filled"] is None:
+    with _records_lock:                   # load and fill in one go, from the cache itself: a thread that
+        load_records(cfg)                 # loaded its copy a moment ago (the startup warm-up) must not
+        if _records_cache["filled"] is None:      # fill and cache a list a newer record is missing from
+            recs = [dict(r) for r in _records_cache["recs"]]
             fill_gps_from_neighbours(cfg, recs)
             _records_cache["filled"] = recs
         return [dict(r) for r in _records_cache["filled"]]

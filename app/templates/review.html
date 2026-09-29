@@ -45,20 +45,19 @@
       · {{ p.decision.by }} {{ '%.2f'|format(p.decision.conf) }}{% if p.decision.answer %} ({{ p.decision.answer }}){% endif %}
       · {{ p.start[:16].replace('T',' ') }} → {{ p.end[:16].replace('T',' ') }}</span>
   </div>
-  <details {% if p.n_uncertain or p.kind=='home' or p.id == open_id %}open{% endif %}>
+  {% set is_open = p.n_uncertain or p.kind=='home' or p.id == open_id %}
+  {% set shown = p.photos[:inline] if is_open else [] %}
+  <details{% if is_open %} open{% endif %} data-photos="/proposal/{{ p.id }}/photos" data-total="{{ p.n }}" data-loaded="{{ shown|length }}">
     <summary>photos</summary>
-    {# no form control per photo: password-manager extensions watch every input and button on
-       the page and re-scan them on every change and scroll; hundreds of them made the browser
-       flag the extension. Photos are plain elements; ui.js sends the clicks. #}
+    {# Only what is on screen is rendered: the first photos of an open card, nothing inside a
+       collapsed one; ui.js fetches the rest in chunks when the list is opened or "show all" is
+       pressed (a review page with twelve thousand photos was 8 MB and took a second).
+       No form control per photo: password-manager extensions watch every input and button on
+       the page and re-scan them on every change and scroll. Photos are plain elements. #}
     <div class="thumbs" data-toggle="/proposal/{{ p.id }}/toggle">
-    {% for ph in p.photos %}
-      <figure class="{{ 'excluded' if ph.path in p.excluded }} {{ 'uncertain' if ph.uncertain }}" data-path="{{ ph.path }}">
-        <span class="pick" role="button" tabindex="0" title="{{ ph.file }} · {{ ph.zone }} · {{ ph.place or '' }} · conf {{ ph.conf }} · click to exclude/include"><img src="/thumb?path={{ ph.path|urlencode }}" loading="lazy" alt=""></span>
-        <span class="view" role="button" tabindex="0" data-view="/media?path={{ ph.path|urlencode }}" data-type="{{ ph.media }}" data-title="{{ ph.file }} · {{ ph.ts[:16].replace('T',' ') }} · {{ ph.place or ph.zone }}" title="view full size">&#x2921;</span>
-        <figcaption>{% if ph.media == 'video' %}<span class="badge">video</span> {% endif %}{{ ph.ts[5:16].replace('T',' ') }} {{ ph.zone }}{% if ph.source %} · {{ ph.source }}{% endif %}</figcaption>
-      </figure>
-    {% endfor %}
+    {% with photos = shown, ex = p.excluded_set %}{% include "_figures.html" %}{% endwith %}
     </div>
+    {% if p.n > shown|length %}<span class="act" role="button" tabindex="0" data-more title="load the remaining photos of this proposal">show all {{ p.n }} photos{% if shown %} ({{ p.n - shown|length }} more){% endif %}</span>{% endif %}
     <div class="muted small">Click a photo to exclude/include it (greyed = excluded, orange = low confidence — approving here settles them; only auto-applied clusters park them in {{ cfg.review_dir }}/). ⤡ opens the full-size photo or video.</div>
   </details>
   <div class="row" style="margin-top:8px">

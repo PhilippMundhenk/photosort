@@ -47,10 +47,41 @@
     q.paths.push(fig.getAttribute("data-path"));
     flushToggles(pid);
   });
+  // --- photo lists load lazily: a collapsed list is empty until opened, "show all" gets the rest ---
+  function loadMore(details) {
+    if (details.dataset.loading) return;
+    var loaded = parseInt(details.dataset.loaded, 10), total = parseInt(details.dataset.total, 10);
+    var more = details.closest(".card").querySelector("[data-more]");     // gone once everything is loaded
+    details.dataset.loading = "1";
+    if (more) more.textContent = "loading…";
+    fetch(details.getAttribute("data-photos") + "?offset=" + loaded)
+      .then(function (r) { return r.ok ? r.text() : Promise.reject(r.status); })
+      .then(function (html) {
+        details.querySelector(".thumbs").insertAdjacentHTML("beforeend", html);
+        var got = details.querySelectorAll(".thumbs figure").length;
+        details.dataset.loaded = String(got);
+        if (more) {
+          if (got >= total) more.remove();
+          else more.textContent = "show all " + total + " photos (" + (total - got) + " more)";
+        }
+      })
+      .catch(function () { if (more) more.textContent = "could not load the photos — try again"; })
+      .then(function () { delete details.dataset.loading; });
+  }
+  document.querySelectorAll("details[data-photos]").forEach(function (d) {
+    d.addEventListener("toggle", function () { if (d.open && d.dataset.loaded === "0") loadMore(d); });
+  });
+  document.addEventListener("click", function (ev) {
+    var more = ev.target.closest("[data-more]");
+    if (!more) return;
+    var details = more.closest(".card") ? more.closest(".card").querySelector("details[data-photos]") : null;
+    if (details) { details.open = true; loadMore(details); }
+  });
+
   // photos are plain elements (no input or button per photo: password-manager extensions watch
   // every form control on the page); Enter and Space work on them like on a button
   document.addEventListener("keydown", function (ev) {
-    if ((ev.key === "Enter" || ev.key === " ") && ev.target.matches(".pick, .view, .act, [data-select-all]")) {
+    if ((ev.key === "Enter" || ev.key === " ") && ev.target.matches(".pick, .view, .act, [data-select-all], [data-more]")) {
       ev.preventDefault();
       ev.target.click();
     }
@@ -232,6 +263,26 @@
       }
     });
   }
+
+  // --- a long <select>: a filter box hides the options that do not match -------------------------
+  document.querySelectorAll("input[data-filter]").forEach(function (box) {
+    var select = document.getElementById(box.getAttribute("data-filter"));
+    if (!select) return;
+    box.addEventListener("input", function () {
+      var q = box.value.trim().toLowerCase();
+      select.querySelectorAll("option").forEach(function (o) {
+        o.hidden = !!q && o.value !== "new" && o.textContent.toLowerCase().indexOf(q) < 0;
+      });
+      select.querySelectorAll("optgroup").forEach(function (g) {
+        g.hidden = !g.querySelector("option:not([hidden])");
+      });
+      var chosen = select.options[select.selectedIndex];
+      if (chosen && chosen.hidden) {                                        // the first match becomes the choice
+        var first = select.querySelector("option:not([hidden]):not([value=new])");
+        if (first) select.value = first.value;
+      }
+    });
+  });
 
   // --- everyday page: selection is a class on the figure; the paths join the form on submit ---
   function setSelected(fig, on) {

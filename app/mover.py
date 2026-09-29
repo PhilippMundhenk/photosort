@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import cluster, events, ingest
+from . import cluster, events, ingest, journal
 from .config import Config, inbox_dirs
 
 MANIFEST = "manifest.json"
@@ -83,6 +83,7 @@ def _transfer(cfg: Config, src: Path, dst_dir: Path, copy: bool = False, name: s
         dst.unlink(missing_ok=True)
         raise PermissionError(f"{src} is still there after the move (inbox mounted read-only?); "
                               f"the copy in {dst_dir} was removed again")
+    journal.record("copy" if copy else "move", src, dst)
     ingest.move_sidecar(src, dst, cfg, keep_source=copy)
     xmp = src.with_suffix(".xmp")
     if xmp.exists():
@@ -106,7 +107,79 @@ def _delete_with_sidecars(cfg: Config, photo: Path) -> None:
     _guard(cfg)
     ingest.delete_sidecar(photo, cfg)
     photo.with_suffix(".xmp").unlink(missing_ok=True)
+    if photo.exists():
+        journal.record("delete", photo)
     photo.unlink(missing_ok=True)
+
+
+def manifest_forget(cfg: Config, dst: Path) -> None:
+    """A file left its cluster folder by a revert: its manifest entry goes too; an emptied
+    manifest and its empty folders disappear (the folder is no cluster any more)."""
+    root = Path(cfg.root)
+    folder = dst.parent
+    while folder != root and folder.is_relative_to(root):
+        if (folder / MANIFEST).exists():
+            m = read_manifest(folder) or {}
+            m["photos"] = [p for p in m.get("photos", []) if p["dst"] != str(dst)]
+            if m["photos"]:
+                write_manifest(folder, m)
+            else:
+                (folder / MANIFEST).unlink(missing_ok=True)
+                _forget_cluster(folder)
+                for sub in sorted(folder.rglob("*"), key=lambda x: -len(x.parts)):
+                    if sub.is_dir():
+                        with contextlib.suppress(OSError):
+                            sub.rmdir()
+                with contextlib.suppress(OSError):
+                    folder.rmdir()
+            return
+        folder = folder.parent
+    folder = dst.parent                             # no cluster manifest above (an everyday month folder):
+    while folder != root and folder.is_relative_to(root):     # empty folders go, up to the root
+        with contextlib.suppress(OSError):          # not empty, or gone already: stop
+            if any(folder.iterdir()):
+                break
+            folder.rmdir()
+        folder = folder.parent
+
+
+def relocate(cfg: Config, folder: Path, dst: Path) -> Path:
+    """Move a cluster folder to another path under the root (a rename, or the revert of one):
+    the folder, its manifest's paths, its records and the copy marks follow."""
+    _guard(cfg)
+    dst = _unique(dst)
+    attempt = 0
+    while True:                                     # Windows: a folder with an open file (a thumbnail being
+        try:                                        # generated, a video being streamed) cannot be renamed
+            folder.rename(dst)
+            break
+        except PermissionError as e:
+            attempt += 1
+            if attempt == 8:
+                raise FolderInUse(f"{folder.name}: a file in it is still open (thumbnail or video); try again") from e
+            time.sleep(0.25)
+    journal.record("rename_dir", folder, dst)
+    _forget_cluster(folder)
+    m = read_manifest(dst)
+    if m:
+        m["label"] = dst.name
+        old = m["name"]
+        m["name"] = dst.name
+        for p in m["photos"]:
+            p["dst"] = str(dst / Path(p["dst"]).relative_to(folder))
+        write_manifest(dst, m)
+        for p in m["photos"]:
+            old_dst = folder / Path(p["dst"]).relative_to(dst)
+            ingest.move_sidecar(old_dst, Path(p["dst"]), cfg)        # central records key on the path
+            rec = ingest.read_sidecar(Path(p["dst"]), cfg)
+            if rec:
+                rec["cluster"] = dst.name
+                ingest.write_sidecar(Path(p["dst"]), rec, cfg)
+            if m.get("mode") == "copy":
+                _mark_source(cfg, Path(p["src"]), Path(p["dst"]), dst.name)
+        events.log("label", old=old, new=dst.name, proposal=m.get("proposal_id"),
+                   decision_id=m.get("decision", {}).get("id"))
+    return dst
 
 
 def _mark_source(cfg: Config, src: Path, copied_to: Path | None, cluster_name: str | None) -> None:
@@ -136,7 +209,39 @@ def write_manifest(folder: Path, data: dict) -> None:
     tmp = folder / (MANIFEST + ".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(folder / MANIFEST)
+    _remember_cluster(folder, data)                 # in the list now, not after the next walk of the share
     invalidate_clusters()
+
+
+def _cluster_entry(root: Path, unnamed_dir: str, folder: Path, m: dict) -> dict:
+    m = dict(m)
+    m["folder"] = str(folder)
+    m["rel"] = str(folder.relative_to(root))
+    m["unnamed"] = folder.parent.name == unnamed_dir
+    m["n"] = len(m.get("photos", []))
+    m["n_review"] = sum(1 for p in m.get("photos", []) if p.get("in_review", p.get("uncertain")))
+    return m
+
+
+def _remember_cluster(folder: Path, data: dict) -> None:
+    """Upsert one folder into the cached cluster list (the walk of the share only confirms it later)."""
+    with _clusters_lock:
+        key = _clusters_cache["key"]
+        if not key:
+            return
+        root, unnamed_dir = Path(key[0]), key[1]
+        try:
+            entry = _cluster_entry(root, unnamed_dir, folder, data)
+        except ValueError:                            # not under this root
+            return
+        value = [m for m in _clusters_cache["value"] if m["folder"] != str(folder)] + [entry]
+        value.sort(key=lambda m: m.get("start") or "", reverse=True)
+        _clusters_cache["value"] = value
+
+
+def _forget_cluster(folder: Path) -> None:
+    with _clusters_lock:
+        _clusters_cache["value"] = [m for m in _clusters_cache["value"] if m["folder"] != str(folder)]
 
 
 def target_folder(cfg: Config, pr: dict) -> Path:
@@ -156,6 +261,12 @@ def apply(cfg: Config, pr: dict, reviewed: bool = False, progress=None) -> dict:
     <folder>/<review_dir> so they can be checked later. progress(done, total) is called after
     every file (the UI shows it; moving hundreds of files over a share takes a while)."""
     _guard(cfg)
+    with journal.batch("apply", proposal=pr["id"], name=pr["name"], kind=pr["kind"],
+                       folder=str(target_folder(cfg, pr))):
+        return _apply(cfg, pr, reviewed, progress)
+
+
+def _apply(cfg: Config, pr: dict, reviewed: bool, progress) -> dict:
     folder = target_folder(cfg, pr)
     copy = cfg.copy_instead_of_move
     excluded = set(pr.get("excluded", []))
@@ -252,6 +363,11 @@ def apply_everyday(cfg: Config, min_age_days: float, progress=None) -> int:
     if cfg.everyday_layout == "leave":
         return 0
     _guard(cfg)
+    with journal.batch("move_everyday"):
+        return _apply_everyday(cfg, min_age_days, progress)
+
+
+def _apply_everyday(cfg: Config, min_age_days: float, progress) -> int:
     todo = everyday_movable(cfg, min_age_days)
     n = 0
     for i, r in enumerate(todo):
@@ -280,6 +396,11 @@ def undo(cfg: Config, folder: Path) -> int:
     if not m:
         return 0
     _guard(cfg)
+    with journal.batch("undo", folder=str(folder), proposal=m.get("proposal_id"), name=m["name"], kind=m["kind"]):
+        return _undo(cfg, folder, m)
+
+
+def _undo(cfg: Config, folder: Path, m: dict) -> int:
     copied = m.get("mode") == "copy"
     n = 0
     for p in m["photos"]:
@@ -293,6 +414,7 @@ def undo(cfg: Config, folder: Path) -> int:
             _transfer(cfg, dst, src.parent, name=src.name)     # back under its own name
         n += 1
     (folder / MANIFEST).unlink(missing_ok=True)
+    _forget_cluster(folder)
     invalidate_clusters()
     for sub in sorted(folder.rglob("*"), key=lambda x: -len(x.parts)):
         ours = ".photosort.json" in sub.name or sub.name.startswith(MANIFEST)
@@ -313,37 +435,8 @@ def rename(cfg: Config, folder: Path, new_name: str) -> Path:
     root = Path(cfg.root)
     # a named home burst leaves _unnamed
     dst = root / new_name if folder.parent.name == cfg.unnamed_dir else folder.with_name(new_name)
-    dst = _unique(dst)
-    attempt = 0
-    while True:                                     # Windows: a folder with an open file (a thumbnail being
-        try:                                        # generated, a video being streamed) cannot be renamed
-            folder.rename(dst)
-            break
-        except PermissionError as e:
-            attempt += 1
-            if attempt == 8:
-                raise FolderInUse(f"{folder.name}: a file in it is still open (thumbnail or video); try again") from e
-            time.sleep(0.25)
-    m = read_manifest(dst)
-    if m:
-        m["label"] = new_name
-        old = m["name"]
-        m["name"] = new_name
-        for p in m["photos"]:
-            p["dst"] = str(dst / Path(p["dst"]).relative_to(folder))
-        write_manifest(dst, m)
-        for p in m["photos"]:
-            old_dst = folder / Path(p["dst"]).relative_to(dst)
-            ingest.move_sidecar(old_dst, Path(p["dst"]), cfg)        # central records key on the path
-            rec = ingest.read_sidecar(Path(p["dst"]), cfg)
-            if rec:
-                rec["cluster"] = new_name
-                ingest.write_sidecar(Path(p["dst"]), rec, cfg)
-            if m.get("mode") == "copy":
-                _mark_source(cfg, Path(p["src"]), Path(p["dst"]), new_name)
-        events.log("label", old=old, new=new_name, proposal=m.get("proposal_id"),
-                   decision_id=m.get("decision", {}).get("id"))
-    return dst
+    with journal.batch("rename", folder=str(folder), name=new_name):
+        return relocate(cfg, folder, dst)
 
 
 def move_out(cfg: Config, folder: Path, photo: Path) -> dict | None:
@@ -354,6 +447,11 @@ def move_out(cfg: Config, folder: Path, photo: Path) -> dict | None:
     entry = next((p for p in (m or {}).get("photos", []) if p["dst"] == str(photo)), None)
     if not photo.exists() and not (entry and (m or {}).get("mode") == "copy"):
         return None                                       # nothing there (removed by hand): nothing to do
+    with journal.batch("move_out", folder=str(folder), photo=str(photo), proposal=(m or {}).get("proposal_id")):
+        return _move_out(cfg, folder, photo, m, entry)
+
+
+def _move_out(cfg: Config, folder: Path, photo: Path, m: dict | None, entry: dict | None) -> dict | None:
     rec = ingest.read_sidecar(photo, cfg) or {}
     if m and m.get("mode") == "copy" and entry:
         _delete_with_sidecars(cfg, photo)
@@ -382,6 +480,11 @@ def put_back(cfg: Config, folder: Path, src: Path) -> dict | None:
     entry = next((c for c in m.get("corrections", []) if c["src"] == str(src)), None)
     if entry is None:
         return None
+    with journal.batch("put_back", folder=str(folder), photo=str(src), proposal=m.get("proposal_id")):
+        return _put_back(cfg, folder, src, m, entry)
+
+
+def _put_back(cfg: Config, folder: Path, src: Path, m: dict, entry: dict) -> dict | None:
     if not src.exists():                                  # moved on since (e.g. into the everyday tree): find it
         found = [f for f in Path(cfg.root).rglob(src.name) if f.is_file()]
         found += [f for _, inbox in inbox_dirs(cfg)
@@ -501,12 +604,7 @@ def _list_clusters(cfg: Config) -> list[dict]:
         m = read_manifest(mp.parent)
         if not m:
             continue
-        m["folder"] = str(mp.parent)
-        m["rel"] = str(mp.parent.relative_to(root))
-        m["unnamed"] = mp.parent.parent.name == cfg.unnamed_dir
-        m["n"] = len(m.get("photos", []))
-        m["n_review"] = sum(1 for p in m.get("photos", []) if p.get("in_review", p.get("uncertain")))
-        out.append(m)
+        out.append(_cluster_entry(root, cfg.unnamed_dir, mp.parent, m))
     out.sort(key=lambda m: m.get("start") or "", reverse=True)
     return out
 

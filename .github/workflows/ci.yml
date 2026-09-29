@@ -33,6 +33,8 @@ jobs:
         run: docker run --rm photosort-test:local
       - name: Smoke script
         run: docker run --rm photosort-test:local python -m tests.smoke
+      - name: Latency of every feature on 20 000 photos (no coverage tracer)
+        run: docker run --rm photosort-test:local pytest -q -s -p no:cacheprovider -m perf tests/test_perf_features.py
       - name: The compose files are valid with the example environment
         run: |
           cp .env.example .env

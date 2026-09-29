@@ -117,13 +117,13 @@ def test_pages_have_no_form_control_per_photo(client, library):
     pending = [p for p in props.values() if p["status"] in ("pending", "ongoing")]
     n_photos = sum(p["n"] for p in pending)
     html = client.get("/review").text
-    assert html.count("<figure") == n_photos and n_photos > 50
+    assert 0 < html.count("<figure") < n_photos and n_photos > 50         # open cards only, and at most 80 each
     assert html.count("<input") <= 3 * len(pending) + 3               # name, remember-place per card; not per photo
     assert html.count("<button") <= 3 * len(pending) + 3               # approve, reject per card; approve all, run
     assert html.count("<form") <= 3 * len(pending) + 3
     everyday = client.get("/everyday").text
     assert everyday.count("<figure") > 5
-    assert everyday.count("<input") <= 3 and everyday.count("<button") <= 4 and everyday.count("<form") <= 3
+    assert everyday.count("<input") <= 4 and everyday.count("<button") <= 5 and everyday.count("<form") <= 4
     local = next(p for p in pending if p["kind"] == "local")
     mover.apply(cfg, local, reviewed=True)
     page = client.get("/clusters/view", params={"folder": str(mover.target_folder(cfg, local))}).text
@@ -427,3 +427,29 @@ def test_an_inbox_share_that_disappears_and_returns(client, library):
     ghost = cluster.load_proposals()[trip_id]
     assert ghost["status"] == "approved" and ghost["error"]              # still waiting for a retry, not buried
     assert "Inbox folders not found" not in client.get("/").text
+
+
+def test_review_renders_only_visible_photos_and_serves_the_rest_in_chunks(client, library):
+    """A collapsed proposal carries no figures; an open one the first 80; the rest comes from
+    /proposal/<id>/photos in chunks, with the excluded state applied."""
+    cfg = config.load()
+    cluster.run(cfg)
+    trip, home = _kind("trip"), _kind("home")
+    client.post(f"/proposal/{trip['id']}/toggle", data={"path": trip["photos"][5]["path"]}, headers=FETCH)
+    html = client.get("/review").text
+    trip_card = html.split(f'id="{trip["id"]}"')[1].split('<div class="card"')[0]
+    assert "<figure" not in trip_card and f'data-photos="/proposal/{trip["id"]}/photos"' in trip_card
+    assert f'data-total="{trip["n"]}" data-loaded="0"' in trip_card and f"show all {trip['n']} photos" in trip_card
+    home_card = html.split(f'id="{home["id"]}"')[1].split('<div class="card"')[0]
+    assert home_card.count("<figure") == home["n"] and "data-more" not in home_card      # 25: all inline, no button
+    html = client.get("/review", params={"open": trip["id"]}).text
+    trip_card = html.split(f'id="{trip["id"]}"')[1].split('<div class="card"')[0]
+    assert trip_card.count("<figure") == min(80, trip["n"]) and "data-more" not in trip_card   # 67: all inline
+    r = client.get(f"/proposal/{trip['id']}/photos", params={"offset": 0, "limit": 10})
+    assert r.status_code == 200 and r.text.count("<figure") == 10
+    assert r.headers["X-Total"] == str(trip["n"]) and r.headers["X-Next"] == "10"
+    assert 'class="excluded' in r.text                                    # photo 5 is excluded
+    r = client.get(f"/proposal/{trip['id']}/photos", params={"offset": trip["n"] - 3, "limit": 500})
+    assert r.text.count("<figure") == 3 and r.headers["X-Next"] == ""
+    assert client.get(f"/proposal/{trip['id']}/photos", params={"offset": -5, "limit": 0}).text.count("<figure") == 1
+    assert client.get("/proposal/nope/photos").status_code == 404

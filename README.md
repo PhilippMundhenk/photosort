@@ -25,6 +25,9 @@ inbox/camera/**.dng  ─┘                          sorted/_unnamed/2026-06-30 
   delete; approvals wait until you switch it off. Approve, rename, exclude single photos, name
   bursts, undo whole folders; the Everyday page shows what was not clustered and lets you build
   clusters by hand.
+- **Every move is on record and can be taken back.** A journal keeps one line per file operation,
+  grouped by action; the History page reverts any action, or puts one file back where it was
+  before a given action, as far as the files are still where that action left them.
 - **Two phones, one library.** Each device is followed on its own timeline: the family trip
   with two phones is one folder, the partner's photos at home never cut it short, and two
   phones on different continents are two trips.
@@ -152,9 +155,11 @@ docker compose -f docker-compose.test.yml run --rm tests pytest -m e2e -v
 | web e2e | `tests/test_app.py`, `tests/test_live_pages.py`, `tests/test_moving_matrix.py`, `tests/test_templates.py` | every page and form action through FastAPI's TestClient; batched clicks, a run finishing mid-review; every way a file can move against dry-run, live-with-switches-off and each switch |
 | soak | `tests/test_soak.py` | thirty run-approve-undo cycles: no memory growth, nothing left in queues or threads |
 | fuzz | `tests/test_fuzz.py` | a thousand random tag sets, timestamps, offsets, user texts and timelines through every parser and the clustering: never a crash, always well-formed output (it found five defects on its first run) |
+| latency | `tests/test_perf_features.py` | every feature timed on a 20 500-photo library (pages, polls, clicks, approvals, moves of thousands of files, undo, settings); its own CI step without the coverage tracer; `PERF_BASELINE=1` prints without failing |
 | scale | `tests/test_perf_scale.py` | 20 000 records clustered, 5 000 records loaded from disk, a 3 000-photo proposal through the web layer; latencies printed with `pytest -s`, generous bounds |
 | browser e2e | `tests/e2e/test_browser.py`, `tests/e2e/test_smooth.py`, `tests/e2e/test_features.py`, `tests/e2e/test_scenarios.py`, `tests/e2e/test_restart.py` | real uvicorn + headless Chromium (Playwright): the review flow; no reload while the user works, hidden-tab polling, a 4000-photo library; every feature end to end (everyday selection and manual clusters, keyboard, viewer, remembered places, approve all, the everyday move button, settings dialogs, home detection, sidecar buttons, log filters, month navigation, dashboard, phone width); copy mode, two phones on different continents, wall-clock times in the home zone and an own place name from Settings through the whole pipeline; a kill and restart in the middle of a 2 500-file move |
 | smoke | `python -m tests.smoke` | one synthetic end-to-end run without pytest |
+| journal | `tests/test_journal.py` | every action is one batch of file operations; revert of a batch, of one file, of a revert; skipped files reported; dry-run refused; the History page |
 | docs | `tests/test_docs.py` | the README's test table matches the files on disk, every configuration field has a form control, the design document names every module |
 | coverage | the test image's default command | line and branch coverage of `app/` must stay at 99 % or above (it is 100 % as of 2026-09-29); `tests/e2e/test_script_coverage.py` measures how much of `ui.js` one browser session executes (99 % or above; every function runs); `tests/test_templates.py` renders every template branch; CI also starts the published runtime image and calls every page |
 

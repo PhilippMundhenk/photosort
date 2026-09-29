@@ -138,10 +138,10 @@ def test_review_cards_show_manual_ongoing_uncertain_and_video(client, library):
     assert "Reject (keep as everyday)" in trip_card
     local_card = html.split(f'id="{p["local"]["id"]}"')[1].split('<div class="card"')[0]
     assert "by hand" in local_card and ", 1 uncertain" in local_card and "(yes)" in local_card
-    assert '<span class="badge">video</span>' in local_card and "<details open>" in local_card
+    assert '<span class="badge">video</span>' in local_card and "<details open" in local_card
     assert 'name="remember_place"' in local_card
     home_card = html.split(f'id="{p["home"]["id"]}"')[1].split('<div class="card"')[0]
-    assert 'name="remember_place"' not in home_card and "<details open>" in home_card
+    assert 'name="remember_place"' not in home_card and "<details open" in home_card
     assert "Approve all" not in html                                       # only the ongoing one... no: one ready
     assert "Approve &amp; move all (2)" in html
 
@@ -152,9 +152,9 @@ def test_review_open_parameter_and_home_warning(client, library):
     p = _props()
     html = client.get("/review", params={"open": p["local"]["id"]}).text
     local_card = html.split(f'id="{p["local"]["id"]}"')[1].split('<div class="card"')[0]
-    assert "<details open>" in local_card
+    assert "<details open" in local_card
     trip_card = html.split(f'id="{p["trip"]["id"]}"')[1].split('<div class="card"')[0]
-    assert "<details >" in trip_card or "<details>" in trip_card
+    assert "<details open" not in trip_card
     cfg.home_lat = cfg.home_lon = 0.0
     config.save(cfg)
     assert "Home location is not set" in client.get("/review").text
@@ -350,8 +350,10 @@ def test_every_page_passes_the_accessibility_basics(client, library):
     folder = mover.target_folder(cfg, p["local"])
     mover.move_out(cfg, folder, Path(mover.read_manifest(folder)["photos"][0]["dst"]))
     mover.apply(cfg, p["home"], reviewed=True)
+    name = Path(mover.read_manifest(folder)["photos"][0]["dst"]).name
     for path in ("/", "/review", f"/review?open={p['home']['id']}", "/everyday", "/everyday?month=2026-06",
-                 "/clusters", f"/clusters/view?folder={folder}", "/log", "/log?kind=review",
+                 "/everyday?q=IMG", "/clusters", f"/clusters/view?folder={folder}", "/log", "/log?kind=review",
+                 "/history", f"/history?file={name}", "/history?msg=3+files+put+back",
                  "/settings", "/settings?msg=Saved"):
         r = client.get(path)
         assert r.status_code == 200, path
