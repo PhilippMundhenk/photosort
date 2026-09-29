@@ -96,6 +96,70 @@ def test_everyday_selection_creates_and_extends_a_cluster(server, page):
     assert json.loads((data / "proposals.json").read_text(encoding="utf-8"))[manual["id"]]["n"] == day_n + 1
 
 
+def test_the_review_page_works_with_the_keyboard_alone(server, browser):
+    """No mouse: Tab reaches the first proposal's name and its buttons, Enter and Space act on
+    photos and buttons, Escape closes the viewer. The order follows the page."""
+    url = server["url"]
+    ctx = browser.new_context()
+    pg = ctx.new_page()
+    pg.set_default_timeout(15_000)
+    expect = pw.expect
+    try:
+        httpx.post(url + "/run", timeout=5)
+        _wait(lambda: not _status(url)["state"]["running"], 60)
+        pg.goto(url + "/review")
+        pending = _status(url)["pending"]
+        if pending == 0:
+            pytest.skip("nothing left to review in this module's library")
+        tid = _proposals(server["data"])["trip"]["id"]                          # the trip: a name it may keep
+        first = pg.locator(f"#{tid}")
+        where = ("[document.activeElement.getAttribute('name'), "
+                 "(document.activeElement.closest('.card') || {}).id || '']")
+        pg.locator("body").press("Tab")                                          # header links first
+        for _ in range(120):
+            if pg.evaluate(where) == ["name", tid]:
+                break
+            pg.keyboard.press("Tab")
+        assert pg.evaluate(where) == ["name", tid]                               # the trip's name field
+        original = pg.evaluate("document.activeElement.value")
+        pg.keyboard.press("End")                                                 # Tab selected the whole value
+        pg.keyboard.type(" (keyboard)")
+        pg.keyboard.press("Tab")                                                 # leaving the field saves it
+        expect(first.locator(".save-state")).to_have_text(re.compile(r"saved|"), timeout=5_000)
+        _wait(lambda: any(p["name"] == original + " (keyboard)" for p in _proposals(server["data"]).values()))
+        summary = "[document.activeElement.tagName, (document.activeElement.closest('.card') || {}).id || '']"
+        for _ in range(30):                                                      # the collapsed photo list
+            if pg.evaluate(summary) == ["SUMMARY", tid]:
+                break
+            pg.keyboard.press("Tab")
+        assert pg.evaluate(summary) == ["SUMMARY", tid]
+        pg.keyboard.press("Enter")                                               # opens it
+        expect(first.locator("details")).to_have_attribute("open", "")
+        pick = ("[document.activeElement.classList.contains('pick'), "
+                "(document.activeElement.closest('.card') || {}).id || '']")
+        for _ in range(30):                                                      # on to the first photo
+            if pg.evaluate(pick) == [True, tid]:
+                break
+            pg.keyboard.press("Tab")
+        assert pg.evaluate(pick) == [True, tid]
+        pg.keyboard.press("Space")                                               # exclude it
+        fig = first.locator("figure").first
+        expect(fig).to_have_class(re.compile(r"(^|\s)excluded(\s|$)"))
+        pg.keyboard.press("Enter")                                               # and back in
+        expect(fig).not_to_have_class(re.compile(r"excluded"))
+        pg.keyboard.press("Tab")                                                 # the view control
+        assert pg.evaluate("document.activeElement.classList.contains('view')")
+        pg.keyboard.press("Enter")
+        expect(pg.locator(".viewer")).to_be_visible()
+        pg.keyboard.press("Escape")
+        expect(pg.locator(".viewer")).to_be_hidden()
+        first.locator("input[name=name]").fill(original)                         # leave the name as it was
+        first.locator("input[name=name]").press("Tab")
+        _wait(lambda: any(p["name"] == original for p in _proposals(server["data"]).values()))
+    finally:
+        ctx.close()
+
+
 def test_keyboard_toggles_and_the_viewer(server, page):
     url, data = server["url"], server["data"]
     expect = pw.expect
