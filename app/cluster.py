@@ -252,12 +252,14 @@ def _load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
     return recs, skipped
 
 
-def fill_gps_from_neighbours(cfg: Config, recs: list[dict], max_hours: float = 48) -> None:
+def fill_gps_from_neighbours(cfg: Config, recs: list[dict], max_hours: float | None = None) -> None:
     """Photos without GPS inherit position/zone from the closest GPS'd photo in time, taken by
     the same device (`source`): while one phone is abroad, a screenshot on the other phone at
     home must not be placed abroad. Only a device that never records GPS at all borrows from
     the other devices."""
     import bisect
+    if max_hours is None:
+        max_hours = rules.effective(cfg)["excursions"].get("neighbour_gps_hours", 48.0)
     located = [i for i, r in enumerate(recs) if r.get("lat") is not None]
     if not located:
         return
@@ -358,7 +360,7 @@ def _merge_device_runs(cfg: Config, runs: list[list[dict]], ex: dict | None = No
     merged: list[list[dict]] = []
     for run in sorted(runs, key=lambda run: run[0]["_t"]):
         target = next((m for m in merged if run[0]["_t"] <= m[-1]["_t"] + slack
-                       and _same_area(cfg, run, m, dist_km=ex["split_distance_km"])), None)
+                       and _same_area(cfg, run, m, ex.get("same_area_hours", 24.0), ex["split_distance_km"])), None)
         if target is None:
             merged.append(list(run))
         else:
@@ -416,14 +418,19 @@ def excursion_kind(cfg: Config, run: list[dict], rs: dict | None = None) -> str 
     return rule["kind"] if rule else None
 
 
-def _rule_of_kind(cfg: Config, block: str, kind: str, rs: dict | None = None) -> dict:
-    """The first rule of a kind (the wrappers trip_proposal / local_proposal / home_proposal
-    build a proposal of a given kind whatever the run looks like)."""
-    rs = rs or rules.effective(cfg)
-    rule = next((r for r in rs[block] if r["kind"] == kind), None)
-    if rule is None:                                    # no such rule in a custom set: the default one
-        rule = next(r for r in rules.defaults(cfg)[block] if r["kind"] == kind)
-    return rule
+def _rule_of_kind(cfg: Config, block: str, kind: str, run: list[dict]) -> dict:
+    """The rule of a kind that matches the run, else the first of that kind (the wrappers
+    trip_proposal / local_proposal / home_proposal build a proposal of a given kind whatever
+    the run looks like), else the default one."""
+    rs = rules.effective(cfg)
+    of_kind = [r for r in rs[block] if r["kind"] == kind]
+    f = rules.features(run)
+    hit = next((r for r in of_kind if rules.matches(r, f)), None)
+    if hit is not None:
+        return hit
+    if of_kind:
+        return of_kind[0]
+    return next(r for r in rules.defaults(cfg)[block] if r["kind"] == kind)   # not in a custom set
 
 
 def excursion_proposal(cfg: Config, rule: dict, run: list[dict], now: datetime | None,
@@ -522,7 +529,7 @@ def _pid(kind: str, recs: list[dict]) -> str:
 
 
 def trip_proposal(cfg: Config, run: list[dict], now: datetime) -> dict:
-    return excursion_proposal(cfg, _rule_of_kind(cfg, "excursion_rules", "trip"), run, now)
+    return excursion_proposal(cfg, _rule_of_kind(cfg, "excursion_rules", "trip", run), run, now)
 
 
 # --- bursts --------------------------------------------------------------------
@@ -563,7 +570,7 @@ def home_baseline(recs: list[dict], persist: bool = True) -> float:
 
 
 def local_proposal(cfg: Config, run: list[dict], now: datetime | None = None) -> dict:
-    return excursion_proposal(cfg, _rule_of_kind(cfg, "excursion_rules", "local"), run, now)
+    return excursion_proposal(cfg, _rule_of_kind(cfg, "excursion_rules", "local", run), run, now)
 
 
 def count_devices(recs: list[dict]) -> int:
@@ -612,7 +619,7 @@ def home_proposal(cfg: Config, burst: list[dict], threshold: float, rule: dict |
     """A dense burst at home. Metadata cannot tell a birthday from a burst of shots of the same
     thing (neither could a decision model, see docs/DESIGN.md section 10), so every burst well
     above your usual day is proposed and you name or reject it."""
-    rule = rule or _rule_of_kind(cfg, "burst_rules", "home")
+    rule = rule or _rule_of_kind(cfg, "burst_rules", "home", burst)
     f = rules.features(burst)
     a, b = f["start"], f["end"]
     photos = [_photo_entry(r, 1.0) for r in burst]

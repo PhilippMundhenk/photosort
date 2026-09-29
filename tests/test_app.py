@@ -758,6 +758,7 @@ def test_settings_modes_hide_the_rare_settings_but_keep_their_values(client, cfg
     r = client.post("/settings/mode", data={"mode": "expert"})
     assert r.status_code == 303 and config.load().settings_mode == "expert"
     assert 'data-level="expert" hidden' not in client.get("/settings").text
+    assert client.post("/settings/mode", data={"mode": "expert"}).status_code == 303   # again: nothing to save
     assert client.post("/settings/mode", data={"mode": "wizard"}).status_code == 303
     assert config.load().settings_mode == "expert"                              # nonsense: unchanged
     cfg = config.load()

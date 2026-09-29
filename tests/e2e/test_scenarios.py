@@ -161,7 +161,7 @@ def test_a_named_place_from_settings_names_the_day_out(tmp_path_factory, page):
     with serve(base, lib) as s:
         url, data = s["url"], s["data"]
         expect = pw.expect
-        page.goto(url + "/settings")
+        page.goto(url + "/settings?mode=advanced")                     # place names are an advanced setting
         page.locator("textarea[name=named_places]").fill(
             f"Barockstadt = {synth.LUDWIGSBURG[0]}, {synth.LUDWIGSBURG[1]}, 3\nBlack Forest = 48.0, 8.2, 40")
         page.get_by_role("button", name="Save settings").click()

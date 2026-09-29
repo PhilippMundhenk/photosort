@@ -5,7 +5,9 @@ fields when none is set):
 
     homes:            where "home" is: several places (issue #3); a photo inside any of them is
                       at home, and an excursion ends at any of them
-    excursions:       how runs of photos away from home are cut (gaps, distances, device merge)
+    excursions:       how runs of photos away from home are cut (gaps, distances, device merge,
+                      the hours within which two devices are "in the same area" and a photo
+                      without GPS borrows a neighbour's position)
     excursion_rules:  evaluated in order over every excursion run; the first whose `when`
                       matches decides: a trip, a day out (`local`), or `everyday` (no cluster)
     bursts:           how the remaining photos are grouped into bursts (a gap in hours)
@@ -30,7 +32,8 @@ Name templates: {span} (2026-08 or 2026-06-27), {places} (the places passed, the
 
 `defaults(cfg)` is exactly what the code did before the engine (the golden test in
 tests/test_rules.py holds it to that); the settings fields feed it. Custom rules replace the
-blocks they define and fall back to the defaults for the rest.
+rule lists they define and fall back to the defaults for the rest; in the parameter blocks
+(excursions, bursts) a key left out keeps its default.
 """
 from __future__ import annotations
 
@@ -54,7 +57,8 @@ CONDITIONS: dict[str, type] = {
     "devices_min": int, "videos_min": int, "weekday": list, "start_hour_min": int, "end_hour_max": int,
 }
 RULE_KEYS = {"name", "kind", "when", "name_template", "ongoing_days"}
-EXCURSION_KEYS = {"split_gap_days": float, "split_distance_km": float, "local_gap_hours": float, "merge_devices": bool}
+EXCURSION_KEYS = {"split_gap_days": float, "split_distance_km": float, "local_gap_hours": float, "merge_devices": bool,
+                  "same_area_hours": float, "neighbour_gps_hours": float}
 BURST_KEYS = {"gap_hours": float}
 TEMPLATE_FIELDS = ("span", "places", "place", "media", "n", "home")
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
@@ -101,7 +105,8 @@ def defaults(cfg: Config) -> dict:
         "homes": homes(cfg),
         "excursions": {"split_gap_days": float(cfg.trip_gap_days),
                        "split_distance_km": float(cfg.trip_split_distance_km),
-                       "local_gap_hours": float(cfg.local_gap_hours), "merge_devices": True},
+                       "local_gap_hours": float(cfg.local_gap_hours), "merge_devices": True,
+                       "same_area_hours": 24.0, "neighbour_gps_hours": 48.0},
         "excursion_rules": [
             {"name": "trip", "kind": "trip", "when": {"span_hours_min": float(cfg.trip_min_hours),
                                                       "located_min": int(cfg.trip_min_photos)},
@@ -132,7 +137,14 @@ def effective(cfg: Config) -> dict:
     custom = cfg.rules if isinstance(cfg.rules, dict) else {}
     if not custom:
         return base
-    merged = {k: copy.deepcopy(custom[k]) if k in custom else base[k] for k in BLOCKS}
+    merged = {}
+    for k in BLOCKS:
+        if k not in custom:
+            merged[k] = base[k]
+        elif isinstance(base[k], dict) and isinstance(custom[k], dict):   # a parameter block: what is left
+            merged[k] = {**base[k], **copy.deepcopy(custom[k])}           # out keeps its default
+        else:
+            merged[k] = copy.deepcopy(custom[k])
     problems = validate(merged)
     if problems:
         log.error("custom rules ignored: %s", "; ".join(problems))

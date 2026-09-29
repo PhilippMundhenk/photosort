@@ -132,6 +132,24 @@ def test_validation_names_every_problem():
     assert rules.validate(rules.defaults(config.Config())) == []
 
 
+def test_every_condition_can_fail_and_the_rest_of_the_validation_messages():
+    sat = datetime(2026, 6, 27, 10, tzinfo=timezone.utc)
+    run = [dict(rec(sat + h(x), "local", LUDWIGSBURG, "Ludwigsburg"), source="a", camera="cam") for x in (0, 1, 2)]
+    f = rules.features(run, baseline=2.0)
+    assert rules.matches({"when": {}}, f)
+    for cond in ({"span_hours_max": 1}, {"photos_max": 2}, {"devices_min": 2}, {"videos_min": 1},
+                 {"start_hour_min": 11}, {"end_hour_max": 11}, {"located_min": 4}, {"zone": "home"},
+                 {"mostly_zone": "away"}, {"baseline_factor": 2}, {"weekday": ["Monday"]}, {"span_hours_min": 3}):
+        assert not rules.matches({"when": cond}, f), cond
+    assert rules.matches({"when": {"devices_min": 1, "videos_min": 0, "span_hours_max": 3, "photos_max": 3,
+                                   "start_hour_min": 10, "end_hour_max": 12, "baseline_factor": 1.5}}, f)
+    assert f["devices"] == 1                                                 # computed once, on demand
+    problems = rules.validate({"excursions": {"merge_devices": "yes"},
+                               "burst_rules": [{"kind": "home", "name_template": 5}]})
+    assert any("must be true or false" in p for p in problems)
+    assert any("name_template must be text" in p for p in problems)
+
+
 def test_parse_rejects_what_it_cannot_use():
     with pytest.raises(ValueError, match="not valid YAML"):
         rules.parse("excursion_rules: [")
@@ -151,6 +169,9 @@ def test_effective_lays_custom_blocks_over_the_defaults_and_ignores_broken_ones(
     cfg = config.Config(rules={"bursts": {"gap_hours": 1.0}})
     rs = rules.effective(cfg)
     assert rs["bursts"] == {"gap_hours": 1.0} and rs["excursion_rules"] == rules.defaults(cfg)["excursion_rules"]
+    cfg.rules = {"excursions": {"split_gap_days": 9}}
+    ex = rules.effective(cfg)["excursions"]
+    assert ex["split_gap_days"] == 9 and ex["split_distance_km"] == cfg.trip_split_distance_km   # the rest kept
     cfg.rules = {"excursion_rules": [{"kind": "nope"}]}
     with caplog.at_level(logging.ERROR, logger="photosort.rules"):
         assert rules.effective(cfg) == rules.defaults(cfg)
@@ -202,6 +223,23 @@ def test_an_everyday_rule_stops_the_search_and_a_ruleset_can_switch_a_kind_off(c
     two = [rec(T0, "away", LISBON, "Lisbon"), rec(T0 + h(30), "away", LISBON, "Lisbon")]
     assert cluster.excursion_kind(cfg, two) is None
     assert cluster.trip_proposal(cfg, two, NOW)["kind"] == "trip"
+
+
+def test_the_neighbour_window_and_the_same_area_window_are_rule_parameters(cfg):
+    blind = [rec(T0, "away", LISBON, "Lisbon"), rec(T0 + h(30), "unknown", None)]
+    cfg.rules = {"excursions": {"neighbour_gps_hours": 10}}
+    cluster.fill_gps_from_neighbours(cfg, blind)
+    assert blind[1]["lat"] is None                                          # 30 h apart: too far now
+    cfg.rules = {}
+    cluster.fill_gps_from_neighbours(cfg, blind)
+    assert blind[1]["lat"] == LISBON[0]                                      # the default 48 h
+    a = [dict(rec(T0 + h(x), "away", LISBON, "Lisbon"), source="a") for x in (0, 1)]
+    b = [dict(rec(T0 + h(x), "away", LISBON, "Lisbon"), source="b") for x in (30, 31)]
+    cfg.rules = {"excursions": {"same_area_hours": 2, "local_gap_hours": 40}}
+    assert len(cluster.find_excursions(cfg, a + b)) == 2                     # 30 h apart: not the same area
+    cfg.rules = {"excursions": {"same_area_hours": 48, "local_gap_hours": 40}}
+    assert len(cluster.find_excursions(cfg, a + b)) == 1
+    assert rules.validate({"excursions": {"same_area_hours": "x"}})
 
 
 def test_run_uses_custom_rules_from_the_config(cfg, library):
