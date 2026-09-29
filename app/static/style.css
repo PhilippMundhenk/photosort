@@ -12,7 +12,12 @@ main{padding:20px;max-width:1200px;margin:0 auto}h1{font-size:20px;margin:0 0 14
 .badge.trip{background:#1f3b5c;color:#9cc9ff}.badge.local{background:#2e4a2a;color:#a9e3a0}.badge.home{background:#4d3a1d;color:#ffd58a}
 .badge.ok{background:var(--ok);color:#03210f}.badge.warn{background:var(--warn);color:#2b1d00}.badge.bad{background:var(--bad);color:#2b0000}
 button,.btn{background:var(--accent);color:#fff;border:0;border-radius:7px;padding:7px 12px;cursor:pointer;font-size:14px}
-button.secondary{background:var(--line);color:var(--fg)}button.danger{background:var(--bad)}button.small{padding:4px 8px;font-size:12px}
+.btn{display:inline-block;text-decoration:none;line-height:normal}
+button.secondary,.btn.secondary{background:var(--line);color:var(--fg)}button.danger,.btn.danger{background:var(--bad)}button.small,.btn.small{padding:4px 8px;font-size:12px}
+.modes{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}.modes button{background:transparent;color:var(--muted);border-radius:0;padding:5px 12px;text-transform:capitalize}
+.modes button.on{background:var(--accent);color:#fff}.modes button:not(.on):hover{background:var(--line);color:var(--fg)}
+.overview{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px 18px}.overview .k{color:var(--muted);font-size:12px}.overview .v{font-size:14px}
+.overview .v a{margin-left:4px}.more{margin-top:10px}
 form.inline{display:inline}input[type=text],input[type=number],textarea,select{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:7px;padding:7px 9px;font-size:14px;width:100%}
 label{display:block;margin:10px 0 4px;font-size:13px;color:var(--muted)}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .thumbs{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.thumbs figure{margin:0;width:110px}.thumbs img{width:110px;height:82px;object-fit:cover;border-radius:6px;background:var(--line);display:block}

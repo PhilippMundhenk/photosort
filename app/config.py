@@ -54,6 +54,8 @@ class Config:
     # Your own place names: photos within radius_km of (lat, lon) are labelled with the name
     # ("Black Forest", "Alps", "Allotment garden"). Grown from the "remember this place" box on rename.
     named_places: list[dict] = field(default_factory=list)   # [{"name", "lat", "lon", "radius_km"}]
+    homes: list[dict] = field(default_factory=list)          # further homes (issue #3), same shape; the
+                                                             # home_* fields stay the first home
 
     # Bursts (local day outs and home occasions)
     burst_gap_hours: float = 3.0           # photos closer than this belong to the same burst
@@ -89,6 +91,14 @@ class Config:
     warn_cross_mount: bool = True         # the "slow moves" note when inbox and root are on different mounts
     thumb_pattern: str = "@eaDir/{name}/SYNOPHOTO_THUMB_M.jpg"
     generate_thumbnails: bool = True
+
+    # The Settings page: "basic" shows what a first setup needs, "advanced" adds the clustering
+    # thresholds, "expert" everything (folder details, sidecars, rarely touched limits)
+    settings_mode: str = "basic"
+
+    # Custom clustering rules (issue #2, see app/rules.py): the blocks given here replace the
+    # rules built from the fields above; empty = those defaults
+    rules: dict = field(default_factory=dict)
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -179,7 +189,7 @@ def update_from_form(cfg: Config, form: dict) -> Config:
         if not hasattr(cfg, k):
             continue
         cur = getattr(cfg, k)
-        if k == "named_places":
+        if k in ("named_places", "homes"):
             setattr(cfg, k, parse_named_places(str(v)))
         elif k == "inboxes":
             # one per line: "name=/path" or just "/path"
@@ -228,8 +238,9 @@ def parse_named_places(text: str) -> list[dict]:
     return out
 
 
-def named_places_text(cfg: Config) -> str:
-    return "\n".join(f"{p['name']} = {p['lat']:.5f}, {p['lon']:.5f}, {p['radius_km']:g}" for p in cfg.named_places)
+def named_places_text(cfg: Config, places: list[dict] | None = None) -> str:
+    return "\n".join(f"{p['name']} = {p['lat']:.5f}, {p['lon']:.5f}, {p['radius_km']:g}"
+                     for p in (cfg.named_places if places is None else places))
 
 
 def discovered_inboxes(cfg: Config) -> list[tuple[str, Path]]:

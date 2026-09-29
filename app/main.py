@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import cluster, config, events, geo, ingest, journal, mover, thumbs
+from . import cluster, config, events, geo, ingest, journal, mover, rules, thumbs
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("photosort")
@@ -521,12 +521,74 @@ def log_page(request: Request, kind: str = ""):
     return render(request, "log.html", rows=events.read(limit=300, kind=kind or None), kind=kind)
 
 
+SETTINGS_MODES = ("basic", "advanced", "expert")
+
+
+def _overview(cfg: config.Config, discovered: list) -> list[dict]:
+    """The facts a glance at Settings should give, each pointing at its field (and at the mode
+    that shows it)."""
+    switches = ((cfg.auto_apply_trips, "trips"), (cfg.auto_apply_local, "day outs"),
+                (cfg.auto_apply_home, "home bursts"),
+                (cfg.auto_apply_everyday, f"everyday photos older than {cfg.everyday_keep_days:g} days"))
+    auto = [label for flag, label in switches if flag]
+    if cfg.dry_run:
+        moves = "nothing: dry-run is on"
+    elif auto:
+        moves = "without review: " + ", ".join(auto) + "; the rest after approval"
+    else:
+        moves = "only what you approve in Review"
+    home = (f"{cfg.home_lat:.4f}, {cfg.home_lon:.4f}" if cfg.home_lat or cfg.home_lon
+            else "not set (detected on the next run)")
+    everyday = "stay in the inbox" if cfg.everyday_layout == "leave" else f"into {cfg.everyday_layout}/"
+    found = f"{cfg.inbox_root} — {len(discovered)} found"
+    if discovered:
+        found += ": " + ", ".join(n for n, _ in discovered)
+    sorted_into = cfg.root + (" (copies; originals stay)" if cfg.copy_instead_of_move else "")
+    mode = "dry-run: nothing is moved, copied or deleted" if cfg.dry_run else "LIVE: approved proposals are moved"
+    records = f"{cfg.sidecar_mode}, {'kept' if cfg.sidecar_cleanup == 'never' else 'dropped'} after a move"
+    thumbs_ = "NAS thumbnails, generated when missing" if cfg.generate_thumbnails else "NAS thumbnails only"
+
+    more_homes = f" · {len(cfg.homes)} more home{'s' if len(cfg.homes) != 1 else ''}" if cfg.homes else ""
+    custom = "custom rules (the thresholds below do not apply)" if cfg.rules else "the rules built from the fields"
+
+    def row(k, v, field, mode, **flags):
+        return {"k": k, "v": v, "field": field, "mode": mode, **flags}
+    return [
+        row("Mode", mode, "dry", "basic", warn=cfg.dry_run, bad=not cfg.dry_run),
+        row("What moves", moves, "at", "basic"),
+        row("Inboxes", found, "f-inbox_root", "basic"),
+        row("Sorted into", sorted_into, "f-root", "basic"),
+        row("Everyday photos", everyday, "f-everyday_layout", "basic"),
+        row("Home", f"{home} · {cfg.timezone}" + more_homes, "f-home_lat", "basic"),
+        row("Rules", custom, "f-rules", "expert"),
+        row("Scan", f"every {cfg.scan_interval_min} min", "f-scan_interval_min", "advanced"),
+        row("Records", records, "f-sidecar_mode", "expert"),
+        row("Thumbnails", thumbs_, "gt", "advanced"),
+    ]
+
+
 @app.get("/settings", response_class=HTMLResponse)
-def settings(request: Request, msg: str = ""):
+def settings(request: Request, msg: str = "", mode: str = ""):
     cfg = config.load()
-    return render(request, "settings.html", inboxes_text=config.inboxes_text(cfg),
-                  discovered=config.discovered_inboxes(cfg), named_places_text=config.named_places_text(cfg),
-                  extensions=", ".join(cfg.photo_extensions), msg=msg)
+    mode = mode if mode in SETTINGS_MODES else cfg.settings_mode if cfg.settings_mode in SETTINGS_MODES else "basic"
+    discovered = config.discovered_inboxes(cfg)
+    return render(request, "settings.html", inboxes_text=config.inboxes_text(cfg), discovered=discovered,
+                  named_places_text=config.named_places_text(cfg), extensions=", ".join(cfg.photo_extensions),
+                  msg=msg, mode=mode, modes=SETTINGS_MODES, overview=_overview(cfg, discovered),
+                  homes_text=config.named_places_text(cfg, cfg.homes),
+                  rules_text=rules.to_yaml(cfg.rules) if cfg.rules else "",
+                  rules_in_force=rules.to_yaml(rules.effective(cfg)))
+
+
+@app.post("/settings/mode")
+def settings_mode(mode: str = Form("basic")):
+    """The basic / advanced / expert switch: remembered, no other setting touched."""
+    if mode in SETTINGS_MODES:
+        cfg = config.load()
+        if cfg.settings_mode != mode:
+            cfg.settings_mode = mode
+            config.save(cfg)
+    return RedirectResponse("/settings", status_code=303)
 
 
 @app.post("/settings/sidecars/{action}")
@@ -542,7 +604,7 @@ def settings_sidecars(action: str):
     else:
         return RedirectResponse("/settings", status_code=303)
     events.log("settings", changed=[f"sidecars:{action}"], **st)
-    return RedirectResponse("/settings?msg=" + quote(msg), status_code=303)
+    return RedirectResponse("/settings?mode=expert&msg=" + quote(msg), status_code=303)   # the buttons' own card
 
 
 @app.post("/settings/hide_mount_note")
@@ -578,16 +640,24 @@ def settings_detect_home():
 async def settings_save(request: Request):
     form = dict(await request.form())
     before = config.load()
+    rules_text = str(form.pop("rules", "")).strip()
     cfg = config.update_from_form(config.load(), form)
+    rules_msg = ""
+    try:
+        cfg.rules = rules.parse(rules_text) if rules_text else {}
+    except ValueError as e:                                    # the other fields are saved; the rules stay
+        rules_msg = f" Rules not saved: {e}."
     config.save(cfg)
     scheduler.reschedule_job("scan", trigger="interval", minutes=max(1, cfg.scan_interval_min))
-    events.log("settings", changed=sorted(form.keys()), dry_run=cfg.dry_run)
+    events.log("settings", changed=sorted(form.keys()) + (["rules"] if rules_text or before.rules else []),
+               dry_run=cfg.dry_run)
     msg = ""
     if before.dry_run and not cfg.dry_run:
         n = queue_approved()                                   # they waited for exactly this
         msg = f"Dry-run is off. {n} approved proposal{'s' if n != 1 else ''} will be moved now."
     elif not before.dry_run and cfg.dry_run:
         msg = "Dry-run is on: nothing will be moved, copied or deleted."
+    msg = (msg + rules_msg).strip()
     return RedirectResponse("/settings" + (f"?msg={quote(msg)}" if msg else ""), status_code=303)
 
 

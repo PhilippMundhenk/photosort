@@ -228,7 +228,7 @@ def test_full_review_flow(server, page):
 def test_settings_roundtrip(server, page):
     url = server["url"]
     expect = pw.expect
-    page.goto(url + "/settings")
+    page.goto(url + "/settings?mode=advanced")                              # both fields are advanced
     page.locator("input[name=scan_interval_min]").fill("7")
     page.get_by_label("Copy instead of move", exact=False).check()        # label[for] -> checkbox
     page.get_by_role("button", name="Save settings").click()
