@@ -218,6 +218,16 @@ config only holds an optional override. The folder name is the device name that 
 per-source subfolders and in the records (`source`), so naming the folders after their owners
 ("hans", "maria") gives readable trees.
 
+### When the share drops out
+
+An inbox folder that is not there at scan time (the network share unmounted, the NAS down) is
+reported on the dashboard and its records leave the cache for that run: nothing is proposed
+from photos nobody can reach, so an approve-all during the outage cannot mark a trip "applied"
+without moving a file. Should such an approval happen anyway, a move that finds none of its
+files raises instead of succeeding emptily; the proposal stays approved with the error and the
+retry works once the share is back. When it returns, the records are still in the index, the
+same proposals come back with the same ids, and nothing is re-indexed.
+
 ## 5. Triggers
 
 Originally: a Matrix message like "2026-10 Uruguay" seeds the trip, the model grows the edges.

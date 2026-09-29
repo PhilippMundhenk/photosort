@@ -215,6 +215,11 @@ def apply(cfg: Config, pr: dict, reviewed: bool = False, progress=None) -> dict:
                       "uncertain": bool(p.get("uncertain")), "in_review": in_review})
         if len(moved) % MANIFEST_EVERY == 0:  # a crash (power, a kill) mid-way loses at most this many entries
             write_manifest(folder, manifest(partial=True))
+    wanted = [p for p in pr["photos"] if p["path"] not in excluded]
+    if wanted and not moved and not earlier.get("photos") and not any(Path(p["path"]).exists() for p in wanted):
+        # every single file is unreachable: the inbox is not mounted, not "already moved". Marking the
+        # proposal applied here would bury the photos for good (they are never proposed again).
+        raise FileNotFoundError(f"none of the {len(wanted)} files is reachable; is the inbox mounted?")
     if xmp_jobs:
         if progress:
             progress(total, total, {"file": f"keywords for {len(xmp_jobs)} files", "bytes": 0, "since": time.time()})
