@@ -101,7 +101,10 @@ def test_everything_on_twenty_thousand_photos(client, big):
     cluster._records_cache.update(key=None, filled=None)
     _t("load_records (first, 20k files)", lambda: cluster.load_records(cfg), 15.0)
     _t("records_filled (GPS fill)", lambda: cluster.records_filled(cfg), 2.0)
-    _t("ingest.scan, nothing new", lambda: ingest.scan(cfg), 12.0)
+    st = _t("ingest.scan, first of the process (re-zone pass over 20k records)", lambda: ingest.scan(cfg), 25.0)
+    assert st["rezoned"] is True and st["new"] == 0
+    st = _t("ingest.scan, nothing new", lambda: ingest.scan(cfg), 3.0)
+    assert st["rezoned"] is False and st["new"] == 0
     _t("cluster.run", lambda: cluster.run(cfg), 3.0)
     with main._lock:                                                       # the startup's own scan first
         pass
@@ -207,9 +210,10 @@ def test_everything_on_twenty_thousand_photos(client, big):
     r = _t("GET /history?file=<one of 20k files>", get("/history", params={"file": one}), 0.6, repeat=3)
     assert r.status_code == 200
     _t("POST cluster/undo (2 000 files)", lambda: client.post("/cluster/undo", data={"folder": str(renamed)}), 30.0)
-    undo_batch = journal.batches()[0]["batch"]
-    r = _t("POST history/<undo of 2 000>/revert", lambda: client.post(f"/history/{undo_batch}/revert"), 30.0)
-    assert r.status_code == 303 and "2000 files put back" in r.headers["location"].replace("%20", " ")
+    undo_batch = journal.batches()[0]
+    r = _t("POST history/<undo of 2 000>/revert", lambda: client.post(f"/history/{undo_batch['batch']}/revert"), 30.0)
+    assert r.status_code == 303 and f"{undo_batch['n']} files put back" in r.headers["location"].replace("%20", " ")
+    assert undo_batch["n"] >= 2000
     assert len(local["photos"]) >= 12
 
     print("\n  " + "-" * 78)

@@ -40,13 +40,14 @@ def batch(action: str, **meta):
         yield outer
         return
     bid = uuid.uuid4().hex[:12]
-    _local.batch = bid
-    _append({"ts": _now(), "batch": bid, "op": "begin", "action": action, **meta})
-    try:
+    _local.batch = bid                      # the begin line is written with the first operation: an action
+    _local.begin = {"ts": _now(), "batch": bid, "op": "begin", "action": action, **meta}   # that moved nothing
+    try:                                    # (refused by dry-run, nothing selected) leaves no trace
         yield bid
     finally:
-        _append({"ts": _now(), "batch": bid, "op": "end"})
-        _local.batch = None
+        if _local.begin is None:
+            _append({"ts": _now(), "batch": bid, "op": "end"})
+        _local.batch = _local.begin = None
 
 
 def record(op: str, src: Path | str, dst: Path | str | None = None, **extra) -> None:
@@ -55,6 +56,9 @@ def record(op: str, src: Path | str, dst: Path | str | None = None, **extra) -> 
     entry = {"ts": _now(), "op": op, "src": str(src), "dst": str(dst) if dst is not None else None, **extra}
     bid = getattr(_local, "batch", None)
     if bid:
+        if _local.begin is not None:
+            _append(_local.begin)
+            _local.begin = None
         _append({**entry, "batch": bid})
         return
     bid = uuid.uuid4().hex[:12]

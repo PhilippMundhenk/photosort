@@ -184,6 +184,11 @@ def test_dry_run_ignores_every_switch_and_every_automatic_path(client, library):
     client.post(f"/proposal/{kinds['trip']['id']}/approve")    # approved, and still nothing moves
     client.post("/proposals/approve_all")
     assert client.post("/everyday/move_all").status_code == 409
+    folder = mover.target_folder(cfg, kinds["trip"])            # a cluster page's "move selected" (the
+    folder.mkdir(parents=True, exist_ok=True)                  # folder exists but holds nothing yet)
+    r = client.post("/cluster/assign", data={"folder": str(folder), "paths": [str(folder / "x.jpg")],
+                                             "target": "new"})
+    assert r.status_code == 409
     main.wait_for_apply()
     main.run_pipeline("schedule")                              # a run with approved proposals waiting
     main.wait_for_apply()

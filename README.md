@@ -116,7 +116,9 @@ decision model that was tried for exactly this (DESIGN.md, section 10). You name
 3. **Review** in the web UI: approve, reject, rename, toggle single photos, name unnamed
    bursts, undo whole clusters, move single photos back out. **Everyday** lists every photo
    that is in no cluster, by month and day; tick photos to add them to a pending proposal or
-   to create a cluster by hand (kept across runs, marked "by hand"). Every action is logged and every
+   to create a cluster by hand (kept across runs, marked "by hand"). A cluster's page has the
+   same bar: tick photos and move them to another cluster (moved in by the worker), to an
+   open proposal, to a new cluster, or back to the inbox. Every action is logged and every
    folder gets a `manifest.json` (source paths, confidences, corrections). Approving in the
    UI settles every photo; only auto-applied clusters park their low-confidence photos in
    `<folder>/_review/` for a later look.
