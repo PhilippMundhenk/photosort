@@ -242,3 +242,44 @@ def test_concurrent_toggles_from_many_tabs_during_a_run_end_consistent(client, l
     assert not errors
     assert sorted(_kind("trip")["excluded"]) == sorted(paths)                # each photo toggled exactly once
     assert client.get("/review").status_code == 200
+
+
+def test_names_with_html_and_unicode_are_escaped_and_survive(client, library):
+    """A name typed by the user is shown escaped (never as markup) and, with umlauts and emoji,
+    becomes the real folder name; an absurdly long name is cut to what file systems take."""
+    cfg = config.load()
+    cfg.dry_run = False
+    config.save(cfg)
+    cluster.run(cfg)
+    local = _kind("local")
+    typed = '2026-06-27 <script>alert(1)</script> Tom & "Jerry" Grüße 🙂'
+    evil = cluster.sanitize(typed)                                          # < > " cannot be in a folder name
+    assert evil == "2026-06-27 -script-alert(1)-script- Tom & -Jerry- Grüße 🙂"
+    r = client.post(f"/proposal/{local['id']}/rename", data={"name": typed}, headers=FETCH)
+    assert r.status_code == 200 and r.json()["name"] == evil
+    html = client.get("/review").text
+    assert "<script>" not in html and "Tom &amp; -Jerry- Grüße 🙂" in html   # escaped, umlauts and emoji intact
+    client.post(f"/proposal/{local['id']}/approve")
+    main.wait_for_apply()
+    folder = Path(cfg.root) / evil
+    assert folder.is_dir() and mover.read_manifest(folder)["name"] == evil
+    page = client.get("/clusters/view", params={"folder": str(folder)}).text
+    assert "Tom &amp; -Jerry- Grüße 🙂" in page and "<script>" not in page
+    assert "Tom &amp; -Jerry- Grüße 🙂" in client.get("/clusters").text
+    long = "2026-06 " + "Ä" * 300
+    assert len(cluster.sanitize(long).encode("utf-8")) <= cluster.MAX_NAME_BYTES
+    dst = mover.rename(cfg, folder, long)
+    assert dst.is_dir() and len(dst.name.encode("utf-8")) <= cluster.MAX_NAME_BYTES
+
+
+def test_media_supports_range_requests_for_video_seeking(client, library):
+    """The viewer's <video> seeks with Range requests; the original must answer them."""
+    from PIL import Image
+    photo = library.paths[0]
+    Image.new("RGB", (64, 48), "blue").save(photo, "JPEG")
+    full = client.get("/media", params={"path": str(photo)})
+    assert full.status_code == 200 and full.headers["content-type"] == "image/jpeg"
+    part = client.get("/media", params={"path": str(photo)}, headers={"Range": "bytes=0-9"})
+    assert part.status_code == 206 and len(part.content) == 10
+    assert part.headers["content-range"].startswith("bytes 0-9/") and part.headers.get("accept-ranges") == "bytes"
+    assert part.content == full.content[:10]
