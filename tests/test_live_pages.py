@@ -283,3 +283,91 @@ def test_media_supports_range_requests_for_video_seeking(client, library):
     assert part.status_code == 206 and len(part.content) == 10
     assert part.headers["content-range"].startswith("bytes 0-9/") and part.headers.get("accept-ranges") == "bytes"
     assert part.content == full.content[:10]
+
+
+def test_same_file_names_from_two_phones_end_up_apart_and_come_back_right(client, library):
+    """Both phones name their files IMG_0001.jpg. In one cluster folder they must not overwrite
+    each other, and undo must return each to its own inbox, with per-source subfolders on or off."""
+    cfg = config.load()
+    cfg.dry_run, cfg.sidecar_cleanup = False, "never"       # fake JPEGs: their records must survive the round trip
+    config.save(cfg)
+    lib = synth.Library(cfg)
+    a, b = Path(cfg.inboxes[0]["path"]), Path(cfg.inboxes[1]["path"])
+    day = synth.T0 + timedelta(days=40)
+    twins = []
+    for i in range(12):                                                    # a day out, both phones, same names
+        for inbox in (a, b):
+            p = inbox / f"DSC_{i:03d}.jpg"
+            lib.n += 1
+            p.write_bytes(b"\xff\xd8" + inbox.name.encode() + b"\xff\xd9")
+            from app import ingest
+            tags = {"DateTimeOriginal": (day + timedelta(minutes=10 * i)).strftime("%Y:%m:%d %H:%M:%S"),
+                    "GPSLatitude": synth.LUDWIGSBURG[0], "GPSLongitude": synth.LUDWIGSBURG[1]}
+            rec = ingest.build_record(cfg, p, tags, source=inbox.name)
+            rec.update(source=inbox.name, inbox=str(inbox))
+            ingest.write_sidecar(p, rec, cfg)
+            twins.append(p)
+    for layout in (True, False):
+        cfg.subfolder_by_source = layout
+        config.save(cfg)
+        main.run_pipeline("test")
+        props = cluster.load_proposals()
+        found = [(p["kind"], p["n"], p["status"], p["name"]) for p in props.values()]
+        dsc = [(r["file"], r["zone"], r.get("source"), r["ts"])
+               for r in cluster.records_filled(cfg) if "DSC_" in r["file"]]
+        local = next((p for p in props.values() if p["kind"] == "local" and p["n"] == 24), None)
+        assert local, (found, dsc[:4])
+        client.post(f"/proposal/{local['id']}/approve")
+        main.wait_for_apply()
+        folder = mover.target_folder(cfg, local)
+        files = sorted(f.name for f in folder.rglob("*.jpg"))
+        contents = [f.read_bytes() for f in folder.rglob("*.jpg")]
+        assert len(files) == 24 and contents.count(b"\xff\xd8phone-a\xff\xd9") == 12          # nothing overwritten
+        assert contents.count(b"\xff\xd8phone-b\xff\xd9") == 12
+        if not layout:
+            assert sum(1 for n in files if n.endswith("_1.jpg")) == 12                             # clashes renamed
+        client.post("/cluster/undo", data={"folder": str(folder)})
+        assert all(p.exists() for p in twins)
+        assert all(p.read_bytes() == b"\xff\xd8" + p.parent.name.encode() + b"\xff\xd9" for p in twins)   # each home
+        props = cluster.load_proposals()
+        props[local["id"]]["status"] = "pending"
+        cluster.save_proposals(props)
+
+
+def test_a_file_deleted_by_hand_leaves_proposals_and_moves_intact(client, library):
+    """The user deletes a photo in the inbox with another tool: the next run drops it from its
+    proposal, and approving a proposal that still lists a vanished photo just skips it."""
+    cfg = config.load()
+    cfg.dry_run = False
+    config.save(cfg)
+    main.run_pipeline("test")
+    trip = _kind("trip")
+    gone = Path(trip["photos"][5]["path"])
+    gone.unlink()
+    main.run_pipeline("test")
+    again = _kind("trip")
+    assert again["n"] == trip["n"] - 1 and str(gone) not in {p["path"] for p in again["photos"]}
+    assert client.get("/everyday").status_code == 200 and client.get("/review").status_code == 200
+    local = _kind("local")
+    Path(local["photos"][0]["path"]).unlink()                              # vanishes after the proposal was made
+    client.post(f"/proposal/{local['id']}/approve")
+    main.wait_for_apply()
+    pr = cluster.load_proposals()[local["id"]]
+    assert pr["status"] == "applied" and pr.get("error") is None
+    assert len(mover.read_manifest(mover.target_folder(cfg, local))["photos"]) == local["n"] - 1
+
+
+def test_photos_taken_in_the_same_second_keep_a_stable_order(client, library):
+    cfg = config.load()
+    lib = synth.Library(cfg)
+    lib.n = 5000                                                           # names apart from the fixture's files
+    a = Path(cfg.inboxes[0]["path"])
+    when = synth.T0 + timedelta(days=45, hours=12)
+    burst = [lib.photo(a, when, synth.HOME) for _ in range(20)]           # 20 frames, one second
+    main.run_pipeline("test")
+    home = next(p for p in cluster.load_proposals().values() if p["kind"] == "home" and p["n"] == 20)
+    assert [p["path"] for p in home["photos"]] == sorted(str(p) for p in burst)   # by name within the second
+    main.run_pipeline("test")
+    assert home["id"] in cluster.load_proposals()                            # and the id does not flip
+    html = client.get("/review").text
+    assert html.count(f'data-path="{a}') >= 20

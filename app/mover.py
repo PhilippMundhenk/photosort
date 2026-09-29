@@ -63,11 +63,13 @@ def _unique(dst: Path) -> Path:
         i += 1
 
 
-def _transfer(cfg: Config, src: Path, dst_dir: Path, copy: bool = False) -> Path:
-    """Move (or copy) a photo, its record and its .xmp into dst_dir; returns the new photo path."""
+def _transfer(cfg: Config, src: Path, dst_dir: Path, copy: bool = False, name: str | None = None) -> Path:
+    """Move (or copy) a photo, its record and its .xmp into dst_dir; returns the new photo path.
+    `name` restores the original file name on the way back (a clash on the way in may have
+    renamed it to IMG_0001_1.jpg)."""
     _guard(cfg)
     dst_dir.mkdir(parents=True, exist_ok=True)
-    dst = _unique(dst_dir / src.name)
+    dst = _unique(dst_dir / (name or src.name))
     size = src.stat().st_size
     op = shutil.copy2 if copy else shutil.move      # move = rename on same fs; copy+delete across mounts
     op(str(src), str(dst))
@@ -282,7 +284,7 @@ def undo(cfg: Config, folder: Path) -> int:
             _delete_with_sidecars(cfg, dst)
             _mark_source(cfg, src, None, None)
         else:
-            _transfer(cfg, dst, src.parent)
+            _transfer(cfg, dst, src.parent, name=src.name)     # back under its own name
         n += 1
     (folder / MANIFEST).unlink(missing_ok=True)
     invalidate_clusters()
