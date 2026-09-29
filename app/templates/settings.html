@@ -74,6 +74,7 @@
   <div class="check"><input type="checkbox" id="ae" name="auto_apply_everyday" {% if cfg.auto_apply_everyday %}checked{% endif %}><label for="ae">Move <b>everyday photos</b> (in no cluster) older than the days below into <code>{{ cfg.everyday_layout }}/</code>. Off: they stay in the inbox until you press the button on the Everyday page{% if cfg.everyday_layout == 'leave' %} — layout is <code>leave</code>, so nothing is moved either way{% endif %}</label></div>
   <label for="f-everyday_keep_days">Keep everyday photos in the inbox for (days) before they can be moved — a recent photo may still become part of a cluster</label><input type="number" step="1" min="0" name="everyday_keep_days" id="f-everyday_keep_days" value="{{ cfg.everyday_keep_days }}">
   <div class="check"><input type="checkbox" id="xmp" name="write_xmp_sidecar" {% if cfg.write_xmp_sidecar %}checked{% endif %}><label for="xmp">Also write keywords to .xmp sidecars</label></div>
+  <div class="check"><input type="checkbox" id="wcm" name="warn_cross_mount" {% if cfg.warn_cross_mount %}checked{% endif %}><label for="wcm">Show the “slow moves” note when an inbox and the sorted root are on different mounts (switch off when they are different shares of one NAS)</label></div>
   <label for="f-scan_interval_min">Scan interval (minutes)</label><input type="number" name="scan_interval_min" id="f-scan_interval_min" value="{{ cfg.scan_interval_min }}">
 </div>
 

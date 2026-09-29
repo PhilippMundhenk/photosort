@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import random
 import statistics
+import sys
 import time
 from datetime import timedelta
 from pathlib import Path
@@ -28,11 +29,16 @@ from tests import synth
 from tests.synth import HOME, LISBON, SEVILLE, T0
 
 MEASURED: dict[str, float] = {}
+# the coverage tracer (the gated suite) makes every Python line several times slower and turns
+# the worker thread into a GIL hog; the bounds are for the code, so they widen under a tracer
+TRACED = 4.0 if sys.gettrace() is not None else 1.0
 
 
 def _report(name: str, seconds: float, bound: float) -> None:
     MEASURED[name] = seconds
-    print(f"\n  perf  {name:<44} {seconds * 1000:8.0f} ms   (bound {bound * 1000:.0f} ms)")
+    bound *= TRACED
+    note = ", traced" if TRACED > 1 else ""
+    print(f"\n  perf  {name:<44} {seconds * 1000:8.0f} ms   (bound {bound * 1000:.0f} ms{note})")
     assert seconds < bound, f"{name}: {seconds:.2f} s exceeds {bound} s"
 
 
@@ -196,3 +202,40 @@ def test_reading_the_tail_of_a_huge_event_log_is_quick(data_dir):
     rows = events.read(limit=300)
     _report("events.read(limit=300) on 300k events", time.perf_counter() - t0, 0.5)
     assert len(rows) == 300
+
+
+def test_pages_stay_quick_while_a_big_move_runs(client, cfg):
+    """Approve a 3000-photo trip and, while the worker moves it, time the review page, the
+    dashboard and the status poll: the user must not notice the move."""
+    lib = synth.Library(cfg)
+    a = Path(cfg.inboxes[0]["path"])
+    day = T0 + timedelta(days=3)
+    for i in range(3000):
+        lib.photo(a, day + timedelta(minutes=10 * i), LISBON)
+    lib.photo(a, day + timedelta(days=25), HOME)
+    for i in range(300):
+        lib.photo(a, T0 + timedelta(days=60, hours=6 * i), HOME)
+    c = config.load()
+    c.dry_run, c.generate_thumbnails = False, False      # no in-process prefetch competing for the GIL
+    config.save(c)                                       # (production decodes in a paced helper process)
+    main.run_pipeline("test")
+    trip = next(p for p in cluster.load_proposals().values() if p["kind"] == "trip")
+    t0 = time.perf_counter()
+    r = client.post(f"/proposal/{trip['id']}/approve")
+    _report("POST approve (3000-photo trip)", time.perf_counter() - t0, 1.0)
+    assert r.status_code == 303
+    lat: dict[str, list[float]] = {"/review": [], "/": [], "/everyday": [], "/api/status": []}
+    while trip["id"] in main._applying or trip["id"] in list(main._apply_queue.queue):
+        for path in lat:
+            t0 = time.perf_counter()
+            assert client.get(path).status_code == 200
+            lat[path].append(time.perf_counter() - t0)
+        if sum(len(v) for v in lat.values()) > 400:
+            break
+    main.wait_for_apply()
+    assert lat["/review"], "the move was over before a single page was timed"
+    for path, times in lat.items():
+        times.sort()
+        p95 = times[int(len(times) * 0.95) - 1] if len(times) > 1 else times[0]
+        _report(f"{path} p95 while moving ({len(times)} calls)", p95, 0.3 if path == "/api/status" else 1.5)
+    assert cluster.load_proposals()[trip["id"]]["status"] == "applied"

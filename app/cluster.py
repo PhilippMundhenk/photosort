@@ -133,10 +133,10 @@ def _records_key(cfg: Config) -> tuple:
 def _record_for(cfg: Config, path: str) -> dict | None:
     """One record as load_records would build it, or None if it is gone or not sortable."""
     p = Path(path)
-    if not p.exists():
-        return None
     hit = next(((n, f) for n, f in inbox_dirs(cfg) if p.is_relative_to(f)), None)
-    if hit is None:
+    if hit is None:                           # a record in the sorted tree: never part of the timeline
+        return None                           # (and no stat on the share to find that out)
+    if not p.exists():
         return None
     name, folder = hit
     rec = ingest.read_sidecar(p, cfg)
@@ -164,12 +164,21 @@ def load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
         stale_ok = (busy and _records_cache["key"] == key and not ch["all"]
                     and time.time() - _records_cache["built"] < REFRESH_WHILE_BUSY_S)
         if _records_cache["key"] != key or ch["all"]:
-            ch["all"], ch["paths"] = False, set()   # cleared first: a record written while the load runs
-            recs, skipped = _load_records(cfg)      # stays noted and is patched in on the next call
+            ch["all"], ch["paths"], ch["gone"] = False, set(), set()   # cleared first: a record written
+            recs, skipped = _load_records(cfg)      # while the load runs stays noted, patched in next time
             _records_cache.update(key=key, recs=recs, skipped=skipped, filled=None, built=time.time())
+        elif ch["gone"] and not ch["paths"]:
+            # photos moved away (a cluster applied, everyday photos moved): one pass over the cache,
+            # nothing read from the share; the GPS fill of the others stays valid
+            gone = set(ch["gone"])
+            ch["gone"] = set()
+            for k in ("recs", "skipped", "filled"):
+                if _records_cache[k] is not None:
+                    _records_cache[k] = [r for r in _records_cache[k] if r["path"] not in gone]
+            _records_cache["built"] = time.time()
         elif ch["paths"] and not stale_ok:
-            paths = set(ch["paths"])
-            ch["paths"] = set()
+            paths = set(ch["paths"]) | set(ch["gone"])
+            ch["paths"], ch["gone"] = set(), set()
             recs = [r for r in _records_cache["recs"] if r["path"] not in paths]
             skipped = [r for r in _records_cache["skipped"] if r["path"] not in paths]
             for path in paths:

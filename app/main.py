@@ -269,7 +269,7 @@ async def _dry_run_refused(request: Request, exc: mover.DryRun):
 def render(request: Request, name: str, **ctx):
     cfg = config.load()
     ctx.update(request=request, cfg=cfg, state=_state, page=name.split(".")[0], v=STATIC_VERSION,
-               mount_note=mover.cross_mount_note(cfg))
+               mount_note=mover.cross_mount_note(cfg) if cfg.warn_cross_mount else None)
     return tpl.TemplateResponse(request, name, ctx)
 
 
@@ -431,6 +431,16 @@ def settings_sidecars(action: str):
         return RedirectResponse("/settings", status_code=303)
     events.log("settings", changed=[f"sidecars:{action}"], **st)
     return RedirectResponse("/settings?msg=" + quote(msg), status_code=303)
+
+
+@app.post("/settings/hide_mount_note")
+def settings_hide_mount_note(back: str = Form("/")):
+    """The button on the "slow moves" note: the same as unticking the switch in Settings."""
+    cfg = config.load()
+    cfg.warn_cross_mount = False
+    config.save(cfg)
+    events.log("settings", changed=["warn_cross_mount"], warn_cross_mount=False)
+    return RedirectResponse(back if back.startswith("/") and not back.startswith("//") else "/", status_code=303)
 
 
 @app.post("/settings/detect_home")

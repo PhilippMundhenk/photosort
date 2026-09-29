@@ -27,7 +27,8 @@
   <a id="busy-hint" href="" hidden></a>
 </div>
 <main>
-{% if mount_note and page in ('dashboard', 'review', 'settings') %}<div class="warnbox"><b>Slow moves:</b> {{ mount_note }}</div>{% endif %}
+{% if mount_note and page in ('dashboard', 'review', 'settings') %}<div class="warnbox"><b>Slow moves:</b> {{ mount_note }}
+  <form method="post" action="/settings/hide_mount_note" class="inline"><input type="hidden" name="back" value="{{ request.url.path }}"><button class="secondary small" title="switches the note off in Settings">hide this note</button></form></div>{% endif %}
 {% block content %}{% endblock %}
 </main>
 <script src="/static/ui.js?v={{ v }}" defer></script>

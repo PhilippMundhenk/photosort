@@ -86,6 +86,7 @@ class Config:
 
     # Thumbnails: the NAS's own (Synology @eaDir pattern) are used when present; otherwise they are
     # generated into <data>/thumbs (Pillow; exiftool preview for RAW; one ffmpeg frame for videos)
+    warn_cross_mount: bool = True         # the "slow moves" note when inbox and root are on different mounts
     thumb_pattern: str = "@eaDir/{name}/SYNOPHOTO_THUMB_M.jpg"
     generate_thumbnails: bool = True
 
