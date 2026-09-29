@@ -121,7 +121,7 @@
 
 <div class="card" data-level="expert"{{ lv('expert') }}>
   <h2 style="margin-top:0">Rules</h2>
-  <div class="muted small">The clustering rules as YAML (see <code>app/rules.py</code> for the vocabulary). Empty: the rules built from the fields above. A block given here replaces that block of the defaults; the rest stays. A ruleset that does not validate is not saved.</div>
+  <div class="muted small">The clustering rules as YAML (see <code>app/rules.py</code> for the vocabulary). Empty: the rules built from the fields above. A rule list given here replaces that list of the defaults, a parameter left out keeps its default; the rest stays. A ruleset that does not validate is not saved.</div>
   <label for="f-rules">Custom rules{% if cfg.rules %} <span class="badge warn">in force — the thresholds above do not apply</span>{% endif %}</label>
   <textarea name="rules" id="f-rules" rows="10" spellcheck="false" placeholder="excursion_rules:&#10;  - {name: trip, kind: trip, when: {span_hours_min: 20, located_min: 3}, name_template: '{span} {places}', ongoing_days: 4}&#10;  - {name: day out, kind: local, when: {photos_min: 8}, name_template: '{span} {place}', ongoing_days: 1}&#10;burst_rules:&#10;  - {name: party, kind: home, when: {zone: home, photos_min: 12, baseline_factor: 4, weekday: [Saturday, Sunday]}, name_template: '{span} ({media})'}">{{ rules_text }}</textarea>
   <details><summary class="small muted">rules in force now</summary><pre class="small">{{ rules_in_force }}</pre></details>
