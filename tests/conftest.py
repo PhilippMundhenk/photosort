@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -38,8 +39,15 @@ def data_dir() -> Path:
         with main._lock:                   # nor a pipeline run a previous test's scheduler kicked off:
             pass                           # it would write its proposals into the wiped dir
     d = config.DATA_DIR
-    if d.exists():
-        shutil.rmtree(d)
+    for attempt in range(3):               # a thumbnail written by a worker finishing this instant
+        try:
+            if d.exists():
+                shutil.rmtree(d)
+            break
+        except OSError:
+            if attempt == 2:
+                raise
+            time.sleep(0.5)
     d.mkdir(parents=True)
     return d
 

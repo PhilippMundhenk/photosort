@@ -174,7 +174,7 @@ def test_full_review_flow(server, page):
     page.evaluate("window.__stay = 1")
     moving = page.locator(f"#{props['trip']['id']}")
     expect(moving.locator(".badge.ok")).to_have_text("moved", timeout=60_000)  # shown in place when done
-    expect(page.locator("#busy-hint")).to_be_visible()                          # a reload is offered, not forced
+    expect(page.locator("#busy-hint")).to_be_hidden()                           # nothing to reload for: it is shown
     assert page.evaluate("window.__stay") == 1
     assert folder.is_dir() and (folder / "manifest.json").exists()
     assert not Path(props["trip"]["photos"][0]["path"]).exists()      # toggled back in above, so it moved
@@ -192,7 +192,7 @@ def test_full_review_flow(server, page):
     page.wait_for_load_state("networkidle")   # Windows cannot move files the browser is still reading
     page.locator(f"#{props['home']['id']}").get_by_role("button", name="Approve & move").click()
     expect(page.locator(f"#{props['home']['id']} .badge.ok")).to_have_text("moved", timeout=60_000)
-    page.locator("#busy-hint").click()                                          # reload, on request
+    page.reload()                                                               # the named-bursts list is new
     expect(page.get_by_role("heading", name="Bursts waiting for a name (1)")).to_be_visible()
     name_box = page.get_by_placeholder("What was this?")
     name_box.fill("2026-06-30 Hannas Geburtstag")

@@ -152,3 +152,66 @@ def test_deleting_the_proposals_file_resets_the_counts_too(data_dir):
     cluster.PROPOSALS_PATH.unlink()
     assert cluster.load_proposals() == {}
     assert cluster.status_counts() == {"pending": 0, "approved": {}}
+
+
+def test_moved_away_records_leave_the_cache_without_touching_the_share(cfg, library, monkeypatch):
+    """A move deletes thousands of records; the next page load must drop them from the cache in
+    one pass, not stat every one of them on the share."""
+    cluster.load_records(cfg)
+    cluster.records_filled(cfg)
+    real = Path.exists
+    stats = []
+    monkeypatch.setattr(Path, "exists", lambda self: stats.append(str(self)) or real(self))
+    for p in library.paths[:40]:
+        ingest.delete_sidecar(p, cfg)                                       # what _transfer does per file
+    assert len(ingest.changed["gone"]) == 40 and not ingest.changed["paths"]
+    stats.clear()
+    recs, _ = cluster.load_records(cfg)
+    assert len(recs) == len(library.paths) - 40
+    assert not any(str(p) in s for p in library.paths[:40] for s in stats)   # no stat of a gone file
+    assert cluster._records_cache["filled"] is not None                     # and no refill
+    ingest.write_sidecar(library.paths[50], ingest.read_sidecar(library.paths[50], cfg), cfg)
+    ingest.delete_sidecar(library.paths[51], cfg)
+    recs, _ = cluster.load_records(cfg)                                     # a write and a delete together
+    assert len(recs) == len(library.paths) - 41
+
+
+def test_records_in_the_sorted_tree_are_ignored_without_a_stat(cfg, library, monkeypatch):
+    real = Path.exists
+    stats = []
+    monkeypatch.setattr(Path, "exists", lambda self: stats.append(str(self)) or real(self))
+    assert cluster._record_for(cfg, str(Path(cfg.root) / "2026-06 X" / "IMG_9.jpg")) is None
+    assert stats == []
+
+
+def test_cluster_list_never_blocks_a_page_on_the_walk(cfg, library, monkeypatch):
+    cluster.run(cfg)
+    local = next(p for p in cluster.load_proposals().values() if p["kind"] == "local")
+    mover.apply(cfg, local, reviewed=True)
+    assert [c["name"] for c in mover.list_clusters(cfg)] == [local["name"]]   # the first list: built now
+    real = mover._list_clusters
+    started = threading.Event()
+
+    def slow(c):
+        started.set()
+        time.sleep(0.5)                                                     # a share that takes its time
+        return real(c)
+    monkeypatch.setattr(mover, "_list_clusters", slow)
+    mover.invalidate_clusters()                                             # a manifest was written meanwhile
+    t0 = time.perf_counter()
+    stale = mover.list_clusters(cfg)
+    assert time.perf_counter() - t0 < 0.4 and [c["name"] for c in stale] == [local["name"]]   # a short wait, old list
+    assert started.wait(2)
+    mover.wait_for_clusters()
+    assert [c["name"] for c in mover.list_clusters(cfg)] == [local["name"]]
+
+
+def test_undo_clears_half_written_temp_files(cfg, library):
+    cluster.run(cfg)
+    local = next(p for p in cluster.load_proposals().values() if p["kind"] == "local")
+    mover.apply(cfg, local, reviewed=True)
+    folder = mover.target_folder(cfg, local)
+    (folder / "IMG_0001.jpg.photosort.json.tmp").write_text("{", encoding="utf-8")   # the kill hit mid-write
+    (folder / "manifest.json.tmp").write_text("{", encoding="utf-8")
+    assert mover.undo(cfg, folder) == local["n"]
+    assert not folder.exists()

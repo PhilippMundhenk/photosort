@@ -240,8 +240,7 @@ async def _session(url: str, data: Path, cfg) -> list[dict]:
         await expect(page.get_by_role("heading", name="Moving (1)")).to_be_visible()
         await expect(trip.locator("[data-progress]")).to_contain_text(re.compile(r"\d+ / 2"))
         await expect(trip.locator(".badge.ok")).to_have_text("moved", timeout=120_000)
-        await page.locator("#busy-hint").click()
-        await follow()
+        await go(url + "/review")
 
         # the tab hidden and shown again; a run finishing while the page is open
         await page.evaluate("Object.defineProperty(document, 'hidden', {value: true, configurable: true});"
@@ -279,7 +278,7 @@ async def _session(url: str, data: Path, cfg) -> list[dict]:
         await follow()
         await expect(page.locator("[data-progress=everyday]")).to_contain_text(re.compile(r"\d+ / 1"))
         await expect(page.locator("[data-progress=everyday]")).to_have_text("done", timeout=120_000)
-        await expect(page.locator("#busy-hint")).to_be_visible()
+        await expect(page.locator("#busy-hint")).to_be_hidden()
 
         # cluster page: rename on leaving the field, remove a photo (declined, then done), put back
         folder = Path(cfg.root) / "2026-06-27 Barockstadt"

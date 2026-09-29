@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import json
 import shutil
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -294,7 +295,10 @@ def undo(cfg: Config, folder: Path) -> int:
     (folder / MANIFEST).unlink(missing_ok=True)
     invalidate_clusters()
     for sub in sorted(folder.rglob("*"), key=lambda x: -len(x.parts)):
-        if sub.is_dir():
+        ours = ".photosort.json" in sub.name or sub.name.startswith(MANIFEST)
+        if sub.is_file() and sub.name.endswith(".tmp") and ours:
+            sub.unlink(missing_ok=True)        # a record or manifest half-written when the power went
+        elif sub.is_dir():
             with contextlib.suppress(OSError):
                 sub.rmdir()
     with contextlib.suppress(OSError):
@@ -424,31 +428,66 @@ def cross_mount_note(cfg: Config) -> str | None:
             if apart:
                 note = (f"{', '.join(apart)} and {cfg.root} are on different mounts: every move is a copy "
                         f"through the container and back over the network. Mount their common parent once "
-                        f"(PHOTOS_BASE in .env) so a move is a rename.")
+                        f"(PHOTOS_BASE in .env) so a move is a rename. Different shares on one NAS cannot "
+                        f"share a mount; then switch this note off in Settings.")
     except OSError:
         note = None
     _mount_cache.update(key=key, at=time.time(), note=note)
     return note
 
 
-_clusters_cache: dict = {"key": None, "at": 0.0, "value": []}
+_clusters_cache: dict = {"key": None, "at": 0.0, "value": [], "dirty": False, "refresher": None}
+_clusters_lock = threading.Lock()
 CLUSTERS_TTL_S = 300.0
+CLUSTERS_WAIT_S = 0.2            # a page waits this long for a refresh in progress (a local disk is done
+                                 # by then; a share is not, and the page gets the last list instead)
 
 
 def invalidate_clusters() -> None:
-    _clusters_cache["at"] = 0.0
+    _clusters_cache["dirty"] = True
+
+
+def wait_for_clusters(timeout: float = 30) -> None:
+    """Block until a background refresh of the cluster list is done (tests)."""
+    t = _clusters_cache.get("refresher")
+    if t is not None and t.is_alive():
+        t.join(timeout)
 
 
 def list_clusters(cfg: Config) -> list[dict]:
     """Every applied cluster (folder with a manifest) under the root. Walking the whole sorted
-    tree on a network share takes seconds, so the result is kept for a while and dropped by
-    every function here that writes a manifest."""
+    tree on a network share takes seconds, and a move writes its manifest every few files, so a
+    page never waits for the walk: it gets the last list at once and a background thread brings
+    it up to date (only the very first list is built in the request)."""
     key = (cfg.root, cfg.unnamed_dir)
-    if _clusters_cache["key"] == key and time.time() - _clusters_cache["at"] < CLUSTERS_TTL_S:
-        return [dict(m) for m in _clusters_cache["value"]]
+    with _clusters_lock:
+        fresh = _clusters_cache["key"] == key and not _clusters_cache["dirty"] \
+            and time.time() - _clusters_cache["at"] < CLUSTERS_TTL_S
+        have = _clusters_cache["key"] == key
+        refresher = _clusters_cache["refresher"]
+        if not fresh and have and (refresher is None or not refresher.is_alive()):
+            refresher = threading.Thread(target=_refresh_clusters, args=(cfg, key), name="clusters", daemon=True)
+            _clusters_cache["refresher"] = refresher
+            refresher.start()
+    if have:
+        if not fresh and refresher is not None:
+            refresher.join(CLUSTERS_WAIT_S)
+        with _clusters_lock:
+            return [dict(m) for m in _clusters_cache["value"]]
     out = _list_clusters(cfg)
-    _clusters_cache.update(key=key, at=time.time(), value=out)
+    with _clusters_lock:
+        _clusters_cache.update(key=key, at=time.time(), value=out, dirty=False)
     return [dict(m) for m in out]
+
+
+def _refresh_clusters(cfg: Config, key: tuple) -> None:
+    try:
+        _clusters_cache["dirty"] = False              # changes during the walk make it dirty again
+        out = _list_clusters(cfg)
+        with _clusters_lock:
+            _clusters_cache.update(key=key, at=time.time(), value=out)
+    except Exception:  # noqa: BLE001
+        _clusters_cache["dirty"] = True
 
 
 def _list_clusters(cfg: Config) -> list[dict]:

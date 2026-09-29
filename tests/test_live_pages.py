@@ -183,8 +183,20 @@ def test_pages_warn_when_inbox_and_root_are_on_different_mounts(client, library,
     note = mover.cross_mount_note(cfg)
     assert note and "different mounts" in note and "PHOTOS_BASE" in note
     for page in ("/", "/review", "/settings"):
-        assert "Slow moves" in client.get(page).text
+        assert "Slow moves" in client.get(page).text and "hide this note" in client.get(page).text
     assert "Slow moves" not in client.get("/everyday").text
+    assert "switch this note off in Settings" in client.get("/").text
+    r = client.post("/settings/hide_mount_note", data={"back": "/review"})   # the button on the note
+    assert r.status_code == 303 and r.headers["location"] == "/review"
+    assert config.load().warn_cross_mount is False
+    for page in ("/", "/review", "/settings"):
+        assert "Slow moves" not in client.get(page).text
+    assert 'id="wcm" name="warn_cross_mount" >' in client.get("/settings").text
+    assert client.post("/settings/hide_mount_note", data={"back": "//evil"}).headers["location"] == "/"
+    cfg = config.load()
+    cfg.warn_cross_mount = True                                          # ticked again in Settings: shown again
+    config.save(cfg)
+    assert "Slow moves" in client.get("/").text
 
 
 def test_a_failed_move_is_not_retried_by_every_run(client, library, monkeypatch):

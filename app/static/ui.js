@@ -179,8 +179,7 @@
       var failed = what.indexOf("failed") === 0;
       var badge = card.querySelector(".badge.warn") || card.querySelector(".badge:not(.trip):not(.local):not(.home)");
       if (badge) { badge.textContent = failed ? "failed" : "moved"; badge.className = "badge " + (failed ? "bad" : "ok"); }
-      el.textContent = failed ? what : "done";
-      offerReload("Files were moved");
+      el.textContent = failed ? what : "done";                          // the card says it; no reload offer
     }
     function progressCards(s) {
       document.querySelectorAll("[data-progress]").forEach(function (el) {

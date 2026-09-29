@@ -253,7 +253,7 @@ def test_settings_reflects_every_option(client, library):
     assert "<code>phone-a=" in html and "Found now:" in html
     cfg.dry_run = cfg.copy_instead_of_move = cfg.auto_apply_trips = cfg.auto_apply_local = True
     cfg.auto_apply_home = cfg.auto_apply_everyday = cfg.write_xmp_sidecar = True
-    cfg.subfolder_by_source = cfg.generate_thumbnails = cfg.name_multiday_by_month = False
+    cfg.subfolder_by_source = cfg.generate_thumbnails = cfg.name_multiday_by_month = cfg.warn_cross_mount = False
     cfg.sidecar_mode, cfg.sidecar_cleanup, cfg.everyday_layout = "beside", "never", "leave"
     cfg.inbox_root = str(Path(cfg.root).parent / "nowhere")
     cfg.inboxes = []
@@ -261,7 +261,7 @@ def test_settings_reflects_every_option(client, library):
     html = client.get("/settings").text
     for box in ("dry", "copy", "at", "al", "ah", "ae", "xmp"):
         assert f'id="{box}"' in html and html.split(f'id="{box}"')[1].split(">")[0].count("checked") == 1
-    for box in ("sbs", "gt", "nmm"):
+    for box in ("sbs", "gt", "nmm", "wcm"):
         assert html.split(f'id="{box}"')[1].split(">")[0].count("checked") == 0
     assert 'value="beside" selected' in html and 'value="never" selected' in html
     assert "layout is <code>leave</code>, so nothing is moved either way" in html

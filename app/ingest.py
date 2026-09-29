@@ -32,14 +32,19 @@ log = logging.getLogger("photosort.ingest")
 # record): every write/delete names its photo, scans name the files that appeared or vanished,
 # migrations and purges invalidate everything.
 generation = 0
-changed: dict = {"all": True, "paths": set()}
+changed: dict = {"all": True, "paths": set(), "gone": set()}
 
 
-def _bump(path: Path | None = None) -> None:
+def _bump(path: Path | None = None, gone: bool = False) -> None:
+    """Note a change for the record cache. `gone`: the record was deleted (its photo moved
+    away), so the cache only has to drop it, without a stat on the share for each of the
+    thousands of files a big move takes away."""
     global generation
     generation += 1
     if path is None:
         changed["all"] = True
+    elif gone:
+        changed["gone"].add(str(path))
     else:
         changed["paths"].add(str(path))
 
@@ -125,7 +130,7 @@ def delete_sidecar(photo: Path, cfg: Config | None = None) -> bool:
         return False
     sp.unlink()
     _prune_empty(sp.parent)
-    _bump(photo)
+    _bump(photo, gone=True)
     return True
 
 
