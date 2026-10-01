@@ -483,7 +483,7 @@ def scan(cfg: Config, force: bool = False, progress=None) -> dict:
     rezone = force or _zoned_with() != key
     complete = True
     plan: list[tuple[str, Path, list[Path], list[Path]]] = []
-    for name, folder in inbox_dirs(cfg):
+    for name, folder in inbox_dirs(cfg, fresh=True):
         if not folder.exists():
             stats["missing"].append(str(folder))
             if _known.pop(str(folder), None) is not None:  # the share dropped out: its records leave the

@@ -322,6 +322,7 @@ def test_thumb_and_media_endpoints_handle_unreadable_and_huge_files(client, libr
     real_resolve = Path.resolve
     monkeypatch.setattr(Path, "resolve", lambda self, *a, **k: (_ for _ in ()).throw(OSError("loop")))
     assert client.get("/thumb", params={"path": str(photo)}).headers["content-type"].startswith("image/svg+xml")
+    main._roots_cache["key"] = None                                          # the roots are resolved anew
     monkeypatch.setattr(Path, "resolve", lambda self, *a, **k: real_resolve(self) if str(self) == str(photo)
                         else (_ for _ in ()).throw(OSError("root")))
     assert client.get("/thumb", params={"path": str(photo)}).headers["content-type"].startswith("image/svg+xml")

@@ -41,8 +41,8 @@ def server(tmp_path_factory):
     for i in range(1500):                                                 # everyday, four a day, no bursts
         lib.photo(inbox, synth.T0 - timedelta(days=400) + timedelta(hours=6 * i), synth.HOME)
     lib.video(inbox, synth.T0 + timedelta(days=5, hours=12), synth.LISBON)   # a video inside the trip
-    with serve(base, lib) as s:
-        yield s
+    with serve(base, lib, {"PHOTOSORT_REVIEW_INLINE": "20"}) as s:     # a small budget of inline photos:
+        yield s                                                         # the second open card loads lazily
 
 
 def _share(entries: list[dict], source: str) -> tuple[float, list[str]]:
@@ -159,6 +159,15 @@ async def _session(url: str, data: Path, cfg) -> list[dict]:
         await _arun(page, url)
         await follow()
         await _await(page, lambda: _status(url)["pending"] == 3 and not _status(url)["state"]["running"])
+
+        # an open card beyond the page's budget of inline photos loads its first ones when it scrolls near
+        props = _proposals(data)
+        await go(url + "/review?open=" + props["trip"]["id"])
+        lazy = page.locator(f"#{props['trip']['id']}")
+        await expect(lazy.locator("details[data-lazy]")).to_have_count(1)
+        await lazy.scroll_into_view_if_needed()
+        await expect(lazy.locator("figure")).to_have_count(80)
+        await expect(lazy.locator("[data-more]")).to_contain_text("more)")
 
         # review: toggles by click and key, a failed request, the viewer
         await go(url + "/review")

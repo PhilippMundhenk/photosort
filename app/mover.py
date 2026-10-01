@@ -5,12 +5,13 @@ recorded in the target folder's manifest.json so it can be undone and later serv
 eval set."""
 from __future__ import annotations
 
+import bisect
 import contextlib
 import json
 import shutil
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import cluster, events, ingest, journal
@@ -353,9 +354,11 @@ def everyday_movable(cfg: Config, min_age_days: float, recs: list[dict] | None =
     `recs` lets a page that already has the everyday records pass them in."""
     if cfg.everyday_layout == "leave":
         return []
-    cutoff = datetime.now(timezone.utc).timestamp() - min_age_days * 86400
-    recs = cluster.everyday_records(cfg) if recs is None else recs
-    return [r for r in recs if r["_t"].timestamp() <= cutoff]
+    cutoff = datetime.now(timezone.utc) - timedelta(days=min_age_days)
+    if recs is None:                                   # the cache's list: sorted by time, so the old
+        recs = cluster.everyday_records(cfg)           # ones are a prefix (the page asks on every view)
+        return recs[:bisect.bisect_right(recs, cutoff, key=lambda r: r["_t"])]
+    return [r for r in recs if r["_t"] <= cutoff]
 
 
 def apply_everyday(cfg: Config, min_age_days: float, progress=None) -> int:

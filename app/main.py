@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+import os
 import queue
 import re
 import threading
@@ -17,6 +18,8 @@ from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup
+from markupsafe import escape as esc
 
 from . import cluster, config, events, geo, ingest, journal, mover, rules, thumbs
 
@@ -281,7 +284,34 @@ def _pending(props: dict) -> list[dict]:
     return out
 
 
+def figures_html(photos: list[dict], excluded=()) -> Markup:
+    """One figure per photo of a proposal, as markup. No form control per photo (a password
+    manager watches every input and button). Written out by hand: the template engine took
+    80 microseconds per figure, and a review page has hundreds of them."""
+    out = []
+    for ph in photos:
+        path, file_, zone, ts = ph["path"], esc(ph["file"]), esc(ph["zone"]), ph["ts"]
+        place, q, when = ph.get("place") or "", quote(str(path), safe="/"), esc(ts[:16].replace("T", " "))
+        classes = ("excluded" if path in excluded else "") + " " + ("uncertain" if ph.get("uncertain") else "")
+        badge = '<span class="badge">video</span> ' if ph.get("media") == "video" else ""
+        source = f" · {esc(ph['source'])}" if ph.get("source") else ""
+        out.append(
+            f'<figure class="{classes}" data-path="{esc(path)}">'
+            f'<span class="pick" role="button" tabindex="0" title="{file_} · {zone} · {esc(place)} · conf '
+            f'{esc(ph.get("conf"))} · click to exclude/include"><img src="/thumb?path={q}" loading="lazy" alt="">'
+            f'</span><span class="view" role="button" tabindex="0" data-view="/media?path={q}" '
+            f'data-type="{esc(ph.get("media"))}" data-title="{file_} · {when} · {esc(place or ph["zone"])}" '
+            f'title="view full size">&#x2921;</span><figcaption>{badge}{esc(ts[5:16].replace("T", " "))} {zone}'
+            f'{source}</figcaption></figure>')
+    return Markup("".join(out))
+
+
+tpl.env.globals["figures"] = figures_html
+
 REVIEW_INLINE = 80                                    # photos rendered with the page for an open card
+# ...and for the whole page: open cards beyond this budget arrive empty and load their first photos
+# when they scroll near (a hundred open bursts were eight thousand figures and seconds on a small box)
+REVIEW_INLINE_TOTAL = int(os.environ.get("PHOTOSORT_REVIEW_INLINE", "400"))
 PHOTOS_CHUNK = 200                                    # photos per lazily loaded chunk
 
 
@@ -293,7 +323,7 @@ def proposal_photos(request: Request, pid: str, offset: int = 0, limit: int = PH
         return HTMLResponse("", status_code=404)
     offset, limit = max(0, offset), max(1, min(limit, 1000))
     photos = pr["photos"][offset:offset + limit]
-    resp = tpl.TemplateResponse(request, "_figures.html", {"photos": photos, "ex": set(pr.get("excluded", []))})
+    resp = HTMLResponse(str(figures_html(photos, set(pr.get("excluded", [])))))
     resp.headers["X-Total"] = str(len(pr["photos"]))
     resp.headers["X-Next"] = str(offset + len(photos)) if offset + len(photos) < len(pr["photos"]) else ""
     return resp
@@ -319,23 +349,19 @@ def review(request: Request, open: str = ""):
     approved_all = [p for p in props.values() if p["status"] == "approved"]
     return render(request, "review.html", pending=_pending(props), unnamed=unnamed, open_id=open,
                   applying=sorted(applying, key=lambda p: p["start"], reverse=True),
-                  n_approved=len(approved_all), inline=REVIEW_INLINE)
-
-
-def _month_key(ts: str) -> str:
-    return ts[:7]
+                  n_approved=len(approved_all), inline=REVIEW_INLINE, inline_total=REVIEW_INLINE_TOTAL)
 
 
 @app.get("/everyday", response_class=HTMLResponse)
 def everyday(request: Request, month: str = "", q: str = ""):
     cfg = config.load()
     props = cluster.load_proposals()
-    recs = cluster.everyday_records(cfg, props)
+    recs = cluster.everyday_records(cfg)               # cached until a record or a proposal changes
     q = q.strip()
     if q:                                              # find a photo by file name, whatever its month
         needle = q.lower()
         recs = [r for r in recs if needle in r["file"].lower()][:SEARCH_LIMIT]
-    months_c = Counter(_month_key(r["ts"]) for r in recs)
+    months_c = Counter([r["ts"][:7] for r in recs])
     months = [{"key": k, "n": months_c[k]} for k in sorted(months_c)]
     if not month and months:
         month = months[-1]["key"]
@@ -345,7 +371,7 @@ def everyday(request: Request, month: str = "", q: str = ""):
     next_month = keys[idx + 1] if 0 <= idx < len(keys) - 1 else None
     days: dict[str, list] = {}
     for r in recs:
-        if q or _month_key(r["ts"]) == month:
+        if q or r["ts"].startswith(month):
             days.setdefault(r["ts"][:10], []).append(r)
     out = []
     for date in sorted(days, reverse=True):
@@ -358,7 +384,7 @@ def everyday(request: Request, month: str = "", q: str = ""):
                     "photos": [{"path": r["path"], "file": r["file"], "ts": r["ts"], "zone": r["zone"],
                                 "media": r.get("media", "photo"), "place": (r.get("place") or {}).get("place")}
                                for r in rs]})
-    movable = len(mover.everyday_movable(cfg, cfg.everyday_keep_days, recs=recs))
+    movable = len(mover.everyday_movable(cfg, cfg.everyday_keep_days))   # of all, whatever is searched
     moved = sorted((p for p in props.values() if p["status"] in ("applied", "approved")),
                    key=lambda p: p["start"], reverse=True)
     return render(request, "everyday.html", months=months, month=month, days=out, pending=_pending(props),
@@ -860,14 +886,28 @@ def _allowed(cfg: config.Config, p: Path) -> bool:
         rp = p.resolve()
     except OSError:
         return False
-    roots = [Path(cfg.root)] + [folder for _, folder in config.inbox_dirs(cfg)]
-    for r in roots:
+    return any(rp.is_relative_to(r) for r in _served_roots(cfg))
+
+
+_roots_cache: dict = {"key": None, "at": 0.0, "value": []}
+
+
+def _served_roots(cfg: config.Config) -> list[Path]:
+    """The sorted root and the inboxes, resolved. A page asks once per thumbnail, and resolving
+    walks every path component on the share: kept for a few seconds."""
+    folders = [Path(cfg.root)] + [folder for _, folder in config.inbox_dirs(cfg)]
+    key = tuple(str(f) for f in folders)
+    now = time.monotonic()
+    if _roots_cache["key"] == key and now - _roots_cache["at"] < config.DISCOVERY_TTL_S:
+        return _roots_cache["value"]
+    value = []
+    for f in folders:
         try:
-            if rp.is_relative_to(r.resolve()):
-                return True
+            value.append(f.resolve())
         except OSError:
             continue
-    return False
+    _roots_cache.update(key=key if len(value) == len(folders) else None, at=now, value=value)
+    return value
 
 
 def _read_small(p: Path, limit: int = 3_000_000) -> bytes | None:

@@ -123,15 +123,15 @@ def test_everything_on_twenty_thousand_photos(client, big):
     assert r.status_code == 200
     r = _t("GET / (dashboard)", get("/"), 0.15, repeat=5)
     assert r.status_code == 200
-    r = _t("GET /review (17 proposals, 12k photos)", get("/review"), 0.4, repeat=5)
+    r = _t("GET /review (17 proposals, 12k photos)", get("/review"), 0.15, repeat=5)
     assert r.status_code == 200 and len(r.content) < 1_000_000, len(r.content)
     r = _t("GET /proposal/<trip>/photos (chunk of 200)", get(f"/proposal/{trip['id']}/photos"), 0.1, repeat=5)
     assert r.status_code == 200
-    r = _t("GET /review?open=<trip>", get("/review", params={"open": trip["id"]}), 0.4, repeat=3)
+    r = _t("GET /review?open=<trip>", get("/review", params={"open": trip["id"]}), 0.15, repeat=3)
     assert r.status_code == 200
-    r = _t("GET /everyday (latest month)", get("/everyday"), 0.5, repeat=5)
+    r = _t("GET /everyday (latest month)", get("/everyday"), 0.15, repeat=5)
     assert r.status_code == 200
-    r = _t("GET /everyday?month=<busy month>", get("/everyday", params={"month": "2024-06"}), 0.5, repeat=3)
+    r = _t("GET /everyday?month=<busy month>", get("/everyday", params={"month": "2024-06"}), 0.2, repeat=3)
     assert r.status_code == 200
     _t("GET /clusters (none yet)", get("/clusters"), 0.1, repeat=5)
     _t("GET /log", get("/log"), 0.1, repeat=5)

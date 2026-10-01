@@ -361,6 +361,22 @@ its id; the larger half keeps it when a late home photo splits an old one in two
   the folder without an entry, so undo always covers everything (a browser test kills the server
   in the middle of a 2 500-file move and restarts it).
 
+### A page view must not cost what the library costs (October 2026)
+
+On the 20 000-photo library the Review and Everyday pages still took a second or two on the
+NAS although the harness on a fast machine showed tens of milliseconds: the work was CPU, and
+a small box is five to ten times slower. A profile named it. Everyday copied all twenty
+thousand records three times per view (once to read them, once after the GPS fill, once
+more) and walked every proposal's photos to subtract them; Review rendered every photo of
+every open card through the template engine at 80 microseconds a figure, and a queue of a
+hundred open bursts is eight thousand figures. Every request, and every thumbnail, also
+listed and resolved the inbox folders on the share. Now: readers share the cached records
+(only code that edits gets copies), the everyday list is kept until a record or the proposals
+file changes, figures are written out by a plain function, the page has a budget of inline
+photos (400; the other open cards load their first photos when they scroll near), and the
+inbox folders and the resolved roots are remembered for ten seconds (a scan always looks
+afresh). The harness bounds for both pages are 150 ms.
+
 ## 8. Feedback loop and calibration (historical, see section 10)
 
 Every model decision is logged with confidence and id. Rejecting a proposal, moving a photo
