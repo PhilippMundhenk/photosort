@@ -5,6 +5,7 @@ import copy
 import hashlib
 import logging
 import os
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -176,6 +177,7 @@ def _coerce(default, value, key: str):
 
 
 def save(cfg: Config) -> None:
+    _discovered["key"] = None                      # the inbox root may have changed
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     tmp = CONFIG_PATH.with_suffix(".tmp")
     tmp.write_text(yaml.safe_dump(cfg.as_dict(), sort_keys=False, allow_unicode=True), encoding="utf-8")
@@ -258,10 +260,24 @@ def discovered_inboxes(cfg: Config) -> list[tuple[str, Path]]:
     return []
 
 
-def inbox_dirs(cfg: Config) -> list[tuple[str, Path]]:
+DISCOVERY_TTL_S = 10.0
+_discovered: dict = {"key": None, "at": 0.0, "value": []}
+
+
+def inbox_dirs(cfg: Config, fresh: bool = False) -> list[tuple[str, Path]]:
+    """The inputs: the explicit list, else the subfolders of the inbox root. Looking those up
+    lists and resolves folders on the share (a dozen round trips), and every page and every
+    thumbnail asks: the answer is kept for a few seconds. A scan asks afresh (`fresh`), so a new
+    device folder or a share that dropped out is noticed there; saving the settings forgets it."""
     if cfg.inboxes:
         return [(i.get("name") or Path(i["path"]).name, Path(i["path"])) for i in cfg.inboxes]
-    return discovered_inboxes(cfg)
+    key = (cfg.inbox_root, cfg.root)
+    now = time.monotonic()
+    if not fresh and _discovered["key"] == key and now - _discovered["at"] < DISCOVERY_TTL_S:
+        return list(_discovered["value"])
+    value = discovered_inboxes(cfg)
+    _discovered.update(key=key if value else None, at=now, value=value)   # "nothing yet" is asked again
+    return list(value)
 
 
 def inboxes_text(cfg: Config) -> str:

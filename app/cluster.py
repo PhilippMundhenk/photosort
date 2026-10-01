@@ -39,7 +39,7 @@ UNCERTAIN_BELOW = 0.7
 # --- persistence ----------------------------------------------------------------
 
 _save_lock = threading.Lock()
-_props_cache: dict = {"stamp": None, "text": "", "counts": None, "parsed": None}
+_props_cache: dict = {"stamp": None, "text": "", "counts": None, "parsed": None, "gen": 0}
 # Every read-modify-write of the proposals: the pages' actions and the run's recompute. Without
 # it a click saved while the run was between reading and writing the file was overwritten.
 proposals_lock = threading.RLock()
@@ -61,7 +61,7 @@ def _props_text() -> str:
                 text = PROPOSALS_PATH.read_text(encoding="utf-8")
             except OSError:
                 return ""
-            _props_cache.update(stamp=stamp, text=text, counts=None, parsed=None)
+            _props_cache.update(stamp=stamp, text=text, counts=None, parsed=None, gen=_props_cache["gen"] + 1)
         return _props_cache["text"]
 
 
@@ -122,7 +122,7 @@ def save_proposals(props: dict[str, dict]) -> None:
         try:
             st = PROPOSALS_PATH.stat()
             _props_cache.update(stamp=(st.st_mtime_ns, st.st_size), text=text, counts=None,
-                                parsed=_copy_proposals(props))
+                                parsed=_copy_proposals(props), gen=_props_cache["gen"] + 1)
         except OSError:
             _props_cache.update(stamp=None, text="", counts=None, parsed=None)
 
@@ -135,7 +135,7 @@ def _dt(s: str, tz=None) -> datetime:
     return d if d.tzinfo else d.replace(tzinfo=tz or timezone.utc)
 
 
-_records_cache: dict = {"key": None, "recs": None, "skipped": None, "filled": None, "built": 0.0}
+_records_cache: dict = {"key": None, "recs": None, "skipped": None, "filled": None, "built": 0.0, "version": 0}
 busy = False                    # set by the pipeline while it scans: page requests then accept a
 REFRESH_WHILE_BUSY_S = 5.0      # cache that is up to this many seconds old instead of re-patching
 
@@ -175,37 +175,47 @@ def load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
     changed record (ingest.changed paths: written, moved, deleted, vanished) is re-read on its
     own. Callers get copies."""
     with _records_lock:                       # one thread rebuilds or patches; the others wait for it
-        key = _records_key(cfg)
-        ch = ingest.changed
-        stale_ok = (busy and _records_cache["key"] == key and not ch["all"]
-                    and time.time() - _records_cache["built"] < REFRESH_WHILE_BUSY_S)
-        if _records_cache["key"] != key or ch["all"]:
-            ch["all"], ch["paths"], ch["gone"] = False, set(), set()   # cleared first: a record written
-            recs, skipped = _load_records(cfg)      # while the load runs stays noted, patched in next time
-            _records_cache.update(key=key, recs=recs, skipped=skipped, filled=None, built=time.time())
-        elif ch["gone"] and not ch["paths"]:
-            # photos moved away (a cluster applied, everyday photos moved): one pass over the cache,
-            # nothing read from the share; the GPS fill of the others stays valid
-            gone = set(ch["gone"])
-            ch["gone"] = set()
-            for k in ("recs", "skipped", "filled"):
-                if _records_cache[k] is not None:
-                    _records_cache[k] = [r for r in _records_cache[k] if r["path"] not in gone]
-            _records_cache["built"] = time.time()
-        elif ch["paths"] and not stale_ok:
-            paths = set(ch["paths"]) | set(ch["gone"])
-            ch["paths"], ch["gone"] = set(), set()
-            recs = [r for r in _records_cache["recs"] if r["path"] not in paths]
-            skipped = [r for r in _records_cache["skipped"] if r["path"] not in paths]
-            for path in paths:
-                rec = _record_for(cfg, path)
-                if rec is None:
-                    continue
-                (recs if rec.get("ts") else skipped).append(rec)
-            recs.sort(key=lambda r: (r["_t"], r["path"]))   # same second: by path, so order and ids never flip
-            borrow_video_offsets(recs)
-            _records_cache.update(recs=recs, skipped=skipped, filled=None, built=time.time())
+        _refresh_records(cfg)
         return [dict(r) for r in _records_cache["recs"]], [dict(r) for r in _records_cache["skipped"]]
+
+
+def _next() -> int:
+    return _records_cache["version"] + 1
+
+
+def _refresh_records(cfg: Config) -> None:
+    """Bring the cache up to date (the caller holds _records_lock). `version` counts its changes:
+    what is derived from the records (the everyday list) is cached against it."""
+    key = _records_key(cfg)
+    ch = ingest.changed
+    stale_ok = (busy and _records_cache["key"] == key and not ch["all"]
+                and time.time() - _records_cache["built"] < REFRESH_WHILE_BUSY_S)
+    if _records_cache["key"] != key or ch["all"]:
+        ch["all"], ch["paths"], ch["gone"] = False, set(), set()   # cleared first: a record written
+        recs, skipped = _load_records(cfg)      # while the load runs stays noted, patched in next time
+        _records_cache.update(key=key, recs=recs, skipped=skipped, filled=None, built=time.time(), version=_next())
+    elif ch["gone"] and not ch["paths"]:
+        # photos moved away (a cluster applied, everyday photos moved): one pass over the cache,
+        # nothing read from the share; the GPS fill of the others stays valid
+        gone = set(ch["gone"])
+        ch["gone"] = set()
+        for k in ("recs", "skipped", "filled"):
+            if _records_cache[k] is not None:
+                _records_cache[k] = [r for r in _records_cache[k] if r["path"] not in gone]
+        _records_cache.update(built=time.time(), version=_next())
+    elif ch["paths"] and not stale_ok:
+        paths = set(ch["paths"]) | set(ch["gone"])
+        ch["paths"], ch["gone"] = set(), set()
+        recs = [r for r in _records_cache["recs"] if r["path"] not in paths]
+        skipped = [r for r in _records_cache["skipped"] if r["path"] not in paths]
+        for path in paths:
+            rec = _record_for(cfg, path)
+            if rec is None:
+                continue
+            (recs if rec.get("ts") else skipped).append(rec)
+        recs.sort(key=lambda r: (r["_t"], r["path"]))   # same second: by path, so order and ids never flip
+        borrow_video_offsets(recs)
+        _records_cache.update(recs=recs, skipped=skipped, filled=None, built=time.time(), version=_next())
 
 
 _records_lock = threading.RLock()
@@ -215,13 +225,20 @@ def records_filled(cfg: Config) -> list[dict]:
     """load_records plus the neighbour GPS fill, cached the same way. The fill runs in one
     thread at a time: with several tabs polling during a scan, every request used to fill its
     own copy of twenty thousand records, and the server looked dead."""
-    with _records_lock:                   # load and fill in one go, from the cache itself: a thread that
-        load_records(cfg)                 # loaded its copy a moment ago (the startup warm-up) must not
+    return [dict(r) for r in _filled_shared(cfg)[0]]
+
+
+def _filled_shared(cfg: Config) -> tuple[list[dict], int]:
+    """The filled records as the cache holds them, and the cache version: for readers that only
+    look (copying twenty thousand dicts per page view was most of the Everyday page's time).
+    The dicts are never edited once filled; a change builds a new list."""
+    with _records_lock:                   # refresh and fill in one go, from the cache itself: a thread that
+        _refresh_records(cfg)             # loaded its copy a moment ago (the startup warm-up) must not
         if _records_cache["filled"] is None:      # fill and cache a list a newer record is missing from
             recs = [dict(r) for r in _records_cache["recs"]]
             fill_gps_from_neighbours(cfg, recs)
             _records_cache["filled"] = recs
-        return [dict(r) for r in _records_cache["filled"]]
+        return _records_cache["filled"], _records_cache["version"]
 
 
 def _load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
@@ -709,12 +726,32 @@ def add_to_proposal(pr: dict, recs: list[dict]) -> int:
     return len(new)
 
 
+_everyday_cache: dict = {"key": None, "value": []}
+
+
 def everyday_records(cfg: Config, props: dict | None = None) -> list[dict]:
-    """Records in no live proposal (pending/ongoing/approved/applied): what the Everyday page shows."""
-    props = load_proposals() if props is None else props
-    taken = {p["path"] for pr in props.values() if pr["status"] in ("pending", "ongoing", "approved", "applied")
-             for p in pr["photos"] if p["path"] not in set(pr.get("excluded", []))}
-    return [r for r in records_filled(cfg) if r["path"] not in taken]
+    """Records in no live proposal (pending/ongoing/approved/applied): what the Everyday page shows.
+    The list is the caller's, the records in it are shared with the cache and must only be read.
+    Without `props` (the proposals as saved) the result is kept until a record or the proposals
+    file changes: the page asks for it on every view."""
+    filled, version = _filled_shared(cfg)
+    key = None
+    if props is None:
+        _props_text()                                   # brings stamp and generation up to date
+        key = (version, _props_cache["stamp"], _props_cache["gen"])
+        if _everyday_cache["key"] == key:
+            return list(_everyday_cache["value"])
+        props = load_proposals()
+    taken: set[str] = set()
+    for pr in props.values():
+        if pr["status"] in ("pending", "ongoing", "approved", "applied"):
+            ex = set(pr.get("excluded", []))            # once per proposal (it was built per photo)
+            taken.update(p["path"] for p in pr["photos"] if p["path"] not in ex)
+    out = [r for r in filled if r["path"] not in taken]
+    if key is not None:
+        _everyday_cache.update(key=key, value=out)
+        return list(out)
+    return out
 
 
 # --- driver --------------------------------------------------------------------

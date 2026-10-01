@@ -31,6 +31,7 @@
   {% if ready %}<form method="post" action="/proposals/approve_all" class="inline" data-approve-all onsubmit="return confirm('{% if cfg.dry_run %}Approve{% else %}Approve and move{% endif %} all {{ ready|length }} proposals?')">
     <button>{% if cfg.dry_run %}Approve all{% else %}Approve &amp; move all{% endif %} ({{ ready|length }})</button></form>{% endif %}
 </div>
+{% set budget = namespace(left=inline_total) %}
 {% for p in pending %}
 <div class="card" id="{{ p.id }}">
   <div class="row">
@@ -46,16 +47,18 @@
       · {{ p.start[:16].replace('T',' ') }} → {{ p.end[:16].replace('T',' ') }}</span>
   </div>
   {% set is_open = p.n_uncertain or p.kind=='home' or p.id == open_id %}
-  {% set shown = p.photos[:inline] if is_open else [] %}
-  <details{% if is_open %} open{% endif %} data-photos="/proposal/{{ p.id }}/photos" data-total="{{ p.n }}" data-loaded="{{ shown|length }}">
+  {% set shown = p.photos[:inline] if is_open and budget.left > 0 else [] %}
+  {% set budget.left = budget.left - shown|length %}
+  <details{% if is_open %} open{% endif %} data-photos="/proposal/{{ p.id }}/photos" data-total="{{ p.n }}" data-loaded="{{ shown|length }}"{% if is_open and not shown and p.n %} data-lazy="{{ inline }}"{% endif %}>
     <summary>photos</summary>
-    {# Only what is on screen is rendered: the first photos of an open card, nothing inside a
-       collapsed one; ui.js fetches the rest in chunks when the list is opened or "show all" is
-       pressed (a review page with twelve thousand photos was 8 MB and took a second).
+    {# Only what is on screen is rendered: the first photos of the first open cards (a budget for
+       the page), nothing inside a collapsed one; ui.js fetches the first photos of the other open
+       cards when they scroll near (data-lazy) and the rest in chunks when a list is opened or
+       "show all" is pressed (a review page with twelve thousand photos was 8 MB and took a second).
        No form control per photo: password-manager extensions watch every input and button on
        the page and re-scan them on every change and scroll. Photos are plain elements. #}
     <div class="thumbs" data-toggle="/proposal/{{ p.id }}/toggle">
-    {% with photos = shown, ex = p.excluded_set %}{% include "_figures.html" %}{% endwith %}
+    {{ figures(shown, p.excluded_set) }}
     </div>
     {% if p.n > shown|length %}<span class="act" role="button" tabindex="0" data-more title="load the remaining photos of this proposal">show all {{ p.n }} photos{% if shown %} ({{ p.n - shown|length }} more){% endif %}</span>{% endif %}
     <div class="muted small">Click a photo to exclude/include it (greyed = excluded, orange = low confidence — approving here settles them; only auto-applied clusters park them in {{ cfg.review_dir }}/). ⤡ opens the full-size photo or video.</div>

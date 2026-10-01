@@ -48,13 +48,13 @@
     flushToggles(pid);
   });
   // --- photo lists load lazily: a collapsed list is empty until opened, "show all" gets the rest ---
-  function loadMore(details) {
+  function loadMore(details, limit) {
     if (details.dataset.loading) return;
     var loaded = parseInt(details.dataset.loaded, 10), total = parseInt(details.dataset.total, 10);
     var more = details.closest(".card").querySelector("[data-more]");     // gone once everything is loaded
     details.dataset.loading = "1";
     if (more) more.textContent = "loading…";
-    fetch(details.getAttribute("data-photos") + "?offset=" + loaded)
+    fetch(details.getAttribute("data-photos") + "?offset=" + loaded + (limit ? "&limit=" + limit : ""))
       .then(function (r) { return r.ok ? r.text() : Promise.reject(r.status); })
       .then(function (html) {
         details.querySelector(".thumbs").insertAdjacentHTML("beforeend", html);
@@ -71,6 +71,16 @@
   document.querySelectorAll("details[data-photos]").forEach(function (d) {
     d.addEventListener("toggle", function () { if (d.open && d.dataset.loaded === "0") loadMore(d); });
   });
+  // open cards beyond the page's budget arrive without photos: their first ones load when the card
+  // scrolls near (a review queue of a hundred open bursts stays a small page)
+  var near = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (!e.isIntersecting) return;
+      near.unobserve(e.target);
+      if (e.target.dataset.loaded === "0") loadMore(e.target, e.target.getAttribute("data-lazy"));
+    });
+  }, { rootMargin: "600px" });
+  document.querySelectorAll("details[data-lazy]").forEach(function (d) { near.observe(d); });
   document.addEventListener("click", function (ev) {
     var more = ev.target.closest("[data-more]");
     if (!more) return;

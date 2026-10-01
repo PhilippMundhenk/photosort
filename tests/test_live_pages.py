@@ -453,3 +453,24 @@ def test_review_renders_only_visible_photos_and_serves_the_rest_in_chunks(client
     assert r.text.count("<figure") == 3 and r.headers["X-Next"] == ""
     assert client.get(f"/proposal/{trip['id']}/photos", params={"offset": -5, "limit": 0}).text.count("<figure") == 1
     assert client.get("/proposal/nope/photos").status_code == 404
+
+
+def test_review_page_stays_small_however_many_proposals_are_open(client, library, monkeypatch):
+    """The page has a budget of inline photos: the first open cards carry theirs, the others
+    arrive empty, marked to load their first photos when they scroll near."""
+    cfg = config.load()
+    cluster.run(cfg)
+    trip, home = _kind("trip"), _kind("home")
+    monkeypatch.setattr(main, "REVIEW_INLINE_TOTAL", 20)
+    html = client.get("/review", params={"open": trip["id"]}).text
+    home_card = html.split(f'id="{home["id"]}"')[1].split('<div class="card"')[0]
+    trip_card = html.split(f'id="{trip["id"]}"')[1].split('<div class="card"')[0]
+    assert home_card.count("<figure") == home["n"] and "data-lazy" not in home_card   # the newest card: inline
+    assert "<figure" not in trip_card and 'data-lazy="80"' in trip_card and "<details open" in trip_card
+    assert 'data-loaded="0"' in trip_card and f"show all {trip['n']} photos" in trip_card
+    assert html.count("<figure") == home["n"]
+    r = client.get(f"/proposal/{trip['id']}/photos", params={"offset": 0, "limit": 80})   # what the page then asks
+    assert r.text.count("<figure") == min(80, trip["n"])
+    monkeypatch.setattr(main, "REVIEW_INLINE_TOTAL", 400)
+    html = client.get("/review", params={"open": trip["id"]}).text
+    assert "data-lazy" not in html and html.count("<figure") == home["n"] + min(80, trip["n"])

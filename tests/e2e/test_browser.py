@@ -49,10 +49,10 @@ def server(tmp_path_factory):
 
 
 @contextlib.contextmanager
-def serve(base: Path, lib: synth.Library):
+def serve(base: Path, lib: synth.Library, extra_env: dict | None = None):
     data, cfg = base / "data", lib.cfg
     port = _free_port()
-    env = {**os.environ, "PHOTOSORT_DATA": str(data)}
+    env = {**os.environ, "PHOTOSORT_DATA": str(data), **(extra_env or {})}
     proc = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(port),
                              "--host", "127.0.0.1", "--log-level", "warning"], cwd=ROOT, env=env)
     url = f"http://127.0.0.1:{port}"

@@ -80,7 +80,9 @@ def test_new_device_folder_is_picked_up_without_configuration(client, tmp_path):
     assert f"hans={root / 'hans'}" in page and 'name="inbox_root"' in page
     assert "hans" in client.get("/").text
     (root / "maria").mkdir()
-    assert [n for n, _ in config.inbox_dirs(config.load())] == ["hans", "maria"]   # next scan sees it
+    assert [n for n, _ in config.inbox_dirs(config.load())] == ["hans"]            # pages: the answer of a moment ago
+    assert [n for n, _ in config.inbox_dirs(config.load(), fresh=True)] == ["hans", "maria"]   # a scan looks afresh
+    assert [n for n, _ in config.inbox_dirs(config.load())] == ["hans", "maria"]   # and the pages follow
     assert "maria" in client.get("/settings").text
 
 

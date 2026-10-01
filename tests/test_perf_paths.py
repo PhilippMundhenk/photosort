@@ -6,9 +6,11 @@ from __future__ import annotations
 import json
 import threading
 import time
+from datetime import timedelta
 from pathlib import Path
 
-from app import cluster, config, events, ingest, mover
+from app import cluster, config, events, ingest, main, mover
+from tests import synth
 
 
 def test_proposals_are_reread_only_when_the_file_changed(data_dir, monkeypatch):
@@ -258,3 +260,118 @@ def test_proposals_are_parsed_once_and_copies_do_not_leak(data_dir):
     cluster.PROPOSALS_PATH.write_text('{"b": {"status": "pending", "photos": []}}', encoding="utf-8")
     assert set(cluster.load_proposals()) == {"b"}                           # a changed file is re-read
     assert "\n" not in cluster.PROPOSALS_PATH.read_text(encoding="utf-8").strip()   # compact on disk
+
+
+# --- what made Review and Everyday take a second on a small box (October 2026) ---------------------
+
+def test_everyday_list_is_kept_until_a_record_or_a_proposal_changes(cfg, library, monkeypatch):
+    """The Everyday page asks for the unclustered records on every view: twenty thousand records
+    were copied three times and every proposal's photos walked, each time."""
+    cluster.run(cfg)
+    first = cluster.everyday_records(cfg)
+    loads = []
+    real = cluster.load_proposals
+    monkeypatch.setattr(cluster, "load_proposals", lambda: (loads.append(1), real())[1])
+    again = cluster.everyday_records(cfg)
+    assert again == first and again is not first and loads == []        # from the cache, the list is the caller's
+    again.clear()
+    assert len(cluster.everyday_records(cfg)) == len(first)             # emptying one's list changes nothing
+    assert cluster.everyday_records(cfg)[0] is first[0]                 # the records themselves are shared
+    local = next(p for p in real().values() if p["kind"] == "local")
+    props = real()
+    props[local["id"]]["excluded"] = [local["photos"][0]["path"]]
+    cluster.save_proposals(props)                                       # a proposal changed: computed again
+    now = cluster.everyday_records(cfg)
+    assert len(now) == len(first) + 1 and len(loads) == 1
+    new = library.photo(Path(cfg.inboxes[0]["path"]), synth.T0 + timedelta(days=300), synth.HOME)
+    assert str(new) in {r["path"] for r in cluster.everyday_records(cfg)}   # a record changed: computed again
+    props[local["id"]]["status"] = "rejected"                           # the caller's own view of the proposals:
+    mine = cluster.everyday_records(cfg, props)                         # not cached, not confused with the saved
+    assert len(mine) == len(first) + local["n"] + 1 and len(cluster.everyday_records(cfg)) == len(first) + 2
+
+
+def test_readers_share_the_filled_records_and_editors_get_copies(cfg, library):
+    shared, version = cluster._filled_shared(cfg)
+    assert cluster._filled_shared(cfg)[0] is shared                     # no copy per reader
+    mine = cluster.records_filled(cfg)
+    assert mine == shared and mine[0] is not shared[0]
+    mine[0]["zone"] = "edited"
+    assert cluster._filled_shared(cfg)[0][0]["zone"] != "edited"
+    library.photo(Path(cfg.inboxes[0]["path"]), synth.T0 + timedelta(days=301), synth.HOME)
+    newer, v2 = cluster._filled_shared(cfg)
+    assert v2 > version and newer is not shared and len(newer) == len(shared) + 1
+    recs, skipped = cluster.load_records(cfg)
+    assert len(recs) == len(newer) and recs[0] is not cluster._records_cache["recs"][0]
+
+
+def test_movable_everyday_photos_are_a_prefix_of_the_sorted_list(cfg, library):
+    cluster.run(cfg)
+    everyday = cluster.everyday_records(cfg)
+    assert mover.everyday_movable(cfg, 0) == everyday                   # everything is older than now
+    assert mover.everyday_movable(cfg, 10 ** 5) == []
+    assert mover.everyday_movable(cfg, 0, recs=list(reversed(everyday))) == list(reversed(everyday))
+    cfg.everyday_layout = "leave"
+    assert mover.everyday_movable(cfg, 0) == []
+
+
+def test_the_inbox_root_is_listed_once_for_many_requests(tmp_path, data_dir, monkeypatch):
+    """Finding the inputs lists and resolves folders on the share; every page and every thumbnail
+    asked. The answer is kept for a few seconds; a scan asks afresh; saving the settings forgets
+    it; "nothing found" is never kept."""
+    root = tmp_path / "inbox"
+    (root / "phone").mkdir(parents=True)
+    cfg = config.Config(inbox_root=str(root), root=str(tmp_path / "sorted"))
+    calls = []
+    real = config.discovered_inboxes
+    monkeypatch.setattr(config, "discovered_inboxes", lambda c: (calls.append(1), real(c))[1])
+    config._discovered["key"] = None
+    for _ in range(20):
+        assert [n for n, _ in config.inbox_dirs(cfg)] == ["phone"]
+    assert len(calls) == 1
+    (root / "tablet").mkdir()
+    assert [n for n, _ in config.inbox_dirs(cfg, fresh=True)] == ["phone", "tablet"] and len(calls) == 2
+    config.inbox_dirs(cfg).clear()                                      # the caller's list
+    assert len(config.inbox_dirs(cfg)) == 2 and len(calls) == 2
+    config._discovered["at"] -= config.DISCOVERY_TTL_S + 1              # the answer is old now
+    config.inbox_dirs(cfg)
+    assert len(calls) == 3
+    config.save(cfg)
+    config.inbox_dirs(cfg)
+    assert len(calls) == 4
+    empty = config.Config(inbox_root=str(tmp_path / "nothing-here"), root=str(tmp_path / "sorted"))
+    assert config.inbox_dirs(empty) == [] and config.inbox_dirs(empty) == [] and len(calls) == 6
+    explicit = config.Config(inboxes=[{"path": str(root / "phone")}])
+    assert config.inbox_dirs(explicit) == [("phone", root / "phone")] and len(calls) == 6
+
+
+def test_served_roots_are_resolved_once_and_asked_again_when_one_is_missing(cfg, monkeypatch):
+    main._roots_cache["key"] = None
+    roots = main._served_roots(cfg)
+    assert main._served_roots(cfg) is roots and len(roots) == 3         # sorted root and two inboxes
+    main._roots_cache["at"] -= config.DISCOVERY_TTL_S + 1
+    assert main._served_roots(cfg) is not roots
+    main._roots_cache["key"] = None
+    real = Path.resolve
+    monkeypatch.setattr(Path, "resolve", lambda self, *a, **k: (_ for _ in ()).throw(OSError("gone"))
+                        if self.name == "sorted" else real(self, *a, **k))
+    partial = main._served_roots(cfg)
+    assert len(partial) == 2 and main._roots_cache["key"] is None       # not kept: asked again next time
+
+
+def test_figures_are_escaped_and_marked_like_the_template_did():
+    photos = [
+        {"path": '/in/a b/<x>&"q".jpg', "file": '<x>&"q".jpg', "ts": "2026-06-27T10:15:00+00:00", "zone": "away",
+         "place": "Tom & Jerry's", "conf": 0.6, "uncertain": True, "media": "video", "source": "phone<a>"},
+        {"path": "/in/b.jpg", "file": "b.jpg", "ts": "2026-06-27T11:00:00+00:00", "zone": "home", "place": None,
+         "conf": 1.0, "uncertain": False, "media": "photo", "source": None},
+    ]
+    html = str(main.figures_html(photos, {"/in/b.jpg"}))
+    assert html.count("<figure") == 2 and "<x>" not in html and "phone<a>" not in html
+    assert 'data-path="/in/a b/&lt;x&gt;&amp;&#34;q&#34;.jpg"' in html
+    assert 'src="/thumb?path=/in/a%20b/%3Cx%3E%26%22q%22.jpg"' in html and 'data-view="/media?path=/in/a%20b/' in html
+    assert 'class=" uncertain"' in html and 'class="excluded "' in html
+    assert '<span class="badge">video</span> 06-27 10:15 away · phone&lt;a&gt;' in html
+    assert "Tom &amp; Jerry&#39;s" in html and "· conf 0.6 ·" in html and 'data-type="video"' in html
+    assert "<figcaption>06-27 11:00 home</figcaption>" in html and "· b.jpg · 2026-06-27 11:00 · home" not in html
+    assert 'data-title="b.jpg · 2026-06-27 11:00 · home"' in html
+    assert str(main.figures_html([])) == ""
