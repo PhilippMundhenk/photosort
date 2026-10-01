@@ -304,8 +304,8 @@ def test_settings_page_edits_homes_and_rules(client, cfg):
     assert saved.homes == [{"name": "Cabin", "lat": CABIN[0], "lon": CABIN[1], "radius_km": 1.0}]
     assert saved.rules["bursts"] == {"gap_hours": 2} and saved.rules["burst_rules"][0]["name"] == "party"
     html = client.get("/settings?mode=expert").text
-    assert "in force — the thresholds above do not apply" in html and "custom rules (the thresholds below" in html
-    assert "1 more home" in html and "gap_hours: 2" in html
+    assert "in force — the thresholds above do not apply" in html
+    assert "Cabin = 47.30000, 11.10000, 1" in html and "gap_hours: 2" in html
     r = client.post("/settings", data={**form, "rules": "excursion_rules: [{kind: nope}]", "scan_interval_min": "7"})
     assert "Rules%20not%20saved" in r.headers["location"] or "Rules not saved" in r.headers["location"]
     saved = config.load()

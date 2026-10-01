@@ -550,49 +550,6 @@ def log_page(request: Request, kind: str = ""):
 SETTINGS_MODES = ("basic", "advanced", "expert")
 
 
-def _overview(cfg: config.Config, discovered: list) -> list[dict]:
-    """The facts a glance at Settings should give, each pointing at its field (and at the mode
-    that shows it)."""
-    switches = ((cfg.auto_apply_trips, "trips"), (cfg.auto_apply_local, "day outs"),
-                (cfg.auto_apply_home, "home bursts"),
-                (cfg.auto_apply_everyday, f"everyday photos older than {cfg.everyday_keep_days:g} days"))
-    auto = [label for flag, label in switches if flag]
-    if cfg.dry_run:
-        moves = "nothing: dry-run is on"
-    elif auto:
-        moves = "without review: " + ", ".join(auto) + "; the rest after approval"
-    else:
-        moves = "only what you approve in Review"
-    home = (f"{cfg.home_lat:.4f}, {cfg.home_lon:.4f}" if cfg.home_lat or cfg.home_lon
-            else "not set (detected on the next run)")
-    everyday = "stay in the inbox" if cfg.everyday_layout == "leave" else f"into {cfg.everyday_layout}/"
-    found = f"{cfg.inbox_root} — {len(discovered)} found"
-    if discovered:
-        found += ": " + ", ".join(n for n, _ in discovered)
-    sorted_into = cfg.root + (" (copies; originals stay)" if cfg.copy_instead_of_move else "")
-    mode = "dry-run: nothing is moved, copied or deleted" if cfg.dry_run else "LIVE: approved proposals are moved"
-    records = f"{cfg.sidecar_mode}, {'kept' if cfg.sidecar_cleanup == 'never' else 'dropped'} after a move"
-    thumbs_ = "NAS thumbnails, generated when missing" if cfg.generate_thumbnails else "NAS thumbnails only"
-
-    more_homes = f" · {len(cfg.homes)} more home{'s' if len(cfg.homes) != 1 else ''}" if cfg.homes else ""
-    custom = "custom rules (the thresholds below do not apply)" if cfg.rules else "the rules built from the fields"
-
-    def row(k, v, field, mode, **flags):
-        return {"k": k, "v": v, "field": field, "mode": mode, **flags}
-    return [
-        row("Mode", mode, "dry", "basic", warn=cfg.dry_run, bad=not cfg.dry_run),
-        row("What moves", moves, "at", "basic"),
-        row("Inboxes", found, "f-inbox_root", "basic"),
-        row("Sorted into", sorted_into, "f-root", "basic"),
-        row("Everyday photos", everyday, "f-everyday_layout", "basic"),
-        row("Home", f"{home} · {cfg.timezone}" + more_homes, "f-home_lat", "basic"),
-        row("Rules", custom, "f-rules", "expert"),
-        row("Scan", f"every {cfg.scan_interval_min} min", "f-scan_interval_min", "advanced"),
-        row("Records", records, "f-sidecar_mode", "expert"),
-        row("Thumbnails", thumbs_, "gt", "advanced"),
-    ]
-
-
 @app.get("/settings", response_class=HTMLResponse)
 def settings(request: Request, msg: str = "", mode: str = ""):
     cfg = config.load()
@@ -600,7 +557,7 @@ def settings(request: Request, msg: str = "", mode: str = ""):
     discovered = config.discovered_inboxes(cfg)
     return render(request, "settings.html", inboxes_text=config.inboxes_text(cfg), discovered=discovered,
                   named_places_text=config.named_places_text(cfg), extensions=", ".join(cfg.photo_extensions),
-                  msg=msg, mode=mode, modes=SETTINGS_MODES, overview=_overview(cfg, discovered),
+                  msg=msg, mode=mode, modes=SETTINGS_MODES,
                   homes_text=config.named_places_text(cfg, cfg.homes),
                   rules_text=rules.to_yaml(cfg.rules) if cfg.rules else "",
                   rules_in_force=rules.to_yaml(rules.effective(cfg)))

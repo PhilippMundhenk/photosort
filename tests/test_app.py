@@ -741,7 +741,7 @@ def test_log_page_filters(client, library):
 def test_settings_modes_hide_the_rare_settings_but_keep_their_values(client, cfg):
     """Basic shows what a first setup needs; advanced and expert reveal the rest. Whatever the
     mode hides is still in the form, so a save in basic mode keeps every value; the mode is
-    remembered; the overview names the facts and links to their fields."""
+    remembered. One column, a row per setting, each with a sentence or two on what it does."""
     cfg.dry_run = True
     config.save(cfg)
     html = client.get("/settings").text
@@ -749,13 +749,15 @@ def test_settings_modes_hide_the_rare_settings_but_keep_their_values(client, cfg
     assert 'data-level="advanced" hidden' in html and 'data-level="expert" hidden' in html
     assert 'name="trip_min_hours"' in html and 'name="sidecar_mode"' in html     # hidden, but in the form
     assert 'href="/settings?mode=advanced"' in html and "keep their values" in html
-    assert '<span class="badge warn">dry-run</span>' in html and "nothing: dry-run is on" in html
-    assert 'href="/settings?mode=expert#f-sidecar_mode"' in html                # the overview elevates the mode
+    assert 'class="settings"' in html and "settings-grid" not in html and "overview" not in html
+    assert html.count('<div class="field"') == html.count('<div class="what">') >= 40    # every setting explained
+    assert "The safety catch." in html and "create its folder and the next scan picks it up" in html
+    for row in html.split('<div class="field"')[1:]:
+        assert len(row.split("<p>")[1].split("</p>")[0]) > 60                  # a sentence, not a label
     adv = client.get("/settings?mode=advanced").text
     assert 'data-level="advanced" hidden' not in adv and 'data-level="expert" hidden' in adv
-    assert 'href="/settings?mode=advanced#f-scan_interval_min"' in adv         # shown: the link keeps the mode
     exp = client.get("/settings?mode=expert").text
-    assert " hidden" not in exp.split('<div class="settings-grid">')[1] and "keep their values" not in exp
+    assert " hidden" not in exp.split('class="settings">')[1] and "hides keep their values" not in exp
     assert config.load().settings_mode == "basic"                               # a look does not change it
     r = client.post("/settings/mode", data={"mode": "expert"})
     assert r.status_code == 303 and config.load().settings_mode == "expert"
@@ -767,7 +769,7 @@ def test_settings_modes_hide_the_rare_settings_but_keep_their_values(client, cfg
     cfg.trip_min_hours, cfg.auto_apply_trips, cfg.dry_run = 33.0, True, False
     config.save(cfg)
     html = client.get("/settings?mode=basic").text
-    assert "without review: trips; the rest after approval" in html and '<span class="badge bad">LIVE</span>' in html
+    assert 'name="auto_apply_trips" checked' in html and 'name="dry_run"  data-dry-run' in html
     form = {"settings_mode": "basic", "inbox_root": cfg.inbox_root, "root": cfg.root, "everyday_layout": "YYYY/MM",
             "timezone": cfg.timezone, "home_lat": str(cfg.home_lat), "home_lon": str(cfg.home_lon),
             "everyday_keep_days": "4", "auto_apply_trips": "on", "trip_min_hours": "33",       # what a browser
