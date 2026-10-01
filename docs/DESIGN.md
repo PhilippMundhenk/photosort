@@ -309,9 +309,11 @@ Settings come in three modes (September 2026, issues #12 and #15): basic shows w
 setup needs (dry-run, what moves by itself, folders, home), advanced adds the clustering
 thresholds, expert everything else (folder details, records, rarely touched limits). A hidden
 setting is still in the form, so a save in basic mode keeps every value; the mode is
-remembered in the config. An overview card at the top states the facts a glance should give
-(mode, what moves without review, inboxes found, target, home, scan) and links each to its
-field, switching to the mode that shows it.
+remembered in the config. The page is one column (October 2026): a section per topic, a row
+per setting with a description in plain language on the left (what it does, when to change
+it, an example) and the control on the right. The first version was a grid of narrow cards
+with terse labels and an overview card repeating what the fields said; it read as a wall of
+controls, and the overview was dropped as redundant.
 
 Photos change cluster in one way (September 2026, issue #14). Everyday and a cluster's page
 share one selection bar and one target list: open proposals, clusters already moved (the
