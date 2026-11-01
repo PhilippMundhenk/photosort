@@ -407,3 +407,65 @@
     else if (ev.key === "ArrowRight") show(idx + 1);
   });
 })();
+
+// --- settings: a field that differs from its default says so and can be put back (issue #12);
+// each card's heading counts them, hidden rows of other modes included, so a tuned value is
+// never invisible. Nothing is saved until "Save settings".
+(function () {
+  var data = document.getElementById("config-defaults");
+  var form = document.querySelector("form.settings");
+  if (!data || !form) return;
+  var defs = JSON.parse(data.textContent);
+  function label(v) { return v === true ? "on" : v === false ? "off" : v === "" ? "empty" : String(v); }
+  function isDefault(input, d) {
+    if (input.type === "checkbox") return input.checked === !!d;
+    if (typeof d === "number") return input.value !== "" && Number(input.value) === d;
+    return input.value === String(d);
+  }
+  function fields() {
+    return Array.prototype.filter.call(form.elements, function (el) {
+      return el.name && Object.prototype.hasOwnProperty.call(defs, el.name) && el.type !== "hidden";
+    });
+  }
+  function refresh() {
+    var counts = new Map();
+    fields().forEach(function (input) {
+      var ctl = input.closest(".ctl") || input.parentNode;
+      var hint = ctl.querySelector(".default-hint[data-for='" + input.name + "']");
+      var changed = !isDefault(input, defs[input.name]);
+      var card = input.closest(".card");
+      if (card) counts.set(card, (counts.get(card) || 0) + (changed ? 1 : 0));
+      if (!changed) { if (hint) hint.remove(); return; }
+      if (hint) return;
+      hint = document.createElement("div");
+      hint.className = "default-hint small muted";
+      hint.setAttribute("data-for", input.name);
+      hint.appendChild(document.createTextNode("default: " + label(defs[input.name]) + " · "));
+      var reset = document.createElement("span");
+      reset.className = "act"; reset.setAttribute("role", "button"); reset.tabIndex = 0;
+      reset.textContent = "use default";
+      reset.addEventListener("click", function () { put(input); });
+      reset.addEventListener("keydown", function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); put(input); } });
+      hint.appendChild(reset);
+      ctl.appendChild(hint);
+    });
+    counts.forEach(function (n, card) {
+      var h = card.querySelector("h2");
+      if (!h) return;
+      var badge = h.querySelector(".changed-count");
+      if (!n) { if (badge) badge.remove(); return; }
+      if (!badge) { badge = document.createElement("span"); badge.className = "changed-count small muted"; h.appendChild(badge); }
+      badge.textContent = " · " + n + " changed";
+    });
+  }
+  function put(input) {
+    var d = defs[input.name];
+    if (input.type === "checkbox") input.checked = !!d; else input.value = String(d);
+    input.dispatchEvent(new Event("change", {bubbles: true}));
+    refresh();
+    input.focus();
+  }
+  form.addEventListener("input", refresh);
+  form.addEventListener("change", refresh);
+  refresh();
+})();

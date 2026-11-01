@@ -116,6 +116,16 @@ class Config:
         return asdict(self)
 
 
+SECRET_FIELDS = ("matrix_token",)
+
+
+def scalar_defaults() -> dict:
+    """Every plain setting's default (issue #12): the Settings page marks a field that differs
+    from it and can put it back. Lists, mappings and secrets are left out."""
+    return {k: v for k, v in Config().as_dict().items()
+            if isinstance(v, (bool, int, float, str)) and k not in SECRET_FIELDS}
+
+
 def tzinfo(cfg: Config) -> ZoneInfo:
     try:
         return ZoneInfo(cfg.timezone or "UTC")
