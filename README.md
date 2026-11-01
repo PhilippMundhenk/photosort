@@ -169,6 +169,7 @@ docker compose -f docker-compose.test.yml run --rm tests pytest -m e2e -v
 | smoke | `python -m tests.smoke` | one synthetic end-to-end run without pytest |
 | journal | `tests/test_journal.py` | every action is one batch of file operations; revert of a batch, of one file, of a revert; skipped files reported; dry-run refused; the History page |
 | rules | `tests/test_rules.py` | the rule engine: golden test against the frozen pre-engine rules on every library and many parameter sets, custom rules, validation, multi-home zoning, the Settings editor |
+| why panel | `tests/test_why.py` | what a proposal stores about the rule that made it, every condition in plain words, the panel on the review and cluster pages |
 | docs | `tests/test_docs.py` | the README's test table matches the files on disk, every configuration field has a form control, the design document names every module |
 | coverage | the test image's default command | line and branch coverage of `app/` must stay at 99 % or above (it is 100 % as of 2026-09-29); `tests/e2e/test_script_coverage.py` measures how much of `ui.js` one browser session executes (99 % or above; every function runs); `tests/test_templates.py` renders every template branch; CI also starts the published runtime image and calls every page |
 
