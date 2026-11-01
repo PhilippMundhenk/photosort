@@ -62,7 +62,10 @@ clustering thresholds, *expert* everything; every setting says in a sentence or 
 - Photos are mounted, not copied. Moves are `rename()` on the same mount; keep inbox and
   target on the same share. **Copy instead of move** (Settings → Behaviour) copies into the
   sorted tree and leaves the originals in the inbox; their sidecar records `copied_to`, so they
-  are not proposed again. Undo and "move out" then delete the copy and clear that mark.
+  are not proposed again. Undo and "move out" then delete the copy and clear that mark. It is
+  also the way to work with read-only inboxes (a move there fails): **History** offers the list
+  of originals that were copied and are still there, to delete them yourself later (this needs
+  central sidecars, which are written under `data/`).
 - Config lives in `data/config.yaml`, the event log in `data/events.jsonl`, current proposals in
   `data/proposals.json`. Losing `data/` loses history and pending proposals, never photos.
 - Behind Traefik/Authelia: uncomment the labels in `docker-compose.yml`. There is no

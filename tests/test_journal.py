@@ -239,6 +239,35 @@ def test_revert_of_a_copy_deletes_the_copy_and_frees_the_original(cfg, library):
     assert all("cannot be restored" in s["why"] for s in result["skipped"])
 
 
+def test_originals_left_by_copy_mode_are_listed_for_deleting_by_hand(cfg, library, client):
+    """A read-only inbox: copy mode sorts the photos and leaves the originals; the History page
+    hands out the list of them. Reverted copies, originals deleted meanwhile and copies that
+    went missing are not in the plain list."""
+    cfg = _live()
+    cfg.copy_instead_of_move = True
+    config.save(cfg)
+    local, trip = _kind("local"), _kind("trip")
+    mover.apply(cfg, local, reviewed=True)
+    mover.apply(cfg, trip, reviewed=True)
+    journal.revert(cfg, journal.batches()[0]["batch"])                       # the trip's copies are undone
+    rows = journal.originals_left(cfg)
+    assert [r["original"] for r in rows] == [p["path"] for p in local["photos"]]
+    assert all(r["copy_found"] and Path(r["copy"]).exists() for r in rows)
+    Path(local["photos"][0]["path"]).unlink()                                # deleted by hand already
+    Path(rows[1]["copy"]).unlink()                                           # a copy that went missing
+    rows = journal.originals_left(cfg)
+    assert len(rows) == local["n"] - 1 and not rows[0]["copy_found"]
+    txt = client.get("/history/originals.txt")
+    assert txt.status_code == 200 and "attachment" in txt.headers["content-disposition"]
+    assert txt.text.splitlines() == [r["original"] for r in rows[1:]]
+    csv_ = client.get("/history/originals.csv").text.splitlines()
+    assert csv_[0] == "original,copy,copy_found,copied" and len(csv_) == local["n"]
+    assert csv_[1].startswith(rows[0]["original"] + ",") and ",no," in csv_[1]
+    assert client.get("/history/originals.pdf").status_code == 404
+    page = client.get("/history").text
+    assert "Originals left in the inbox" in page and "/history/originals.txt" in page and "(it is)" in page
+
+
 def test_revert_of_an_undo_puts_the_cluster_back_with_manifest_and_status(cfg, library):
     _live()
     local = _kind("local")
