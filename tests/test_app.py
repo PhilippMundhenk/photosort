@@ -12,7 +12,7 @@ from urllib.parse import quote, unquote
 import pytest
 from fastapi.testclient import TestClient
 
-from app import cluster, config, events, ingest, main, mover
+from app import cluster, config, events, ingest, main, mover, thumbs
 from tests import synth
 
 
@@ -728,7 +728,7 @@ def test_thumb_nas_then_generated_then_placeholder(client, library, tmp_path):
     r = client.get("/thumb", params={"path": str(photo)})
     assert r.headers["content-type"] == "image/jpeg"
     with Image.open(io.BytesIO(r.content)) as im:
-        assert im.size == (440, 330)
+        assert im.size == thumbs.THUMB_SIZE
     t = photo.parent / "@eaDir" / photo.name / "SYNOPHOTO_THUMB_M.jpg"
     t.parent.mkdir(parents=True)
     t.write_bytes(b"THUMB")
