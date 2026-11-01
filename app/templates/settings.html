@@ -72,6 +72,11 @@
       <p>How often the inboxes are checked for new photos and the proposals are brought up to date. A scan with nothing new takes moments; “Run now” in the header starts one at once.</p></div>
     <div class="ctl"><input type="number" name="scan_interval_min" id="f-scan_interval_min" value="{{ cfg.scan_interval_min }}"></div>
   </div>
+  <div class="field" data-level="expert"{{ lv('expert') }}>
+    <div class="what"><label for="f-scan_workers">Files read at once on a scan</label>
+      <p>New photos are read by exiftool in batches of 200; this many batches run at the same time. Over a network share reading waits mostly for the share, so 3 is about three times as fast as 1 on a first scan. Lower it on a box with little memory.</p></div>
+    <div class="ctl"><input type="number" min="1" max="8" name="scan_workers" id="f-scan_workers" value="{{ cfg.scan_workers }}"></div>
+  </div>
   <div class="field" data-level="advanced"{{ lv('advanced') }}>
     <div class="what"><label for="wcm">Warn about slow moves</label>
       <p>Shows a note on the pages when an inbox and the sorted folder are on different mounts, because every move is then a copy over the network instead of a rename. Switch it off when they are different shares of one NAS and cannot share a mount.</p></div>
@@ -108,6 +113,16 @@
     <div class="what"><label for="f-inboxes">Inputs, listed by hand</label>
       <p>Only needed when your inputs are not subfolders of one inbox folder. One per line, <code>name=/path</code>. Leave it empty to use the subfolders found above.</p></div>
     <div class="ctl"><textarea name="inboxes" id="f-inboxes" rows="3" placeholder="{% for name, path in discovered %}{{ name }}={{ path }}&#10;{% endfor %}">{{ inboxes_text }}</textarea></div>
+  </div>
+  <div class="field" data-level="advanced"{{ lv('advanced') }}>
+    <div class="what"><label for="f-inbox_settings">How each device behaves</label>
+      <p>Only for devices that differ from your phones. One per line, <code>input: option=value, …</code> with the input's name as above:
+        <code>borrow_offset=yes</code> a camera whose photo times carry no time zone (set to local time abroad) takes the offset of the phone photos around them;
+        <code>video_clock=local</code> its videos store local time where the standard says UTC (some Android builds);
+        <code>gps_hours=12</code> how many hours away a photo with a position may be for one without to borrow it (default 48);
+        <code>home_radius_km=1</code> how far “at home” reaches for this device, for one with poor GPS.
+        The next run applies them; only <code>video_clock</code> is read when a file is indexed, so after changing it use “Start over”.</p></div>
+    <div class="ctl"><textarea name="inbox_settings" id="f-inbox_settings" rows="3" placeholder="camera: borrow_offset=yes, gps_hours=12&#10;actioncam: home_radius_km=1">{{ inbox_settings_text }}</textarea></div>
   </div>
   <div class="field" data-level="advanced"{{ lv('advanced') }}>
     <div class="what"><label for="sbs">A subfolder per device</label>
