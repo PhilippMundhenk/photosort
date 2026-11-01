@@ -68,7 +68,8 @@ def test_a_move_survives_a_kill_and_restart(tmp_path_factory):
         assert len({p["dst"] for p in manifest["photos"]}) == trip["n"]
         r = httpx.get(url + "/clusters/view", params={"folder": str(folder)}, timeout=30)
         assert r.status_code == 200 and r.text.count("<figure") == trip["n"]
-        httpx.post(url + "/cluster/undo", data={"folder": str(folder)}, timeout=120)   # and undo covers it all
+        httpx.post(url + "/cluster/undo", data={"folder": str(folder)}, timeout=30)    # and undo covers it all
+        _wait(lambda: not _status(url)["applying"] and not _status(url)["queue"], 180)
         assert all(Path(p["path"]).exists() for p in trip["photos"])
         assert not folder.exists(), [str(f) for f in folder.rglob("*")][:10]
 

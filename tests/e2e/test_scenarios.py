@@ -68,6 +68,7 @@ def test_copy_mode_end_to_end(copy_server, page):
     page.once("dialog", lambda d: d.accept())
     page.get_by_role("button", name="Undo whole cluster").click()
     page.wait_for_url(re.compile(r"/clusters$"))
+    expect(page.locator(".card.job")).to_have_count(0, timeout=60_000)        # the worker undid it; page reloaded
     assert not folder.exists() and all(p.exists() for p in originals)          # copies gone, originals kept
     httpx.post(url + "/run", timeout=5)
     _wait_pending(url, 2)                                                      # undone = rejected: everyday now

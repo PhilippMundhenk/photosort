@@ -34,6 +34,7 @@ def _cycle(client, cfg) -> None:
         client.post(f"/proposal/{local['id']}/approve")
         main.wait_for_apply()
         client.post("/cluster/undo", data={"folder": str(mover.target_folder(cfg, local))})
+        main.wait_for_apply()
         props = cluster.load_proposals()
         props[local["id"]]["status"] = "pending"                          # undo marks it rejected: reopen
         cluster.save_proposals(props)

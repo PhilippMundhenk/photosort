@@ -54,8 +54,15 @@ _state = {"last_run": None, "last_stats": {}, "running": False, "error": None, "
 
 # Approving a proposal only marks it "approved"; this worker moves the files (hundreds of them
 # over a share take a while) so the request returns at once. Progress is shown on the review page.
+# The queue holds job keys: a proposal id (move its photos), EVERYDAY_JOB, or the key of a folder
+# job in _jobs (undo, rename, put back: its type and arguments). One worker, under _lock, so a job
+# and the pipeline never touch files at the same time.
 _apply_queue: queue.Queue = queue.Queue()
 _applying: dict[str, dict] = {}
+_jobs: dict[str, dict] = {}                   # folder jobs waiting or running: key -> type, folder, args
+_jobs_failed: dict[str, dict] = {}            # key -> {"error", "at", job}: shown for a while on the pages
+JOBS_FAILED_KEEP_S = 900
+_taken: dict[str, str | None] = {"key": None}  # what the worker took from the queue (it may still wait for _lock)
 _props_lock = cluster.proposals_lock          # every read-modify-write of proposals.json, pages and run alike
 
 
@@ -73,7 +80,7 @@ def _apply_everyday_job() -> None:
         cfg = config.load()
         if cfg.dry_run:
             return
-        _applying[EVERYDAY_JOB] = {"done": 0, "total": 0, "name": "everyday photos", "current": None}
+        _applying[EVERYDAY_JOB] = {"done": 0, "total": 0, "name": "everyday photos", "verb": "Moving", "current": None}
         try:
             n = mover.apply_everyday(cfg, min_age_days=cfg.everyday_keep_days, progress=_progress(EVERYDAY_JOB))
             events.log("review", action="move_everyday", n=n)
@@ -90,6 +97,9 @@ def _apply_one(pid: str) -> None:
     if pid == EVERYDAY_JOB:
         _apply_everyday_job()
         return
+    if pid in _jobs:
+        _run_job(pid)
+        return
     with _lock:                                   # never while a scan rewrites the proposals
         cfg = config.load()
         if cfg.dry_run:                           # approved proposals wait; Settings queues them again
@@ -97,7 +107,7 @@ def _apply_one(pid: str) -> None:
         pr = cluster.load_proposals().get(pid)
         if not pr or pr["status"] != "approved":
             return
-        _applying[pid] = {"done": 0, "total": pr["n"], "name": pr["name"], "current": None}
+        _applying[pid] = {"done": 0, "total": pr["n"], "name": pr["name"], "verb": "Moving", "current": None}
         update: dict = {}
         try:
             # a human looked at it: nothing goes to _review; auto-applied by a run (pr["auto"]): uncertain
@@ -122,16 +132,138 @@ def _apply_one(pid: str) -> None:
 def _apply_worker() -> None:
     while True:
         pid = _apply_queue.get()
+        _taken["key"] = pid
         try:
             _apply_one(pid)
         except Exception:  # noqa: BLE001
             log.exception("apply worker")
         finally:
+            _taken["key"] = None
             _apply_queue.task_done()
 
 
 def queue_apply(pid: str) -> None:
     _apply_queue.put(pid)
+
+
+# --- folder jobs: undo, rename, put back ------------------------------------------------
+
+JOB_VERBS = {"undo": "Undoing", "rename": "Renaming", "put_back": "Putting back"}
+
+
+def _job_undo(cfg: config.Config, job: dict, progress) -> None:
+    folder = Path(job["folder"])
+    mover.undo(cfg, folder, progress=progress)
+    with _props_lock:
+        props = cluster.load_proposals()
+        for pr in props.values():
+            if pr["status"] == "applied" and mover.target_folder(cfg, pr) == folder:
+                pr["status"] = "rejected"
+        cluster.save_proposals(props)
+
+
+def _job_rename(cfg: config.Config, job: dict, progress) -> None:
+    dst = mover.rename(cfg, Path(job["folder"]), job["new_name"], progress=progress)
+    if job.get("remember_place"):
+        _remember_folder_place(cfg, dst)
+
+
+def _job_put_back(cfg: config.Config, job: dict, progress) -> None:
+    folder, src = Path(job["folder"]), Path(job["src"])
+    progress(0, 1, mover._current(src))
+    if mover.put_back(cfg, folder, src):
+        _set_excluded(folder, job["src"], False)
+    progress(1, 1, None)
+
+
+JOB_RUNNERS = {"undo": _job_undo, "rename": _job_rename, "put_back": _job_put_back}
+
+
+def _job_failed(key: str, job: dict, error: str) -> None:
+    _jobs_failed[key] = {"error": error, "at": time.time(), **job}
+    events.log("review", action=f"{job['type']}_failed", name=job["name"], folder=job["folder"], error=error)
+
+
+def _run_job(key: str) -> None:
+    job = _jobs[key]
+    with _lock:                                   # never while a scan runs or another job moves files
+        _applying[key] = {"done": 0, "total": job.get("n", 0), "name": job["name"], "verb": JOB_VERBS[job["type"]],
+                          "current": None}
+        try:
+            cfg = config.load()
+            mover._guard(cfg)                     # dry-run switched on while it waited: nothing moves
+            JOB_RUNNERS[job["type"]](cfg, job, _progress(key))      # mover logs what it did
+        except mover.DryRun as e:
+            _job_failed(key, job, str(e))
+        except Exception as e:  # noqa: BLE001
+            log.exception("%s failed for %s", job["type"], job["folder"])
+            _job_failed(key, job, f"{type(e).__name__}: {e}")
+        finally:
+            _jobs.pop(key, None)                  # gone from the waiting list first, then from the running one,
+            _applying.pop(key, None)              # so a status poll never sees it "queued" again
+            mover.invalidate_clusters()
+
+
+def queue_job(kind: str, folder: Path, name: str, **args) -> str:
+    """Queue an undo, rename or put back of a cluster folder for the worker; returns its key."""
+    key = f"{kind}:{folder}" + (f":{args['src']}" if kind == "put_back" else "")
+    _jobs_failed.pop(key, None)                   # tried again: the old failure is no news any more
+    if key not in _jobs:
+        _jobs[key] = {"type": kind, "folder": str(folder), "name": name, **args}
+        _apply_queue.put(key)
+    return key
+
+
+def folder_job(cfg: config.Config, folder: Path) -> str | None:
+    """The key of a waiting or running job on this folder (a folder job, or a proposal being
+    moved into it): another action on the folder meanwhile would race it."""
+    f = str(folder)
+    for key, job in list(_jobs.items()):
+        if f in (job["folder"], job.get("dst")):
+            return key
+    waiting = [k for k in list(_apply_queue.queue) + list(_applying) + [_taken["key"]]
+               if k and k not in _jobs and k != EVERYDAY_JOB]
+    if waiting:
+        props = cluster.load_proposals()
+        for k in waiting:
+            if k in props and mover.target_folder(cfg, props[k]) == folder:
+                return k
+    return None
+
+
+def _recent_failures() -> dict[str, dict]:
+    """Failed folder jobs of the last JOBS_FAILED_KEEP_S (older ones are forgotten)."""
+    now = time.time()
+    for k, f in list(_jobs_failed.items()):
+        if now - f["at"] > JOBS_FAILED_KEEP_S:
+            _jobs_failed.pop(k, None)
+    return {k: f for k, f in list(_jobs_failed.items()) if k not in _jobs}
+
+
+def _job_view(key: str) -> dict:
+    """A job as the pages show it: what it does, to what, and how far it is."""
+    job = _jobs.get(key) or _jobs_failed.get(key) or {}
+    return {"key": key, "verb": JOB_VERBS.get(job.get("type"), "Moving"), "name": job.get("name", key),
+            "type": job.get("type"), "folder": job.get("folder"), "dst": job.get("dst"),
+            "progress": _applying.get(key), "error": (_jobs_failed.get(key) or {}).get("error")}
+
+
+def _folder_jobs(folder: str | None = None) -> list[dict]:
+    """Folder jobs waiting, running or recently failed (newest failures last)."""
+    keys = list(_jobs) + list(_recent_failures())
+    views = [_job_view(k) for k in keys]
+    return [v for v in views if folder is None or folder in (v["folder"], v["dst"])]
+
+
+def _busy_page(request: Request, folder: str, key: str):
+    view = _job_view(key) if key in _jobs else {"verb": "Moving", "name": (cluster.load_proposals().get(key)
+                                                                            or {}).get("name", key)}
+    msg = f"{view['verb']} {view['name']} is waiting or running; try again when it is done."
+    if request.headers.get("x-requested-with") == "fetch":
+        return JSONResponse({"ok": False, "error": msg}, status_code=409)
+    back = f"/clusters/view?folder={quote(folder)}"
+    return HTMLResponse(f"<h1>Folder busy</h1><p>{esc(msg)}</p><p><a href='{back}'>back</a> · "
+                        f"<a href='/clusters'>Clusters</a></p>", status_code=409)
 
 
 def queue_approved() -> int:
@@ -465,7 +597,9 @@ async def everyday_assign(request: Request):
 @app.get("/clusters", response_class=HTMLResponse)
 def clusters(request: Request):
     cfg = config.load()
-    return render(request, "clusters.html", clusters=mover.list_clusters(cfg))
+    jobs = _folder_jobs()
+    return render(request, "clusters.html", clusters=mover.list_clusters(cfg), jobs=jobs,
+                  busy_folders={j["folder"]: j for j in jobs if not j["error"]})
 
 
 def _cluster_folder(cfg: config.Config, folder: str) -> Path:
@@ -489,7 +623,8 @@ def cluster_view(request: Request, folder: str):
     own = (m or {}).get("proposal_id")
     moved = sorted((p for p in props.values() if p["status"] in ("applied", "approved") and p["id"] != own),
                    key=lambda p: p["start"], reverse=True)
-    return render(request, "cluster.html", m=m, folder=folder, pending=_pending(props), moved=moved)
+    return render(request, "cluster.html", m=m, folder=folder, pending=_pending(props), moved=moved,
+                  jobs=_folder_jobs(folder))
 
 
 @app.post("/cluster/assign")
@@ -512,6 +647,9 @@ async def cluster_assign(request: Request):
     if not paths or target == m.get("proposal_id"):          # nothing selected, or its own cluster: no-op
         return RedirectResponse(back, status_code=303)
     mover._guard(cfg)                                        # dry-run: refused before anything, like every move
+    busy = folder_job(cfg, folder_p)
+    if busy:
+        return _busy_page(request, folder, busy)
     moved_out: list[str] = []
     with journal.batch("move_between", folder=folder, target=target, proposal=m.get("proposal_id")):
         for p in paths:
@@ -796,44 +934,73 @@ async def approve_all(request: Request):
     return RedirectResponse("/review", status_code=303)
 
 
+RENAME_SYNC_MAX = 300           # photos whose records a rename may rewrite inside the request
+
+
+def _rename_in_background(cfg: config.Config, folder: Path) -> bool:
+    """A rename is the directory rename (instant) plus each photo's record and, in copy mode, the
+    original's mark. Records beside the photos (on the share) or a big cluster: the worker does
+    it. Otherwise it is done at once, as before."""
+    n = len((mover.read_manifest(folder) or {}).get("photos", []))
+    return n > 0 and (cfg.sidecar_mode == "beside" or n > RENAME_SYNC_MAX)
+
+
+def _remember_folder_place(cfg: config.Config, dst: Path) -> None:
+    m = mover.read_manifest(dst) or {}
+    pr = cluster.load_proposals().get(m.get("proposal_id") or "", {})
+    pts = [(p.get("lat"), p.get("lon")) for p in pr.get("photos", [])]
+    if not any(la is not None for la, _ in pts):                 # older proposal: try the records
+        pts = []
+        for p in m.get("photos", []):
+            rec = ingest.read_sidecar(Path(p["dst"]), cfg) or {}
+            pts.append((rec.get("lat"), rec.get("lon")))
+    _remember_place(cfg, dst.name, pts)
+
+
 @app.post("/cluster/rename")
 def cluster_rename(request: Request, folder: str = Form(...), name: str = Form(...), remember_place: str = Form("")):
     cfg = config.load()
-    _cluster_folder(cfg, folder)
-    try:
-        dst = mover.rename(cfg, Path(folder), name)
-    except mover.FolderInUse as e:
-        if request.headers.get("x-requested-with") == "fetch":
-            return JSONResponse({"ok": False, "error": str(e)}, status_code=423)
-        back = f"/clusters/view?folder={quote(folder)}"
-        return HTMLResponse(f"<h1>Not renamed</h1><p>{e}</p><p><a href='{back}'>back</a></p>", status_code=423)
-    if remember_place:
-        m = mover.read_manifest(dst) or {}
-        pr = cluster.load_proposals().get(m.get("proposal_id") or "", {})
-        pts = [(p.get("lat"), p.get("lon")) for p in pr.get("photos", [])]
-        if not any(la is not None for la, _ in pts):                 # older proposal: try the records
-            pts = []
-            for p in m.get("photos", []):
-                rec = ingest.read_sidecar(Path(p["dst"]), cfg) or {}
-                pts.append((rec.get("lat"), rec.get("lon")))
-        _remember_place(cfg, dst.name, pts)
-    if request.headers.get("x-requested-with") == "fetch":
+    folder_p = _cluster_folder(cfg, folder)
+    fetch = request.headers.get("x-requested-with") == "fetch"
+    mover._guard(cfg)                                    # dry-run: refused before anything, queued or not
+    busy = folder_job(cfg, folder_p)
+    if busy:
+        return _busy_page(request, folder, busy)
+    if _rename_in_background(cfg, folder_p):
+        dst = mover._unique(mover.rename_target(cfg, folder_p, name))
+        m = mover.read_manifest(folder_p) or {}
+        queue_job("rename", folder_p, f"{folder_p.name} → {dst.name}", new_name=dst.name, dst=str(dst),
+                  n=len(m.get("photos", [])), remember_place=bool(remember_place))
+    else:
+        try:
+            dst = mover.rename(cfg, folder_p, name)
+        except mover.FolderInUse as e:
+            if fetch:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=423)
+            back = f"/clusters/view?folder={quote(folder)}"
+            return HTMLResponse(f"<h1>Not renamed</h1><p>{e}</p><p><a href='{back}'>back</a></p>", status_code=423)
+        if remember_place:
+            _remember_folder_place(cfg, dst)
+    if fetch:                                            # queued: the new folder's page shows the progress
         return JSONResponse({"ok": True, "name": dst.name, "folder": str(dst),
                              "redirect": f"/clusters/view?folder={quote(str(dst))}"})
     return RedirectResponse(f"/clusters/view?folder={dst}", status_code=303)
 
 
 @app.post("/cluster/undo")
-def cluster_undo(folder: str = Form(...)):
+def cluster_undo(request: Request, folder: str = Form(...)):
+    """Every photo of the cluster back to its inbox, by the worker (hundreds of files over a share
+    take minutes); the clusters page shows the progress."""
     cfg = config.load()
-    _cluster_folder(cfg, folder)
-    mover.undo(cfg, Path(folder))
-    with _props_lock:
-        props = cluster.load_proposals()
-        for pr in props.values():
-            if pr["status"] == "applied" and mover.target_folder(cfg, pr) == Path(folder):
-                pr["status"] = "rejected"
-        cluster.save_proposals(props)
+    folder_p = _cluster_folder(cfg, folder)
+    m = mover.read_manifest(folder_p)
+    if not m:                                            # no manifest: nothing to undo
+        return RedirectResponse("/clusters", status_code=303)
+    mover._guard(cfg)
+    busy = folder_job(cfg, folder_p)
+    if busy and busy != f"undo:{folder_p}":              # a second click on the same undo: nothing new
+        return _busy_page(request, folder, busy)
+    queue_job("undo", folder_p, m.get("name") or folder_p.name, n=len(m.get("photos", [])))
     return RedirectResponse("/clusters", status_code=303)
 
 
@@ -854,11 +1021,14 @@ def _set_excluded(folder: Path, path: str, excluded: bool) -> None:
 
 
 @app.post("/cluster/move_out")
-def cluster_move_out(folder: str = Form(...), photo: str = Form(...)):
+def cluster_move_out(request: Request, folder: str = Form(...), photo: str = Form(...)):
     cfg = config.load()
     _cluster_folder(cfg, folder)
     if not Path(photo).resolve().is_relative_to(_cluster_folder(cfg, folder).resolve()):
         raise HTTPException(status_code=400, detail="the photo is not in that folder")
+    busy = folder_job(cfg, Path(folder))
+    if busy:
+        return _busy_page(request, folder, busy)
     entry = mover.move_out(cfg, Path(folder), Path(photo))
     if entry:
         _set_excluded(Path(folder), entry["src"], True)
@@ -869,17 +1039,21 @@ def cluster_move_out(folder: str = Form(...), photo: str = Form(...)):
 
 
 @app.post("/cluster/put_back")
-def cluster_put_back(folder: str = Form(...), src: str = Form(...)):
+def cluster_put_back(request: Request, folder: str = Form(...), src: str = Form(...)):
+    """A removed photo returns to its cluster, by the worker (finding it again may walk the whole
+    sorted tree); the cluster page shows it and reloads when it is done."""
     cfg = config.load()
-    _cluster_folder(cfg, folder)
-    try:
-        entry = mover.put_back(cfg, Path(folder), Path(src))
-    except FileNotFoundError as e:
-        back = f"/clusters/view?folder={quote(folder)}"
-        return HTMLResponse(f"<h1>Not put back</h1><p>{e}</p><p><a href='{back}'>back</a></p>", status_code=404)
-    if entry:
-        _set_excluded(Path(folder), src, False)
-    return RedirectResponse(f"/clusters/view?folder={quote(folder)}", status_code=303)
+    folder_p = _cluster_folder(cfg, folder)
+    back = f"/clusters/view?folder={quote(folder)}"
+    m = mover.read_manifest(folder_p) or {}
+    if not any(c["src"] == src for c in m.get("corrections", [])):     # no such correction: nothing to do
+        return RedirectResponse(back, status_code=303)
+    mover._guard(cfg)
+    busy = folder_job(cfg, folder_p)
+    if busy and busy != f"put_back:{folder_p}:{src}":
+        return _busy_page(request, folder, busy)
+    queue_job("put_back", folder_p, Path(src).name, src=src, n=1)
+    return RedirectResponse(back, status_code=303)
 
 
 def _allowed(cfg: config.Config, p: Path) -> bool:
@@ -964,9 +1138,12 @@ def api_status():
     counts = cluster.status_counts()
     now = time.time()
     applying = {k: {**v, "current": {**v["current"], "seconds": round(now - v["current"]["since"])}
-                    if v.get("current") else None} for k, v in _applying.items()}
+                    if v.get("current") else None} for k, v in list(_applying.items())}
     queue = {pid: ("failed: " + err if err else "queued") for pid, err in counts["approved"].items()
              if pid not in applying}
+    jobs = [k for k in list(_jobs) if k not in applying]                 # undo, rename, put back waiting
+    queue.update({k: "queued" for k in jobs})
+    queue.update({k: "failed: " + f["error"] for k, f in _recent_failures().items()})
     return {"state": _state, "pending": counts["pending"], "dry_run": cfg.dry_run,
-            "approved": len(counts["approved"]), "applying": applying, "queue": queue,
+            "approved": len(counts["approved"]), "applying": applying, "queue": queue, "jobs": len(jobs),
             "everyday_queued": EVERYDAY_JOB in list(_apply_queue.queue)}

@@ -180,16 +180,21 @@ def test_everything_on_twenty_thousand_photos(client, big):
                                                         data={"folder": str(folder), "photo": str(photo)}), 12.0)
     assert r.status_code == 303
     put_back = {"folder": str(folder), "src": m["photos"][0]["src"]}
-    r = _t("POST cluster/put_back", lambda: client.post("/cluster/put_back", data=put_back), 0.5)
+    r = _t("POST cluster/put_back (queued)", lambda: client.post("/cluster/put_back", data=put_back), 0.5)
     assert r.status_code == 303
+    _t("wait for the put back", main.wait_for_apply, 12.0)
     rename_folder = {"folder": str(folder), "name": "2024-01 Spain"}
-    r = _t("POST cluster/rename (2 000 files)",
-           lambda: client.post("/cluster/rename", data=rename_folder, headers=FETCH), 10.0)
+    r = _t("POST cluster/rename (2 000 files, queued)",
+           lambda: client.post("/cluster/rename", data=rename_folder, headers=FETCH), 0.5)
     assert r.status_code == 200
     renamed = Path(r.json()["folder"])
+    _t("wait for the rename (2 000 files)", main.wait_for_apply, 10.0)
+    assert renamed.is_dir()
     home_folder = mover.target_folder(cfg, cluster.load_proposals()[home["id"]])
-    r = _t("POST cluster/undo (30 files)", lambda: client.post("/cluster/undo", data={"folder": str(home_folder)}), 1.0)
+    r = _t("POST cluster/undo (30 files, queued)",
+           lambda: client.post("/cluster/undo", data={"folder": str(home_folder)}), 0.5)
     assert r.status_code == 303
+    _t("wait for the undo (30 files)", main.wait_for_apply, 1.0)
 
     # --- everyday move, settings actions, a second run ------------------------------------------
     r = _t("POST everyday/move_all (8 000 files, queued)", lambda: client.post("/everyday/move_all"), 0.5)
@@ -209,7 +214,9 @@ def test_everything_on_twenty_thousand_photos(client, big):
     one = Path(apply_batch["ops"][7]["src"]).name
     r = _t("GET /history?file=<one of 20k files>", get("/history", params={"file": one}), 0.6, repeat=3)
     assert r.status_code == 200
-    _t("POST cluster/undo (2 000 files)", lambda: client.post("/cluster/undo", data={"folder": str(renamed)}), 30.0)
+    _t("POST cluster/undo (2 000 files, queued)",
+       lambda: client.post("/cluster/undo", data={"folder": str(renamed)}), 0.5)
+    _t("wait for the undo (2 000 files)", main.wait_for_apply, 30.0)
     undo_batch = journal.batches()[0]
     r = _t("POST history/<undo of 2 000>/revert", lambda: client.post(f"/history/{undo_batch['batch']}/revert"), 30.0)
     assert r.status_code == 303 and f"{undo_batch['n']} files put back" in r.headers["location"].replace("%20", " ")

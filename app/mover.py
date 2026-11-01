@@ -144,9 +144,10 @@ def manifest_forget(cfg: Config, dst: Path) -> None:
         folder = folder.parent
 
 
-def relocate(cfg: Config, folder: Path, dst: Path) -> Path:
+def relocate(cfg: Config, folder: Path, dst: Path, progress=None) -> Path:
     """Move a cluster folder to another path under the root (a rename, or the revert of one):
-    the folder, its manifest's paths, its records and the copy marks follow."""
+    the folder, its manifest's paths, its records and the copy marks follow. progress(done,
+    total, current) is called per photo whose record follows."""
     _guard(cfg)
     dst = _unique(dst)
     attempt = 0
@@ -169,7 +170,10 @@ def relocate(cfg: Config, folder: Path, dst: Path) -> Path:
         for p in m["photos"]:
             p["dst"] = str(dst / Path(p["dst"]).relative_to(folder))
         write_manifest(dst, m)
-        for p in m["photos"]:
+        total = len(m["photos"])
+        for i, p in enumerate(m["photos"]):
+            if progress:
+                progress(i, total, {"file": Path(p["dst"]).name, "bytes": 0, "since": time.time()})
             old_dst = folder / Path(p["dst"]).relative_to(dst)
             ingest.move_sidecar(old_dst, Path(p["dst"]), cfg)        # central records key on the path
             rec = ingest.read_sidecar(Path(p["dst"]), cfg)
@@ -178,6 +182,8 @@ def relocate(cfg: Config, folder: Path, dst: Path) -> Path:
                 ingest.write_sidecar(Path(p["dst"]), rec, cfg)
             if m.get("mode") == "copy":
                 _mark_source(cfg, Path(p["src"]), Path(p["dst"]), dst.name)
+        if progress:
+            progress(total, total, None)
         events.log("label", old=old, new=dst.name, proposal=m.get("proposal_id"),
                    decision_id=m.get("decision", {}).get("id"))
     return dst
@@ -392,22 +398,25 @@ def _apply_everyday(cfg: Config, min_age_days: float, progress) -> int:
     return n
 
 
-def undo(cfg: Config, folder: Path) -> int:
+def undo(cfg: Config, folder: Path, progress=None) -> int:
     """Move every photo listed in the manifest back to where it came from (copy mode: delete
-    the copies and clear the originals' marks)."""
+    the copies and clear the originals' marks). progress(done, total, current) per photo."""
     m = read_manifest(folder)
     if not m:
         return 0
     _guard(cfg)
     with journal.batch("undo", folder=str(folder), proposal=m.get("proposal_id"), name=m["name"], kind=m["kind"]):
-        return _undo(cfg, folder, m)
+        return _undo(cfg, folder, m, progress)
 
 
-def _undo(cfg: Config, folder: Path, m: dict) -> int:
+def _undo(cfg: Config, folder: Path, m: dict, progress=None) -> int:
     copied = m.get("mode") == "copy"
     n = 0
-    for p in m["photos"]:
+    total = len(m["photos"])
+    for i, p in enumerate(m["photos"]):
         dst, src = Path(p["dst"]), Path(p["src"])
+        if progress:
+            progress(i, total, _current(dst))
         if not dst.exists():
             continue
         if copied:
@@ -416,6 +425,8 @@ def _undo(cfg: Config, folder: Path, m: dict) -> int:
         else:
             _transfer(cfg, dst, src.parent, name=src.name)     # back under its own name
         n += 1
+    if progress:
+        progress(total, total, None)
     (folder / MANIFEST).unlink(missing_ok=True)
     _forget_cluster(folder)
     invalidate_clusters()
@@ -432,14 +443,17 @@ def _undo(cfg: Config, folder: Path, m: dict) -> int:
     return n
 
 
-def rename(cfg: Config, folder: Path, new_name: str) -> Path:
-    _guard(cfg)
+def rename_target(cfg: Config, folder: Path, new_name: str) -> Path:
+    """Where a rename takes the folder: next to it, or (a named home burst) out of _unnamed."""
     new_name = cluster.sanitize(new_name)
-    root = Path(cfg.root)
-    # a named home burst leaves _unnamed
-    dst = root / new_name if folder.parent.name == cfg.unnamed_dir else folder.with_name(new_name)
-    with journal.batch("rename", folder=str(folder), name=new_name):
-        return relocate(cfg, folder, dst)
+    return Path(cfg.root) / new_name if folder.parent.name == cfg.unnamed_dir else folder.with_name(new_name)
+
+
+def rename(cfg: Config, folder: Path, new_name: str, progress=None) -> Path:
+    _guard(cfg)
+    dst = rename_target(cfg, folder, new_name)
+    with journal.batch("rename", folder=str(folder), name=dst.name):
+        return relocate(cfg, folder, dst, progress)
 
 
 def move_out(cfg: Config, folder: Path, photo: Path) -> dict | None:

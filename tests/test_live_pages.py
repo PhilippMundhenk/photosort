@@ -98,13 +98,15 @@ def test_run_finishing_does_not_forget_review_edits(client, library):
 
 
 def test_review_page_offers_reload_instead_of_reloading(client, library):
-    """The page's script reloads nothing by itself; the base template carries the offer."""
+    """The page's script reloads nothing by itself (except a cluster page whose undo, rename or
+    put back just finished: it shows the folder as it was); the base template carries the offer."""
     html = client.get("/review").text
     assert 'id="busy-hint"' in html
     js = (Path(main.BASE) / "static" / "ui.js").read_text(encoding="utf-8")
     body = js.split("function offerReload")[1]
     assert "location.reload()" in body                                  # only on the stateless pages or on click
-    assert js.count("location.reload()") == 2                           # the offer's click handler, and that one
+    assert js.count("location.reload()") == 3                           # the offer's click handler, that one,
+    assert 'hasAttribute("data-reload-done")) { reloading = true; location.reload()' in js   # and a finished job
 
 
 def test_pages_have_no_form_control_per_photo(client, library):
@@ -339,6 +341,7 @@ def test_same_file_names_from_two_phones_end_up_apart_and_come_back_right(client
         if not layout:
             assert sum(1 for n in files if n.endswith("_1.jpg")) == 12                             # clashes renamed
         client.post("/cluster/undo", data={"folder": str(folder)})
+        main.wait_for_apply()
         assert all(p.exists() for p in twins)
         assert all(p.read_bytes() == b"\xff\xd8" + p.parent.name.encode() + b"\xff\xd9" for p in twins)   # each home
         props = cluster.load_proposals()
