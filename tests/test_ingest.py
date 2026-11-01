@@ -236,6 +236,22 @@ def test_write_xmp_keywords_creates_and_appends(tmp_path):
     assert sorted(subjects) == ["photosort/cluster/2026-06 Lisbon", "photosort/zone/away"]
 
 
+@pytest.mark.skipif(not HAS_EXIFTOOL, reason="exiftool not installed")
+def test_new_xmp_holds_the_keywords_only(tmp_path):
+    """No copy of the photo's metadata: such a copy loses the offset of the dates, and photo
+    managers prefer the sidecar to the photo (#49)."""
+    p = tmp_path / "shot.png"
+    _png_1x1(p)
+    subprocess.run(["exiftool", "-q", "-overwrite_original", "-DateTimeOriginal=2026:10:31 17:50:14",
+                    "-OffsetTimeOriginal=+01:00", "-Make=Test", "-Model=Cam", "-GPSLatitude=38.72",
+                    "-GPSLatitudeRef=N", str(p)], check=True)
+    ingest.write_xmp_keywords(p, ["zone/away"])
+    out = subprocess.run(["exiftool", "-json", "-G1", "-XMP:all", str(p.with_suffix(".xmp"))],
+                         capture_output=True, text=True)
+    tags = {k for k in json.loads(out.stdout)[0] if k != "SourceFile"}
+    assert tags <= {"XMP-dc:Subject", "XMP-x:XMPToolkit"}, tags
+
+
 @pytest.mark.skipif(shutil.which("exiftool") is None, reason="exiftool not installed")
 def test_xmp_keywords_for_many_photos_use_one_exiftool_process(tmp_path, monkeypatch):
     photos = []

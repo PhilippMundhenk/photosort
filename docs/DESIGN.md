@@ -234,7 +234,10 @@ Explicit requirement: databases get lost and break. So:
   is dropped by default (the folder's `manifest.json` carries everything; copy-mode
   originals keep theirs, which marks them as done). Keywords are optionally mirrored into a
   standard `.xmp` sidecar for digiKam/Lightroom. Writing into the originals was rejected
-  (no benefit, risky for RAW).
+  (no benefit, risky for RAW). The sidecar holds the keywords only: until November 2026 a new
+  one was made with `exiftool -o`, which also copied the photo's metadata, dates without their
+  offset and a video's UTC clock as local time, and photo managers prefer the sidecar to the
+  file (#49).
 - **Manifest per cluster folder** (`manifest.json`): proposal, decision and confidence,
   source→target of every photo, later corrections. It is the undo log and the eval set.
 - **The folder tree is the decision**: a photo in a trip folder is settled; `_unnamed/` holds
