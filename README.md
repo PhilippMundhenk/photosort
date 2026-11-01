@@ -118,7 +118,9 @@ decision model that was tried for exactly this (DESIGN.md, section 10). You name
    - Everything else is *everyday*: shown on the Everyday page; moved into `YYYY/MM/` by the
      button there once older than `everyday_keep_days` (4), or on every run with *Auto-move everyday*.
 3. **Review** in the web UI: approve, reject, rename, toggle single photos, name unnamed
-   bursts, undo whole clusters, move single photos back out. **Everyday** lists every photo
+   bursts, undo whole clusters, move single photos back out. *why* on a proposal shows the
+   rule that made it, its conditions against the run's numbers, the rules checked before it
+   and the longest pause inside the run, before you tune a threshold. **Everyday** lists every photo
    that is in no cluster, by month and day; tick photos to add them to a pending proposal or
    to create a cluster by hand (kept across runs, marked "by hand"). A cluster's page has the
    same bar: tick photos and move them to another cluster (moved in by the worker), to an

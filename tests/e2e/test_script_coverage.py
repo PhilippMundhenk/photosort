@@ -234,6 +234,16 @@ async def _session(url: str, data: Path, cfg) -> list[dict]:
         await page.keyboard.press("Escape")
         await expect(page.locator(".viewer")).to_be_hidden()
 
+        # the why panel: "why" opens it, a second press (by key) closes it again (issue #6)
+        why = trip.locator("[data-why]")
+        await why.click()
+        await expect(trip.locator(".why-body")).to_be_visible()
+        await expect(why).to_have_attribute("aria-expanded", "true")
+        await why.focus()
+        await page.keyboard.press("Enter")
+        await expect(trip.locator(".why-body")).to_be_hidden()
+        await expect(why).to_have_attribute("aria-expanded", "false")
+
         # autosave: as you type, on Enter, a failing save, the fading note, a failing poll
         rename = re.compile(r"/proposal/.*/rename$")
         await page.route(rename, lambda route: route.fulfill(status=500, content_type="application/json",

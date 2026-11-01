@@ -87,6 +87,14 @@
     var details = more.closest(".card") ? more.closest(".card").querySelector("details[data-photos]") : null;
     if (details) { details.open = true; loadMore(details); }
   });
+  // the why panel of a proposal (issue #6): "why" shows or hides the explanation below it
+  document.addEventListener("click", function (ev) {
+    var why = ev.target.closest("[data-why]");
+    if (!why) return;
+    var body = why.nextElementSibling;
+    body.hidden = !body.hidden;
+    why.setAttribute("aria-expanded", body.hidden ? "false" : "true");
+  });
 
   // photos are plain elements (no input or button per photo: password-manager extensions watch
   // every form control on the page); Enter and Space work on them like on a button
