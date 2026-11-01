@@ -87,6 +87,14 @@
     var details = more.closest(".card") ? more.closest(".card").querySelector("details[data-photos]") : null;
     if (details) { details.open = true; loadMore(details); }
   });
+  // the why panel of a proposal (issue #6): "why" shows or hides the explanation below it
+  document.addEventListener("click", function (ev) {
+    var why = ev.target.closest("[data-why]");
+    if (!why) return;
+    var body = why.nextElementSibling;
+    body.hidden = !body.hidden;
+    why.setAttribute("aria-expanded", body.hidden ? "false" : "true");
+  });
 
   // photos are plain elements (no input or button per photo: password-manager extensions watch
   // every form control on the page); Enter and Space work on them like on a button
@@ -200,7 +208,7 @@
         else if (p.phase === "clustering") parts.push("Clustering…");
         else parts.push("Working…");
       }
-      Object.keys(s.applying || {}).forEach(function (k) { parts.push("Moving " + s.applying[k].name + ": " + fmt(s.applying[k])); });
+      Object.keys(s.applying || {}).forEach(function (k) { parts.push(s.applying[k].verb + " " + s.applying[k].name + ": " + fmt(s.applying[k])); });
       if (s.approved && !Object.keys(s.applying || {}).length && !s.dry_run) parts.push(s.approved + " approved, queued");
       return parts.join(" · ");
     }
@@ -221,6 +229,8 @@
       var badge = card.querySelector(".badge.warn") || card.querySelector(".badge:not(.trip):not(.local):not(.home)");
       if (badge) { badge.textContent = failed ? "failed" : "moved"; badge.className = "badge " + (failed ? "bad" : "ok"); }
       el.textContent = failed ? what : "done";                          // the card says it; no reload offer
+      // undo, rename, put back: the page shows the folder as it was; reload it as it is now
+      if (!failed && el.hasAttribute("data-reload-done")) { reloading = true; location.reload(); }
     }
     function progressCards(s) {
       document.querySelectorAll("[data-progress]").forEach(function (el) {

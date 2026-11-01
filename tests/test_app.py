@@ -67,7 +67,7 @@ def test_pages_render_empty(client):
 def test_api_status(client):
     s = client.get("/api/status").json()
     assert s == {"state": main._state, "pending": 0, "dry_run": False, "approved": 0, "applying": {},
-                 "queue": {}, "everyday_queued": False}
+                 "queue": {}, "jobs": 0, "everyday_queued": False}
 
 
 def test_new_device_folder_is_picked_up_without_configuration(client, tmp_path):
@@ -428,7 +428,9 @@ def test_name_unnamed_burst_then_view_move_out_undo(client, library):
         "/clusters/view", params={"folder": str(dst)}).text
 
     r = client.post("/cluster/undo", data={"folder": str(dst)})
-    assert r.status_code == 303 and r.headers["location"] == "/clusters" and not dst.exists()
+    assert r.status_code == 303 and r.headers["location"] == "/clusters"
+    main.wait_for_apply()                                                   # the worker moves them back
+    assert not dst.exists()
     assert len(list(Path(cfg.inboxes[0]["path"]).glob("*.jpg")) + list(Path(cfg.inboxes[1]["path"]).glob("*.jpg"))) \
         == library.n
 
@@ -509,7 +511,9 @@ def test_removed_photo_is_everyday_and_can_be_put_back(client, library, monkeypa
     assert "Removed from this cluster" in page and "put back" in page and "remove from cluster" in page
     assert "not this trip" not in page
     r = client.post("/cluster/put_back", data={"folder": str(folder), "src": src})
-    assert r.status_code == 303 and Path(photo).exists() and not Path(src).exists()
+    assert r.status_code == 303
+    main.wait_for_apply()                                                   # the worker puts it back
+    assert Path(photo).exists() and not Path(src).exists()
     assert src not in _proposals("local")["excluded"]
     assert len(cluster.everyday_records(cfg)) == n_everyday
     assert "Removed from this cluster" not in client.get("/clusters/view", params={"folder": str(folder)}).text
@@ -524,10 +528,17 @@ def test_removed_photo_is_everyday_and_can_be_put_back(client, library, monkeypa
     cluster.run(cfg)
     assert src in _proposals("local")["excluded"] and len(cluster.everyday_records(cfg)) == n_everyday + 1
 
-    # a removed photo that has vanished cannot be put back: a page says so, not a 500
+    # a removed photo that has vanished cannot be put back: the cluster page says so, not a 500
     Path(src).unlink()
     r = client.post("/cluster/put_back", data={"folder": str(folder), "src": src})
-    assert r.status_code == 404 and "Not put back" in r.text
+    assert r.status_code == 303
+    main.wait_for_apply()
+    key = f"put_back:{folder}:{src}"
+    assert client.get("/api/status").json()["queue"][key].startswith("failed: FileNotFoundError")
+    page = client.get("/clusters/view", params={"folder": str(folder)}).text
+    assert "failed" in page and "not found where it was left" in page
+    assert "not found where it was left" in client.get("/clusters").text
+    assert events.read(limit=1, kind="review")[0]["action"] == "put_back_failed"
 
 
 def test_undo_marks_applied_proposal_rejected(client, library):
@@ -539,6 +550,7 @@ def test_undo_marks_applied_proposal_rejected(client, library):
     folder = mover.target_folder(cfg, trip)
     assert _proposals("trip")["status"] == "applied"
     client.post("/cluster/undo", data={"folder": str(folder)})
+    main.wait_for_apply()
     assert _proposals("trip")["status"] == "rejected"
     assert "No clusters applied yet" in client.get("/clusters").text
 
@@ -779,3 +791,79 @@ def test_settings_modes_hide_the_rare_settings_but_keep_their_values(client, cfg
     after = config.load()
     assert after.trip_min_hours == 33.0 and after.settings_mode == "basic" and after.auto_apply_trips
     assert after.everyday_layout == "YYYY/MM" and after.dry_run is False
+
+
+# --- start over (issue #23) -------------------------------------------------------------------------
+
+def _exif_from_records(monkeypatch, cfg: config.Config) -> None:
+    """The synthetic photos have no EXIF: a forced re-read gets the tags their records came from."""
+    def fake(paths):
+        out = {}
+        for p in paths:
+            rec = ingest.read_sidecar(p, cfg) or {}
+            tags = {"DateTimeOriginal": datetime.fromisoformat(rec["ts"]).strftime("%Y:%m:%d %H:%M:%S"),
+                    "Model": rec.get("camera") or "phone"}
+            if rec.get("gps_source") == "exif":
+                tags["GPSLatitude"], tags["GPSLongitude"] = rec["lat"], rec["lon"]
+            out[str(p)] = tags
+        return out
+    monkeypatch.setattr(ingest, "exif_batch", fake)
+
+
+def test_start_over_drops_everything_in_review_and_reclusters_from_the_inbox(client, library, monkeypatch):
+    cfg = config.load()
+    cfg.dry_run = True
+    config.save(cfg)
+    main.run_pipeline("test")
+    props = cluster.load_proposals()
+    kinds = {p["kind"]: p for p in props.values()}
+    kinds["trip"]["status"] = "rejected"                                   # its photos stay out of clustering
+    kinds["local"].update(status="approved", name="2026-06-27 Edited", name_edited=True)
+    kinds["home"]["excluded"] = [kinds["home"]["photos"][0]["path"]]
+    manual = cluster.create_manual("home", "By hand", [r for r in cluster.records_filled(cfg)][:2])
+    props[manual["id"]] = manual
+    cluster.save_proposals(props)
+    assert sum(p["status"] == "pending" for p in cluster.load_proposals().values()) == 2
+    _exif_from_records(monkeypatch, cfg)
+    stats = main.run_pipeline("start_over", fresh=True)
+    assert stats["dropped"] == 4 and stats["ingest"]["new"] == library.n   # every photo read again
+    fresh = cluster.load_proposals()
+    assert sorted(p["kind"] for p in fresh.values()) == ["home", "local", "trip"]
+    assert all(p["status"] == "pending" and not p.get("excluded") and not p.get("name_edited")
+               for p in fresh.values())
+    assert {p["kind"]: p["id"] for p in fresh.values()} == {k: p["id"] for k, p in kinds.items()}   # same runs
+    assert all(p.exists() for p in library.paths)                           # dry-run: nothing moved
+    assert any(e["kind"] == "start_over" and e["dropped"] == 4 for e in events.read(limit=20))
+
+
+def test_start_over_keeps_moved_clusters_and_copied_originals_stay_sorted(client, library, monkeypatch):
+    cfg = config.load()
+    cfg.dry_run, cfg.copy_instead_of_move = False, True
+    config.save(cfg)
+    cluster.run(cfg)
+    local = next(p for p in cluster.load_proposals().values() if p["kind"] == "local")
+    mover.apply(cfg, local, reviewed=True)
+    props = cluster.load_proposals()
+    props[local["id"]]["status"] = "applied"
+    cluster.save_proposals(props)
+    _exif_from_records(monkeypatch, cfg)
+    stats = main.run_pipeline("start_over", fresh=True)
+    main.wait_for_apply()
+    assert stats["dropped"] == 2                                            # trip and home; the moved one stays
+    fresh = cluster.load_proposals()
+    assert fresh[local["id"]]["status"] == "applied"
+    originals = {p["path"] for p in local["photos"]}
+    assert all(Path(p).exists() for p in originals)                         # copy mode: still in the inbox
+    assert all(ingest.read_sidecar(Path(p), cfg).get("copied_to") for p in originals)   # mark kept on re-read
+    assert not any(ph["path"] in originals for pid, p in fresh.items() if pid != local["id"] for ph in p["photos"])
+
+
+def test_start_over_button_runs_it_in_the_background(client, library, monkeypatch):
+    page = client.get("/settings").text
+    assert 'action="/start_over"' in page and ">Start over</button>" in page
+    _exif_from_records(monkeypatch, config.load())
+    main._state["last_run"] = None
+    r = client.post("/start_over")
+    assert r.status_code == 303 and r.headers["location"].startswith("/settings?msg=Starting%20over")
+    stats = _wait_run()
+    assert stats["trigger"] == "start_over" and "dropped" in stats

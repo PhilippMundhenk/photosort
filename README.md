@@ -25,12 +25,19 @@ inbox/camera/**.dng  ─┘                          sorted/_unnamed/2026-06-30 
   delete; approvals wait until you switch it off. Approve, rename, exclude single photos, name
   bursts, undo whole folders; the Everyday page shows what was not clustered and lets you build
   clusters by hand.
+- **Everything in review is temporary.** Until a cluster is moved, nothing is final: **Settings →
+  Start over** drops every proposal that has not been moved (approvals, rejections, names,
+  exclusions, clusters built by hand), reads every inbox photo again and clusters with the
+  current settings. Moved clusters, the history and the settings stay.
 - **Every move is on record and can be taken back.** A journal keeps one line per file operation,
   grouped by action; the History page reverts any action, or puts one file back where it was
   before a given action, as far as the files are still where that action left them.
 - **Two phones, one library.** Each device is followed on its own timeline: the family trip
   with two phones is one folder, the partner's photos at home never cut it short, and two
   phones on different continents are two trips.
+- **Cameras without GPS join the trip.** A photo without a position gets one from the photos
+  with GPS around it in time (same device first, then any): interpolated between the two
+  located photos before and after it when they are close in time, else the nearest one.
 - **An approval covers what you saw.** A cluster you approved but that has not moved yet (dry-run,
   a failed move) goes back to review when photos join it later, e.g. a camera imported after the
   phones; it never moves photos nobody looked at.
@@ -188,7 +195,9 @@ decision model that was tried for exactly this (DESIGN.md, section 10). You name
    - Everything else is *everyday*: shown on the Everyday page; moved into `YYYY/MM/` by the
      button there once older than `everyday_keep_days` (4), or on every run with *Auto-move everyday*.
 3. **Review** in the web UI: approve, reject, rename, toggle single photos, name unnamed
-   bursts, undo whole clusters, move single photos back out. **Everyday** lists every photo
+   bursts, undo whole clusters, move single photos back out. *why* on a proposal shows the
+   rule that made it, its conditions against the run's numbers, the rules checked before it
+   and the longest pause inside the run, before you tune a threshold. **Everyday** lists every photo
    that is in no cluster, by month and day; tick photos to add them to a pending proposal or
    to create a cluster by hand (kept across runs, marked "by hand"). A cluster's page has the
    same bar: tick photos and move them to another cluster (moved in by the worker), to an
@@ -230,7 +239,7 @@ docker compose -f docker-compose.test.yml run --rm tests pytest -m e2e -v
 |---|---|---|
 | unit | `tests/test_{geo,config,ingest,events,cluster,devices,mover,video,thumbs,manual,sidecars,perf_paths,edges}.py` | rules, two devices, coercion, records, moving/copying, videos, thumbnails (helper process), manual clusters, caches and hot paths, every error path |
 | notifier | `tests/test_notify.py` | the Matrix notifier against a fake homeserver: off by default, one message per new proposal and never twice, a summary for many, failures logged without the token and retried, the run unharmed, the Settings controls |
-| web e2e | `tests/test_app.py`, `tests/test_live_pages.py`, `tests/test_moving_matrix.py`, `tests/test_templates.py` | every page and form action through FastAPI's TestClient; batched clicks, a run finishing mid-review; every way a file can move against dry-run, live-with-switches-off and each switch |
+| web e2e | `tests/test_app.py`, `tests/test_live_pages.py`, `tests/test_moving_matrix.py`, `tests/test_templates.py`, `tests/test_jobs.py` | every page and form action through FastAPI's TestClient; batched clicks, a run finishing mid-review; every way a file can move against dry-run, live-with-switches-off and each switch; undo, rename and put back queued for the worker, busy folders, dry-run switched on while they wait |
 | soak | `tests/test_soak.py` | thirty run-approve-undo cycles: no memory growth, nothing left in queues or threads |
 | fuzz | `tests/test_fuzz.py` | a thousand random tag sets, timestamps, offsets, user texts and timelines through every parser and the clustering: never a crash, always well-formed output (it found five defects on its first run) |
 | latency | `tests/test_perf_features.py` | every feature timed on a 20 500-photo library (pages, polls, clicks, approvals, moves of thousands of files, undo, settings); its own CI step without the coverage tracer; `PERF_BASELINE=1` prints without failing |
@@ -239,6 +248,7 @@ docker compose -f docker-compose.test.yml run --rm tests pytest -m e2e -v
 | smoke | `python -m tests.smoke` | one synthetic end-to-end run without pytest |
 | journal | `tests/test_journal.py` | every action is one batch of file operations; revert of a batch, of one file, of a revert; skipped files reported; dry-run refused; the History page |
 | rules | `tests/test_rules.py` | the rule engine: golden test against the frozen pre-engine rules on every library and many parameter sets, custom rules, validation, multi-home zoning, the Settings editor |
+| why panel | `tests/test_why.py` | what a proposal stores about the rule that made it, every condition in plain words, the panel on the review and cluster pages |
 | docs | `tests/test_docs.py` | the README's test table matches the files on disk, every configuration field has a form control, the design document names every module |
 | coverage | the test image's default command | line and branch coverage of `app/` must stay at 99 % or above (it is 100 % as of 2026-09-29); `tests/e2e/test_script_coverage.py` measures how much of `ui.js` one browser session executes (99 % or above; every function runs); `tests/test_templates.py` renders every template branch; CI also starts the published runtime image and calls every page |
 
@@ -257,11 +267,12 @@ CI (`.github/workflows/ci.yml`) runs the test image on every push and PR, then b
 
 Done: inputs discovered per device folder; trips, day outs, home bursts, everyday tree; review
 UI with undo, corrections, Everyday page and manual clusters; videos, thumbnails, named places;
-dry-run that blocks every file operation; background moves with progress. A decision model
+dry-run that blocks every file operation; background moves, undo, renames and put-backs with
+progress. A decision model
 (Laya, System One API) was tried on the home-burst question and dropped (DESIGN.md §10).
 
 Open work is tracked as [issues](https://github.com/PhilippMundhenk/photosort/issues), among
-them a generic rule engine (#2), multi-home (#3), background undo (#4), naming of transit
+them a generic rule engine (#2), multi-home (#3), naming of transit
 stops and city districts (#5), a per-proposal "why" panel (#6), large-library performance (#7),
 content-based signals for home bursts (#9) and multi-user support (#1, which will also map users
 to Matrix rooms; the notifier itself, #8, posts into one room).

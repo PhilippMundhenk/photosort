@@ -20,6 +20,23 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2 * r * math.asin(math.sqrt(a))
 
 
+def interpolate(lat1: float, lon1: float, lat2: float, lon2: float, f: float) -> tuple[float, float]:
+    """The point a fraction f (0..1) of the way from the first point to the second along the
+    great circle: right across the date line and near the poles, where averaging degrees is not."""
+    p1, l1, p2, l2 = map(math.radians, (lat1, lon1, lat2, lon2))
+    a = (math.cos(p1) * math.cos(l1), math.cos(p1) * math.sin(l1), math.sin(p1))
+    b = (math.cos(p2) * math.cos(l2), math.cos(p2) * math.sin(l2), math.sin(p2))
+    omega = math.acos(max(-1.0, min(1.0, sum(x * y for x, y in zip(a, b, strict=True)))))
+    if omega < 1e-12:                                   # the same spot (or as good as)
+        return lat1, lon1
+    if omega > math.pi - 1e-9:                          # opposite ends of the earth: no one way between,
+        return (lat1, lon1) if f < 0.5 else (lat2, lon2)   # the nearer end in time
+    wa, wb = math.sin((1 - f) * omega) / math.sin(omega), math.sin(f * omega) / math.sin(omega)
+    x, y, z = (wa * u + wb * v for u, v in zip(a, b, strict=True))
+    return (round(math.degrees(math.atan2(z, math.hypot(x, y))), 7),
+            round(math.degrees(math.atan2(y, x)), 7))
+
+
 def zone_for(cfg: Config, dist_km: float | None) -> str:
     if dist_km is None:
         return ZONE_UNKNOWN

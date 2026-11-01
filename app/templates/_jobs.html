@@ -1,0 +1,7 @@
+{# undo, rename and put back run in the background: one card each, with progress; the page reloads when one is
+   done. data-seen: the job was queued before the page was rendered, so "not in the queue any more" means done #}
+{% for j in jobs %}<div class="card job">
+  {% if j.error %}<span class="badge bad">failed</span> {{ j.verb }} {{ j.name }}: <span class="small">{{ j.error }}</span>
+  {% else %}<span class="badge warn">{{ 'running' if j.progress else 'queued' }}</span> {{ j.verb }} {{ j.name }}
+  <span class="small" data-progress="{{ j.key }}" data-seen="1" data-reload-done>{% if j.progress %}{{ j.progress.done }} / {{ j.progress.total }}{% else %}starts after the current move{% endif %}</span>{% endif %}
+</div>{% endfor %}

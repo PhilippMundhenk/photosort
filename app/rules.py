@@ -7,7 +7,8 @@ fields when none is set):
                       at home, and an excursion ends at any of them
     excursions:       how runs of photos away from home are cut (gaps, distances, device merge,
                       the hours within which two devices are "in the same area" and a photo
-                      without GPS borrows a neighbour's position)
+                      without GPS borrows a neighbour's position, and the longest gap between
+                      two located photos across which its position is interpolated)
     excursion_rules:  evaluated in order over every excursion run; the first whose `when`
                       matches decides: a trip, a day out (`local`), or `everyday` (no cluster)
     bursts:           how the remaining photos are grouped into bursts (a gap in hours)
@@ -58,7 +59,7 @@ CONDITIONS: dict[str, type] = {
 }
 RULE_KEYS = {"name", "kind", "when", "name_template", "ongoing_days"}
 EXCURSION_KEYS = {"split_gap_days": float, "split_distance_km": float, "local_gap_hours": float, "merge_devices": bool,
-                  "same_area_hours": float, "neighbour_gps_hours": float}
+                  "same_area_hours": float, "neighbour_gps_hours": float, "interpolate_gps_hours": float}
 BURST_KEYS = {"gap_hours": float}
 TEMPLATE_FIELDS = ("span", "places", "place", "media", "n", "home")
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
@@ -106,7 +107,8 @@ def defaults(cfg: Config) -> dict:
         "excursions": {"split_gap_days": float(cfg.trip_gap_days),
                        "split_distance_km": float(cfg.trip_split_distance_km),
                        "local_gap_hours": float(cfg.local_gap_hours), "merge_devices": True,
-                       "same_area_hours": 24.0, "neighbour_gps_hours": 48.0},
+                       "same_area_hours": 24.0, "neighbour_gps_hours": 48.0,
+                       "interpolate_gps_hours": float(cfg.gps_interpolation_hours)},
         "excursion_rules": [
             {"name": "trip", "kind": "trip", "when": {"span_hours_min": float(cfg.trip_min_hours),
                                                       "located_min": int(cfg.trip_min_photos)},
@@ -273,39 +275,28 @@ def features(run: list[dict], baseline: float | None = None) -> dict:
     }
 
 
-def matches(rule: dict, f: dict) -> bool:
+def holds(k: str, v, f: dict) -> bool:
+    """One condition of a rule against a run's features (an unknown key holds)."""
     from . import cluster
-    for k, v in (rule.get("when") or {}).items():
-        if k == "span_hours_min" and not f["span_hours"] >= v:
-            return False
-        if k == "span_hours_max" and not f["span_hours"] < v:
-            return False
-        if k == "photos_min" and not f["photos"] >= v:
-            return False
-        if k == "photos_max" and not f["photos"] <= v:
-            return False
-        if k == "located_min" and not f["located"] >= v:
-            return False
-        if k == "mostly_zone" and not f["zones"].get(v, 0) > f["photos"] / 2:
-            return False
-        if k == "zone" and f["zone"] != v:
-            return False
-        if k == "baseline_factor" and not f["photos"] >= (f["baseline"] or 0.0) * v:
-            return False
-        if k == "devices_min":
-            if f["devices"] is None:
-                f["devices"] = cluster.count_devices(f["_run"])
-            if not f["devices"] >= v:
-                return False
-        if k == "videos_min" and not f["videos"] >= v:
-            return False
-        if k == "weekday" and f["weekday"] not in v:
-            return False
-        if k == "start_hour_min" and not f["start_hour"] >= v:
-            return False
-        if k == "end_hour_max" and not f["end_hour"] <= v:
-            return False
-    return True
+    checks = {
+        "span_hours_min": lambda: f["span_hours"] >= v, "span_hours_max": lambda: f["span_hours"] < v,
+        "photos_min": lambda: f["photos"] >= v, "photos_max": lambda: f["photos"] <= v,
+        "located_min": lambda: f["located"] >= v,
+        "mostly_zone": lambda: f["zones"].get(v, 0) > f["photos"] / 2, "zone": lambda: f["zone"] == v,
+        "baseline_factor": lambda: f["photos"] >= (f["baseline"] or 0.0) * v,
+        "videos_min": lambda: f["videos"] >= v, "weekday": lambda: f["weekday"] in v,
+        "start_hour_min": lambda: f["start_hour"] >= v, "end_hour_max": lambda: f["end_hour"] <= v,
+    }
+    if k == "devices_min":
+        if f["devices"] is None:
+            f["devices"] = cluster.count_devices(f["_run"])
+        return f["devices"] >= v
+    check = checks.get(k)
+    return check is None or bool(check())
+
+
+def matches(rule: dict, f: dict) -> bool:
+    return all(holds(k, v, f) for k, v in (rule.get("when") or {}).items())
 
 
 def pick(rules: list[dict], f: dict) -> dict | None:
@@ -341,3 +332,117 @@ def render_name(cfg: Config, rule: dict, run: list[dict], f: dict) -> str:
 def ongoing(rule: dict, f: dict, now: datetime | None) -> bool:
     days = rule.get("ongoing_days")
     return now is not None and days is not None and (now - f["end"]) < timedelta(days=float(days))
+
+
+# --- the why panel (issue #6) ---------------------------------------------------------------------------
+
+FACT_OF = {"span_hours_min": "span_hours", "span_hours_max": "span_hours", "photos_min": "photos",
+           "photos_max": "photos", "located_min": "located", "mostly_zone": "zones", "zone": "zone",
+           "baseline_factor": "baseline", "devices_min": "devices", "videos_min": "videos",
+           "weekday": "weekday", "start_hour_min": "start_hour", "end_hour_max": "end_hour"}
+CORE_FACTS = ("span_hours", "photos", "located", "zones", "devices", "videos")
+
+
+def failed(rule: dict, f: dict) -> dict:
+    """The conditions of a rule the run does not meet, with their values."""
+    return {k: v for k, v in (rule.get("when") or {}).items() if not holds(k, v, f)}
+
+
+def explain(block: list[dict], rule: dict, f: dict) -> dict:
+    """What the why panel shows, stored with the proposal so the page computes nothing: the
+    rule's conditions and those the run misses (a wrapper may build a proposal its rule does not
+    match), the rules checked before it with the conditions that ruled each out, and the run's
+    values those conditions look at, rounded. A few numbers per proposal."""
+    from . import cluster
+    idx = next((i for i, r in enumerate(block) if r is rule or r == rule), 0)
+    before = [{"rule": r.get("name"), "failed": failed(r, f)} for r in block[:idx]]
+    if f["devices"] is None:
+        f["devices"] = cluster.count_devices(f["_run"])
+    keys = set(CORE_FACTS) | {FACT_OF[k] for r in [*block[:idx], rule] for k in (r.get("when") or {}) if k in FACT_OF}
+    facts = {}
+    for k in sorted(keys):
+        v = f[k]
+        facts[k] = dict(v) if k == "zones" else round(v, 2) if isinstance(v, float) else v
+    return {"when": dict(rule.get("when") or {}), "failed": sorted(failed(rule, f)), "before": before,
+            "facts": facts}
+
+
+ZONE_TEXT = {geo.ZONE_HOME: "at home", geo.ZONE_LOCAL: "near home", geo.ZONE_AWAY: "far from home",
+             geo.ZONE_UNKNOWN: "without a position"}
+
+
+def _num(x) -> str:
+    if x is None:
+        return "?"
+    return f"{x:.1f}".rstrip("0").rstrip(".") if isinstance(x, float) else str(x)
+
+
+def _plural(n, word: str) -> str:
+    return f"{_num(n)} {word}{'' if n == 1 else 's'}"
+
+
+def condition_text(k: str, v, facts: dict) -> tuple[str, str]:
+    """A condition in plain words, and the run's value for it."""
+    g = facts.get
+    texts = {
+        "span_hours_min": lambda: (f"lasts at least {_num(v)} h", f"{_num(g('span_hours'))} h"),
+        "span_hours_max": lambda: (f"lasts less than {_num(v)} h", f"{_num(g('span_hours'))} h"),
+        "photos_min": lambda: (f"at least {_plural(v, 'file')}", _plural(g("photos"), "file")),
+        "photos_max": lambda: (f"at most {_plural(v, 'file')}", _plural(g("photos"), "file")),
+        "located_min": lambda: (f"at least {_num(v)} with a position", f"{_num(g('located'))} with a position"),
+        "mostly_zone": lambda: (f"more than half of the files {ZONE_TEXT.get(v, v)}",
+                                f"{(g('zones') or {}).get(v, 0)} of {_num(g('photos'))}"),
+        "zone": lambda: (f"most files {ZONE_TEXT.get(v, v)}", f"most {ZONE_TEXT.get(g('zone'), '?')}"),
+        "baseline_factor": lambda: (
+            f"at least {_num(v)}x your usual day at home"
+            + (f" ({_num(float(v) * g('baseline'))} files)" if g("baseline") is not None else ""),
+            f"{_plural(g('photos'), 'file')}, usual day {_num(g('baseline'))}"),
+        "devices_min": lambda: (f"at least {_plural(v, 'device')}", _plural(g("devices"), "device")),
+        "videos_min": lambda: (f"at least {_plural(v, 'video')}", _plural(g("videos"), "video")),
+        "weekday": lambda: (f"starts on {', '.join(v)}", f"starts on {g('weekday', '?')}"),
+        "start_hour_min": lambda: (f"starts at {_num(v)}:00 or later", f"starts at {_num(g('start_hour'))}:xx"),
+        "end_hour_max": lambda: (f"ends by {_num(v)}:00", f"ends at {_num(g('end_hour'))}:xx"),
+    }
+    text = texts.get(k)
+    return text() if text else (f"{k} {v}", "?")
+
+
+def describe(decision: dict | None) -> dict | None:
+    """The why panel in plain words, from what the proposal stored (None: nothing to show: a
+    proposal made by hand, or one stored before the panel existed, which the next run rebuilds)."""
+    decision = decision or {}
+    why, note = decision.get("why") or {}, decision.get("note")
+    if not why:
+        return None
+    facts = why.get("facts") or {}
+    missed = set(why.get("failed") or ())
+    out = {"rule": decision.get("rule"), "note": note, "conditions": [], "before": [], "run": None, "gaps": []}
+    for k, v in (why.get("when") or {}).items():
+        need, have = condition_text(k, v, facts)
+        out["conditions"].append({"need": need, "have": have, "ok": k not in missed})
+    for b in why.get("before") or ():
+        out["before"].append({"rule": b.get("rule"), "missed": [
+            "{}: {}".format(*condition_text(k, v, facts)) for k, v in (b.get("failed") or {}).items()]})
+    if facts:
+        zones = facts.get("zones") or {}
+        parts = [f"{_num(facts.get('span_hours'))} h", _plural(facts.get("photos"), "file")]
+        if facts.get("videos"):
+            parts.append(f"{_plural(facts['videos'], 'video')} among them")
+        if facts.get("devices") is not None:
+            parts.append(f"from {_plural(facts['devices'], 'device')}")
+        where = ", ".join(f"{n} {ZONE_TEXT.get(z, z)}" for z, n in sorted(zones.items(), key=lambda zn: -zn[1]))
+        out["run"] = ", ".join(parts) + (f"; {where}" if where else "")
+    gaps = why.get("gaps") or {}
+    if "longest_h" in gaps:
+        km = gaps.get("longest_km")
+        out["gaps"].append(f"Longest pause between two photos: {_num(gaps['longest_h'])} h"
+                           + (f", {_num(km)} km apart" if km is not None else ""))
+    if gaps.get("step_km") is not None:
+        out["gaps"].append(f"Biggest step between two photos in a row: {_num(gaps['step_km'])} km")
+    if "split_gap_days" in gaps:
+        out["gaps"].append(f"A run away from home is cut at a pause of more than {_num(gaps['split_gap_days'])} days "
+                           f"between photos over {_num(gaps.get('split_distance_km'))} km apart, or of more than "
+                           f"{_num(gaps.get('local_gap_hours'))} h near home (you sleep at home)")
+    if "gap_hours" in gaps:
+        out["gaps"].append(f"A burst ends at a pause of more than {_num(gaps['gap_hours'])} h between two photos")
+    return out

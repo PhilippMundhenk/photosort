@@ -81,7 +81,12 @@ folder, the partner at home stays out of it. The same rule applies to GPS-less p
 borrow a position from the nearest located photo *of the same device*; a device with no
 located photo of its own within `neighbour_gps_hours` borrows from the others. That covers
 the camera without GPS, and also the camera that geotags only now and then: it used to count
-as a GPS device, found nothing of its own during the trip, and its shots stayed everyday. Home bursts still look at the merged
+as a GPS device, found nothing of its own during the trip, and its shots stayed everyday.
+Between two located photos at most `gps_interpolation_hours` apart (6 h by default) the
+position is not copied but interpolated by time along the great circle (issue #22): on a day
+of travel the camera shots spread along the phone's track instead of piling up at its stops.
+Across a longer gap (a night, a flight) the nearest photo stays the better guess; such
+positions are marked `interpolated:<before>..<after>` and count as borrowed (confidence 0.8). Home bursts still look at the merged
 timeline, since a birthday photographed with two phones is one occasion.
 
 ### Trip runs: mechanics
@@ -338,6 +343,22 @@ cluster page, back to the inbox. Moving out of a cluster is a correction like be
 old manifest lists it, the old proposal excludes it), so undo of either cluster stays exact;
 the moves out of one action are one journal batch, the move into the target is the worker's.
 
+Undo, rename and put back run in the worker too (November 2026, issue #4). A 400-file undo
+over a share blocked the browser for minutes and a reverse proxy could time it out. The queue
+holds job keys: a proposal id, the everyday job, or a folder job (`undo:<folder>`,
+`rename:<folder>`, `put_back:<folder>:<photo>`) whose type and arguments wait in `_jobs`. The
+worker runs one at a time under `_lock`, so a job never moves files while a scan runs; each job
+is one journal batch as before, and dry-run is checked when the request comes (refused, nothing
+queued) and again when the job starts (switched on meanwhile: the job fails with "dry-run is
+on", nothing moves). While a job waits or runs, every other action on its folder (another job,
+move out, move to another cluster, or a proposal being moved into it) is refused with "folder
+busy" instead of racing it. A rename stays inside the request when it is the directory rename
+plus a few records in the central index; with records beside the photos (on the share) or more
+than 300 photos it is queued, and the request answers with the new folder's page, which shows
+the progress until the folder is there. Job cards on the clusters page and a cluster's page show
+progress like an approval; when a job is done these pages reload themselves (they show the
+folder as it was), and a failure stays on them for fifteen minutes and in the log.
+
 A proposal keeps its identity across runs. Its id is a hash of first and last photo, so a
 photo that synced late and landed at either end gave the same excursion a new id and the
 review state (toggled photos, an edited name, an approval) was lost on the next run. A new
@@ -350,6 +371,14 @@ imported after the phones) goes back to the review queue with a note of how many
 (`new_photos`) instead of moving them unseen. One approved by an auto-apply rule just takes
 them. Once moved, a cluster is final: photos that arrive later are proposed on their own or
 stay everyday, and adding them is up to you.
+
+Everything in review is temporary (issue #23). A scheduled run keeps review state, so typing
+a name or an approval is not lost every few minutes; **Start over** (Settings) throws all of it
+away: every proposal that has not been moved is dropped, every inbox photo is read again with
+exiftool (`scan(force=True)`) and the run clusters with the settings as saved. It waits for a
+run or a move in progress rather than being skipped. Moved clusters, the journal and the
+settings stay; the copy-mode mark (`copied_to`) survives the re-read, so originals already
+sorted in copy mode are not proposed again.
 
 ## 7. Hardware constraints and how they shaped the code
 

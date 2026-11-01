@@ -1,7 +1,8 @@
 """Clustering rules (all deterministic except the home-burst judgment):
 
   zone per photo      home < home_radius < local < local_radius < away (local/away is a label only)
-  no GPS              take the nearest photo in time that has GPS
+  no GPS              interpolate between the GPS'd photos just before and after (same device
+                      first), else take the nearest photo in time that has GPS
   excursion           maximal run of photos not at home; ends at any home photo; GPS-less photos
                       inside the run ride along. A photo-less gap splits the run if it is long AND
                       the two sides are in different areas, or if it exceeds local_gap_hours while
@@ -234,10 +235,14 @@ def _filled_shared(cfg: Config) -> tuple[list[dict], int]:
     The dicts are never edited once filled; a change builds a new list."""
     with _records_lock:                   # refresh and fill in one go, from the cache itself: a thread that
         _refresh_records(cfg)             # loaded its copy a moment ago (the startup warm-up) must not
-        if _records_cache["filled"] is None:      # fill and cache a list a newer record is missing from
-            recs = [dict(r) for r in _records_cache["recs"]]
+        ex = rules.effective(cfg)["excursions"]   # the fill's own parameters: a change in Settings refills
+        fill_key = (ex.get("neighbour_gps_hours"), ex.get("interpolate_gps_hours"))
+        if _records_cache["filled"] is None or _records_cache.get("fill_key") != fill_key:
+            if _records_cache["filled"] is not None:          # same records, other positions: what is derived
+                _records_cache["version"] = _next()           # from them (the everyday list) is stale too
+            recs = [dict(r) for r in _records_cache["recs"]]   # fill and cache a list a newer record is missing from
             fill_gps_from_neighbours(cfg, recs)
-            _records_cache["filled"] = recs
+            _records_cache["filled"], _records_cache["fill_key"] = recs, fill_key
         return _records_cache["filled"], _records_cache["version"]
 
 
@@ -269,15 +274,25 @@ def _load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
     return recs, skipped
 
 
-def fill_gps_from_neighbours(cfg: Config, recs: list[dict], max_hours: float | None = None) -> None:
-    """Photos without GPS inherit position/zone from the closest GPS'd photo in time, taken by
+def fill_gps_from_neighbours(cfg: Config, recs: list[dict], max_hours: float | None = None,
+                             interpolate_hours: float | None = None) -> None:
+    """Photos without GPS take a position from the GPS'd photos around them in time, taken by
     the same device (`source`): while one phone is abroad, a screenshot on the other phone at
     home must not be placed abroad. A device with no located photo of its own within the
     window borrows from the other devices: a camera that geotags now and then (or never) must
-    still join the trip the phone recorded."""
+    still join the trip the phone recorded.
+
+    With located photos on both sides that are at most `interpolate_hours` apart (issue #22),
+    the position is interpolated between them by time, along the great circle: a camera shot a
+    third of the way between two phone photos lands a third of the way along. Otherwise, or
+    across a longer gap (a night, a flight: a straight line is no position at all), it takes
+    the nearest one within `max_hours`."""
     import bisect
+    ex = rules.effective(cfg)["excursions"]
     if max_hours is None:
-        max_hours = rules.effective(cfg)["excursions"].get("neighbour_gps_hours", 48.0)
+        max_hours = ex.get("neighbour_gps_hours", 48.0)
+    if interpolate_hours is None:
+        interpolate_hours = ex.get("interpolate_gps_hours", 6.0)
     located = [i for i, r in enumerate(recs) if r.get("lat") is not None]
     if not located:
         return
@@ -287,24 +302,35 @@ def fill_gps_from_neighbours(cfg: Config, recs: list[dict], max_hours: float | N
             groups.setdefault(recs[i]["source"], []).append(i)
     times = {k: [recs[i]["_t"] for i in v] for k, v in groups.items()}
 
-    def nearest(key, t):
+    def position(key, t):
+        """(lat, lon, gps_source) from the group's photos around t, or None."""
         idx = groups[key]                                   # the key was checked against `groups`
         k = bisect.bisect_left(times[key], t)
-        cands = [idx[j] for j in (k - 1, k) if 0 <= j < len(idx)]
+        before = idx[k - 1] if k > 0 else None
+        after = idx[k] if k < len(idx) else None
+        if before is not None and after is not None:
+            tb, ta = recs[before]["_t"], recs[after]["_t"]
+            span = (ta - tb).total_seconds()
+            if 0 < span <= interpolate_hours * 3600 and tb < t < ta:
+                b, a = recs[before], recs[after]
+                lat, lon = geo.interpolate(b["lat"], b["lon"], a["lat"], a["lon"], (t - tb).total_seconds() / span)
+                return lat, lon, f"interpolated:{b['file']}..{a['file']}"
+        cands = [j for j in (before, after) if j is not None]
         best = min(cands, key=lambda j: abs((recs[j]["_t"] - t).total_seconds()))
-        return best if abs((recs[best]["_t"] - t).total_seconds()) <= max_hours * 3600 else None
+        if abs((recs[best]["_t"] - t).total_seconds()) > max_hours * 3600:
+            return None
+        return recs[best]["lat"], recs[best]["lon"], f"neighbour:{recs[best]['file']}"
 
     for r in recs:
         if r.get("lat") is not None:
             continue
         key = r.get("source") if r.get("source") in groups else None
-        best = nearest(key, r["_t"])
-        if best is None and key is not None:          # nothing of its own nearby: anyone's nearest
-            best = nearest(None, r["_t"])
-        if best is None:
+        found = position(key, r["_t"])
+        if found is None and key is not None:         # nothing of its own nearby: anyone's
+            found = position(None, r["_t"])
+        if found is None:
             continue
-        src = recs[best]
-        r.update({"lat": src["lat"], "lon": src["lon"], "gps_source": f"neighbour:{src['file']}"})
+        r.update({"lat": found[0], "lon": found[1], "gps_source": found[2]})
         ingest.enrich_location(cfg, r)
 
 
@@ -454,11 +480,14 @@ def _rule_of_kind(cfg: Config, block: str, kind: str, run: list[dict]) -> dict:
 
 
 def excursion_proposal(cfg: Config, rule: dict, run: list[dict], now: datetime | None,
-                       f: dict | None = None, closed: bool = False) -> dict:
-    """A trip or day-out proposal for a run under the rule that matched it. `closed`: a photo at
-    home after the run's end, from one of its devices, ended it (it is not ongoing, however
-    recent its last photo is)."""
+                       f: dict | None = None, rs: dict | None = None, block: str = "excursion_rules",
+                       closed: bool = False) -> dict:
+    """A trip or day-out proposal for a run under the rule that matched it (`block`: the rule
+    list it came from, the excursion rules or, for a custom burst rule, the burst rules).
+    `closed`: a photo at home after the run's end, from one of its devices, ended it (it is not
+    ongoing, however recent its last photo is)."""
     f = f or rules.features(run)
+    rs = rs or rules.effective(cfg)
     a, b = f["start"], f["end"]
     photos = [_photo_entry(r, _gps_conf(r)) for r in run]
     hours = f["span_hours"]
@@ -470,8 +499,34 @@ def excursion_proposal(cfg: Config, rule: dict, run: list[dict], now: datetime |
         "start": a.isoformat(), "end": b.isoformat(), "photos": photos,
         "n": len(photos), "n_uncertain": sum(p["uncertain"] for p in photos),
         "status": "ongoing" if not closed and rules.ongoing(rule, f, now) else "pending",
-        "decision": {"by": "rule", "conf": 1.0, "note": note, "rule": rule.get("name")},
+        "decision": {"by": "rule", "conf": 1.0, "note": note, "rule": rule.get("name"),
+                     "why": _why(rs, block, rule, run, f)},
     }
+
+
+def _why(rs: dict, block: str, rule: dict, run: list[dict], f: dict) -> dict:
+    """The why panel's numbers (rules.explain) and the pauses and steps inside the run, with the
+    parameters that would have cut it there: one pass over the run when the proposal is built."""
+    why = rules.explain(rs[block], rule, f)
+    longest, longest_km, step = 0.0, None, None
+    for prev, nxt in zip(run, run[1:], strict=False):
+        hours = (nxt["_t"] - prev["_t"]).total_seconds() / 3600
+        km = None
+        if block == "excursion_rules" and prev.get("lat") is not None and nxt.get("lat") is not None:
+            km = geo.haversine_km(prev["lat"], prev["lon"], nxt["lat"], nxt["lon"])
+            step = km if step is None else max(step, km)
+        if hours > longest:
+            longest, longest_km = hours, km
+    gaps: dict = {"longest_h": round(longest, 1)}
+    if block == "excursion_rules":
+        ex = rs["excursions"]
+        gaps.update(longest_km=None if longest_km is None else round(longest_km, 1),
+                    step_km=None if step is None else round(step, 1), split_gap_days=ex["split_gap_days"],
+                    split_distance_km=ex["split_distance_km"], local_gap_hours=ex["local_gap_hours"])
+    else:
+        gaps["gap_hours"] = rs["bursts"]["gap_hours"]
+    why["gaps"] = gaps
+    return why
 
 
 def _span(recs: list[dict]) -> tuple[datetime, datetime]:
@@ -533,7 +588,7 @@ MAX_NAME_BYTES = 200
 def _gps_conf(r: dict) -> float:
     """How sure we are the photo belongs where its position says: own GPS, a neighbour's, none."""
     src = r.get("gps_source") or ""
-    return 1.0 if src == "exif" else 0.8 if src.startswith("neighbour") else 0.6
+    return 1.0 if src == "exif" else 0.8 if src.startswith(("neighbour", "interpolated")) else 0.6
 
 
 def _photo_entry(r: dict, conf: float) -> dict:
@@ -637,12 +692,14 @@ def home_state(cfg: Config, burst: list[dict], threshold: float) -> dict:
     }
 
 
-def home_proposal(cfg: Config, burst: list[dict], threshold: float, rule: dict | None = None) -> dict:
+def home_proposal(cfg: Config, burst: list[dict], threshold: float, rule: dict | None = None,
+                  f: dict | None = None, rs: dict | None = None) -> dict:
     """A dense burst at home. Metadata cannot tell a birthday from a burst of shots of the same
     thing (neither could a decision model, see docs/DESIGN.md section 10), so every burst well
     above your usual day is proposed and you name or reject it."""
     rule = rule or _rule_of_kind(cfg, "burst_rules", "home", burst)
-    f = rules.features(burst)
+    f = f or rules.features(burst)
+    rs = rs or rules.effective(cfg)
     a, b = f["start"], f["end"]
     photos = [_photo_entry(r, 1.0) for r in burst]
     st = home_state(cfg, burst, threshold)
@@ -652,7 +709,8 @@ def home_proposal(cfg: Config, burst: list[dict], threshold: float, rule: dict |
             "name": rules.render_name(cfg, rule, burst, f),
             "start": a.isoformat(), "end": b.isoformat(), "photos": photos, "n": len(photos),
             "n_uncertain": 0, "status": "pending",
-            "decision": {"by": "rule", "conf": 1.0, "note": note, "state": st, "rule": rule.get("name")}}
+            "decision": {"by": "rule", "conf": 1.0, "note": note, "state": st, "rule": rule.get("name"),
+                         "why": _why(rs, "burst_rules", rule, burst, f)}}
 
 
 def automatic_proposals(cfg: Config, recs: list[dict], now: datetime, baseline: float,
@@ -676,7 +734,7 @@ def automatic_proposals(cfg: Config, recs: list[dict], now: datetime, baseline: 
         # after it, the run is over (it used to stay ongoing for ongoing_days whatever came after)
         closed = any(last_home.get(s) is not None and last_home[s] > f["end"]
                      for s in {r.get("source") for r in run_})
-        pr = excursion_proposal(cfg, rule, run_, now, f, closed)
+        pr = excursion_proposal(cfg, rule, run_, now, f, rs, closed=closed)
         new[pr["id"]] = pr
         taken.update(p["path"] for p in pr["photos"])
     rest = [r for r in recs if r["path"] not in taken]
@@ -688,9 +746,9 @@ def automatic_proposals(cfg: Config, recs: list[dict], now: datetime, baseline: 
         if rule is None:
             continue
         if rule["kind"] == "home":
-            pr = home_proposal(cfg, burst, rules.threshold(rule, baseline), rule)
+            pr = home_proposal(cfg, burst, rules.threshold(rule, baseline), rule, f, rs)
         else:                                               # a custom rule: a burst as a day out or a trip
-            pr = excursion_proposal(cfg, rule, burst, now, f)
+            pr = excursion_proposal(cfg, rule, burst, now, f, rs, "burst_rules")
         new[pr["id"]] = pr
         taken.update(p["path"] for p in pr["photos"])
     return new, threshold
@@ -811,6 +869,19 @@ def _keep_identities(old: dict, new: dict) -> None:
                 new[old_pid] = new.pop(pid)
                 claimed.add(old_pid)
             break
+
+
+def start_over() -> int:
+    """Everything in review is temporary (issue #23): drop every proposal that has not been
+    moved, with all its review state (pending, ongoing, rejected, approved but not moved,
+    edited names, excluded photos, clusters built by hand). Moved clusters stay; so do the
+    journal, the history and the settings. Returns how many proposals were dropped."""
+    with proposals_lock:
+        props = load_proposals()
+        keep = {pid: pr for pid, pr in props.items() if pr["status"] == "applied"}
+        save_proposals(keep)
+    ingest.changed["all"] = True                  # and every record is read again
+    return len(props) - len(keep)
 
 
 def run(cfg: Config) -> dict:
