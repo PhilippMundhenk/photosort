@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import logging
 import mimetypes
 import os
@@ -731,7 +732,7 @@ def settings(request: Request, msg: str = "", mode: str = ""):
     return render(request, "settings.html", inboxes_text=config.inboxes_text(cfg), discovered=discovered,
                   named_places_text=config.named_places_text(cfg), extensions=", ".join(cfg.photo_extensions),
                   msg=msg, mode=mode, modes=SETTINGS_MODES,
-                  homes_text=config.named_places_text(cfg, cfg.homes),
+                  homes_text=config.named_places_text(cfg, cfg.homes), home_candidates=_home_candidates(cfg),
                   rules_text=rules.to_yaml(cfg.rules) if cfg.rules else "",
                   rules_in_force=rules.to_yaml(rules.effective(cfg)))
 
@@ -773,21 +774,69 @@ def settings_hide_mount_note(back: str = Form("/")):
     return RedirectResponse(back if back.startswith("/") and not back.startswith("//") else "/", status_code=303)
 
 
+HOME_CANDIDATES_PATH = config.DATA_DIR / "home_candidates.json"
+
+
+def _home_candidates(cfg: config.Config) -> list[dict]:
+    """The places "Detect" found besides home that are not a home yet (issue #3), each with a
+    name suggestion from the map."""
+    try:
+        found = json.loads(HOME_CANDIDATES_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    homes = rules.homes(cfg)
+    out = []
+    for c in found if isinstance(found, list) else []:
+        try:
+            lat, lon = float(c["lat"]), float(c["lon"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if any(geo.haversine_km(lat, lon, h["lat"], h["lon"]) < 1.0 for h in homes):
+            continue
+        place = geo.reverse(cfg, lat, lon) or {}
+        out.append({**c, "lat": lat, "lon": lon, "name": place.get("place") or f"Home {len(homes) + len(out) + 1}"})
+    return out
+
+
 @app.post("/settings/detect_home")
 def settings_detect_home():
-    """Set home to where photos are taken on the most distinct days (~100 m cell)."""
+    """Set home to where photos are taken on the most distinct days (~100 m cell); the next
+    places of that kind are kept as candidates for further homes (Settings offers them)."""
     cfg = config.load()
     recs, _ = cluster.load_records(cfg)
-    found = geo.detect_home(recs)
+    found = geo.detect_homes(recs)
     if not found:
         return RedirectResponse("/settings?msg=" + quote("No photos with GPS indexed yet; run a scan first."),
                                 status_code=303)
-    cfg.home_lat, cfg.home_lon = found["lat"], found["lon"]
+    best = found[0]
+    cfg.home_lat, cfg.home_lon = best["lat"], best["lon"]
     config.save(cfg)
-    events.log("settings", changed=["home_lat", "home_lon"], detected=found)
-    msg = (f"Home set to {found['lat']:.4f}, {found['lon']:.4f}: {found['photos']} photos on {found['days']} "
+    config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    HOME_CANDIDATES_PATH.write_text(json.dumps(found[1:]), encoding="utf-8")
+    events.log("settings", changed=["home_lat", "home_lon"], detected=best)
+    msg = (f"Home set to {best['lat']:.4f}, {best['lon']:.4f}: {best['photos']} photos on {best['days']} "
            f"different days there. Zones are recomputed on the next run.")
-    return RedirectResponse("/settings?msg=" + quote(msg), status_code=303)
+    others = len(_home_candidates(cfg))
+    if others:
+        msg += (f" {others} more place{'s' if others != 1 else ''} with photos on many days "
+                f"{'are' if others != 1 else 'is'} offered under Further homes.")
+    return RedirectResponse("/settings?mode=advanced&msg=" + quote(msg) if others else "/settings?msg=" + quote(msg),
+                            status_code=303)
+
+
+@app.post("/settings/add_home")
+def settings_add_home(lat: float = Form(...), lon: float = Form(...), name: str = Form("")):
+    """One of the detected candidates becomes a further home."""
+    cfg = config.load()
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return RedirectResponse("/settings?mode=advanced", status_code=303)
+    entry = {"name": name.strip() or f"Home {len(rules.homes(cfg)) + 1}", "lat": lat, "lon": lon,
+             "radius_km": float(cfg.home_radius_km)}
+    cfg.homes = [*(cfg.homes or []), entry]
+    config.save(cfg)
+    events.log("settings", changed=["homes"], added=entry)
+    msg = f"{entry['name']} is a home now: photos there are everyday photos and end a trip (from the next run on)."
+    return RedirectResponse("/settings?mode=advanced&msg=" + quote(msg), status_code=303)
 
 
 # --- actions --------------------------------------------------------------------
