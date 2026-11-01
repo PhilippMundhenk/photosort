@@ -530,16 +530,17 @@ def everyday(request: Request, month: str = "", q: str = ""):
         if q or r["ts"].startswith(month):
             days.setdefault(r["ts"][:10], []).append(r)
     out = []
+    budget = EVERYDAY_INLINE_TOTAL                     # photos rendered with the page; later days load on scroll
     for date in sorted(days, reverse=True):
         rs = sorted(days[date], key=lambda r: r["_t"])
         zones = Counter(r["zone"] for r in rs)
         places = Counter((r.get("place") or {}).get("place") for r in rs if r.get("place"))
+        inline = bool(q) or budget > 0                 # a search shows everything (it is capped anyway)
+        budget -= len(rs) if inline else 0
         out.append({"date": date, "weekday": rs[0]["_t"].strftime("%A"), "n": len(rs),
                     "zones": ", ".join(f"{n} {z}" for z, n in zones.most_common()),
                     "places": ", ".join(p for p, _ in places.most_common(3) if p),
-                    "photos": [{"path": r["path"], "file": r["file"], "ts": r["ts"], "zone": r["zone"],
-                                "media": r.get("media", "photo"), "place": (r.get("place") or {}).get("place")}
-                               for r in rs]})
+                    "photos": [_everyday_photo(r) for r in rs] if inline else []})
     movable = len(mover.everyday_movable(cfg, cfg.everyday_keep_days))   # of all, whatever is searched
     moved = sorted((p for p in props.values() if p["status"] in ("applied", "approved")),
                    key=lambda p: p["start"], reverse=True)
@@ -551,6 +552,24 @@ def everyday(request: Request, month: str = "", q: str = ""):
 
 
 SEARCH_LIMIT = 500
+EVERYDAY_INLINE_TOTAL = int(os.environ.get("PHOTOSORT_EVERYDAY_INLINE", "300"))
+
+
+def _everyday_photo(r: dict) -> dict:
+    return {"path": r["path"], "file": r["file"], "ts": r["ts"], "zone": r["zone"],
+            "media": r.get("media", "photo"), "place": (r.get("place") or {}).get("place")}
+
+
+@app.get("/everyday/day", response_class=HTMLResponse)
+def everyday_day(date: str = ""):
+    """One day's everyday photos, for a day the Everyday page left empty (beyond its budget of
+    inline photos, issue #7): the same figures the page renders."""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+        return HTMLResponse("", status_code=404)
+    rs = sorted((r for r in cluster.everyday_records(config.load()) if r["ts"].startswith(date)),
+                key=lambda r: r["_t"])
+    macro = tpl.env.get_template("_everyday_photos.html").module.day_figures
+    return HTMLResponse(str(macro([_everyday_photo(r) for r in rs])))
 
 
 @app.post("/everyday/move_all")

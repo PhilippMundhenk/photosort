@@ -450,7 +450,8 @@ hundred open bursts is eight thousand figures. Every request, and every thumbnai
 listed and resolved the inbox folders on the share. Now: readers share the cached records
 (only code that edits gets copies), the everyday list is kept until a record or the proposals
 file changes, figures are written out by a plain function, the page has a budget of inline
-photos (400; the other open cards load their first photos when they scroll near), and the
+photos (400; the other open cards load their first photos when they scroll near; Everyday
+likewise renders 300 and loads the later days of a long month as they scroll near, issue #7), and the
 inbox folders and the resolved roots are remembered for ten seconds (a scan always looks
 afresh). The harness bounds for both pages are 150 ms.
 
