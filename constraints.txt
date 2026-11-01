@@ -21,7 +21,7 @@ MarkupSafe==3.0.3
 numpy==2.5.3
 packaging==26.3
 pillow==12.3.0
-pillow_heif==1.8.0
+pillow_heif==1.8.1
 playwright==1.63.0
 pluggy==1.6.0
 pydantic==2.13.5

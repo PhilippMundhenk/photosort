@@ -7,4 +7,4 @@ reverse-geocode>=1.6
 apscheduler>=3.10,<4
 httpx>=0.27
 pillow>=10
-pillow-heif>=0.18
+pillow-heif>=1.8.1
