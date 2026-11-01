@@ -439,30 +439,80 @@ def _pending(props: dict) -> list[dict]:
     return out
 
 
+def _figure(path: str, *, classes: str, pick: str, view_title: str, media: str | None, caption: str,
+            extra: str = "") -> str:
+    """One photo figure, the same on every page (issue #15): the thumbnail inside the pick
+    control (`pick`: its role and title, which decide what a click does), the full-size view
+    button, the caption, and anything a page adds (`extra`). No form control per photo (a
+    password manager watches every input and button). Written out by hand: the template engine
+    took 80 microseconds per figure, and a review page has hundreds of them."""
+    q = quote(str(path), safe="/")
+    return (f'<figure class="{classes}" data-path="{esc(path)}">'
+            f'<span class="pick" {pick} tabindex="0"><img src="/thumb?path={q}" loading="lazy" '
+            f'decoding="async" width="110" height="82" alt=""></span>'
+            f'<span class="view" role="button" tabindex="0" data-view="/media?path={q}" '
+            f'data-type="{esc(media or "photo")}" data-title="{view_title}" title="view full size">&#x2921;</span>'
+            f'<figcaption>{caption}</figcaption>{extra}</figure>')
+
+
+def _video_badge(media: str | None) -> str:
+    return '<span class="badge">video</span> ' if media == "video" else ""
+
+
 def figures_html(photos: list[dict], excluded=()) -> Markup:
-    """One figure per photo of a proposal, as markup. No form control per photo (a password
-    manager watches every input and button). Written out by hand: the template engine took
-    80 microseconds per figure, and a review page has hundreds of them."""
+    """Review: a click excludes or includes a photo of a proposal."""
     out = []
     for ph in photos:
         path, file_, zone, ts = ph["path"], esc(ph["file"]), esc(ph["zone"]), ph["ts"]
-        place, q, when = ph.get("place") or "", quote(str(path), safe="/"), esc(ts[:16].replace("T", " "))
+        place, when = ph.get("place") or "", esc(ts[:16].replace("T", " "))
         classes = ("excluded" if path in excluded else "") + " " + ("uncertain" if ph.get("uncertain") else "")
-        badge = '<span class="badge">video</span> ' if ph.get("media") == "video" else ""
         source = f" · {esc(ph['source'])}" if ph.get("source") else ""
-        out.append(
-            f'<figure class="{classes}" data-path="{esc(path)}">'
-            f'<span class="pick" role="button" tabindex="0" title="{file_} · {zone} · {esc(place)} · conf '
-            f'{esc(ph.get("conf"))} · click to exclude/include"><img src="/thumb?path={q}" loading="lazy" '
-            f'decoding="async" width="110" height="82" alt="">'
-            f'</span><span class="view" role="button" tabindex="0" data-view="/media?path={q}" '
-            f'data-type="{esc(ph.get("media"))}" data-title="{file_} · {when} · {esc(place or ph["zone"])}" '
-            f'title="view full size">&#x2921;</span><figcaption>{badge}{esc(ts[5:16].replace("T", " "))} {zone}'
-            f'{source}</figcaption></figure>')
+        out.append(_figure(
+            path, classes=classes, media=ph.get("media"),
+            pick=f'role="button" title="{file_} · {zone} · {esc(place)} · conf {esc(ph.get("conf"))} · '
+                 f'click to exclude/include"',
+            view_title=f'{file_} · {when} · {esc(place or ph["zone"])}',
+            caption=f'{_video_badge(ph.get("media"))}{esc(ts[5:16].replace("T", " "))} {zone}{source}'))
+    return Markup("".join(out))
+
+
+def day_figures(photos: list[dict]) -> Markup:
+    """Everyday: a click selects a photo (for a new or another cluster)."""
+    out = []
+    for ph in photos:
+        file_, zone, ts, place = esc(ph["file"]), esc(ph["zone"]), ph["ts"], ph.get("place") or ""
+        out.append(_figure(
+            ph["path"], classes="uncertain" if ph["zone"] == "unknown" else "", media=ph.get("media"),
+            pick=f'role="checkbox" aria-checked="false" title="{file_} · click to select"',
+            view_title=f'{file_} · {esc(ts[:16].replace("T", " "))} · {esc(place or ph["zone"])}',
+            caption=f'{_video_badge(ph.get("media"))}{esc(ts[11:16])} {zone}'
+                    + (f" · {esc(place)}" if place else "")))
+    return Markup("".join(out))
+
+
+def cluster_figures(photos: list[dict]) -> Markup:
+    """A moved cluster's page: a click selects a photo (to move it on), and each one can be
+    sent back to the inbox."""
+    out = []
+    for p in photos:
+        dst, conf = p["dst"], esc(p.get("conf"))
+        name = esc(re.split(r"[\\/]", dst)[-1])
+        source = f" · {esc(p['source'])}" if p.get("source") else ""
+        out.append(_figure(
+            dst, classes="uncertain" if p.get("uncertain") else "", media=p.get("media"),
+            pick=f'role="checkbox" aria-checked="false" title="{esc(dst)} · conf {conf} · click to select"',
+            view_title=f"{name} · conf {conf}",
+            caption=f'{_video_badge(p.get("media"))}{esc(p.get("zone"))} {conf}{source}',
+            extra=f'<span class="act" role="button" tabindex="0" data-act="move_out" data-field="photo" '
+                  f'data-value="{esc(dst)}" data-confirm="Remove this photo from the cluster and move it back to '
+                  f'the inbox?" title="moves the photo back to the inbox; it can be put back from the Corrections '
+                  f'list below">remove from cluster</span>'))
     return Markup("".join(out))
 
 
 tpl.env.globals["figures"] = figures_html
+tpl.env.globals["day_figures"] = day_figures
+tpl.env.globals["cluster_figures"] = cluster_figures
 tpl.env.globals["why"] = rules.describe            # the why panel of a proposal (issue #6)
 
 REVIEW_INLINE = 80                                    # photos rendered with the page for an open card
@@ -569,8 +619,7 @@ def everyday_day(date: str = ""):
         return HTMLResponse("", status_code=404)
     rs = sorted((r for r in cluster.everyday_records(config.load()) if r["ts"].startswith(date)),
                 key=lambda r: r["_t"])
-    macro = tpl.env.get_template("_everyday_photos.html").module.day_figures
-    return HTMLResponse(str(macro([_everyday_photo(r) for r in rs])))
+    return HTMLResponse(str(day_figures([_everyday_photo(r) for r in rs])))
 
 
 @app.post("/everyday/move_all")

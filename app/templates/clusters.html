@@ -13,7 +13,7 @@
   <td>{{ c.n }}{% if c.n_review %} <span class="muted small">({{ c.n_review }} in review)</span>{% endif %}</td>
   <td class="small">{{ c.decision.by }} {{ '%.2f'|format(c.decision.conf) }}</td>
   <td>{% if c.folder in busy_folders %}<span class="badge warn small">{{ busy_folders[c.folder].verb|lower }}</span>{% else %}<form method="post" action="/cluster/undo" class="inline" onsubmit="return confirm('Move all photos back to their inbox?')">
-      <input type="hidden" name="folder" value="{{ c.folder }}"><button class="secondary small">undo</button></form>{% endif %}</td>
+      <input type="hidden" name="folder" value="{{ c.folder }}"><button class="danger small">undo</button></form>{% endif %}</td>
 </tr>
 {% else %}<tr><td class="muted" colspan="6">No clusters applied yet.</td></tr>{% endfor %}
 </table>

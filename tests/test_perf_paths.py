@@ -375,3 +375,22 @@ def test_figures_are_escaped_and_marked_like_the_template_did():
     assert "<figcaption>06-27 11:00 home</figcaption>" in html and "· b.jpg · 2026-06-27 11:00 · home" not in html
     assert 'data-title="b.jpg · 2026-06-27 11:00 · home"' in html
     assert str(main.figures_html([])) == ""
+
+
+def test_everyday_and_cluster_figures_share_the_markup_and_escape_it():
+    """Issue #15: one function writes the figures of every grid; each page only sets what a
+    click does and what the caption says."""
+    day = str(main.day_figures([{"path": '/in/<d>.jpg', "file": '<d>.jpg', "ts": "2026-06-27T10:15:00+00:00",
+                                 "zone": "unknown", "media": "video", "place": "Tom & Jerry's"}]))
+    assert 'role="checkbox" aria-checked="false"' in day and "<d>" not in day and 'class="uncertain"' in day
+    assert '<span class="badge">video</span> 10:15 unknown · Tom &amp; Jerry&#39;s' in day
+    assert 'decoding="async" width="110" height="82"' in day
+    moved = str(main.cluster_figures([{"dst": "/sorted/Trip/<c>.jpg", "conf": 0.6, "uncertain": True,
+                                       "zone": "away", "media": "photo", "source": "cam"}]))
+    assert 'data-act="move_out"' in moved and 'data-value="/sorted/Trip/&lt;c&gt;.jpg"' in moved
+    assert 'data-title="&lt;c&gt;.jpg · conf 0.6"' in moved and "away 0.6 · cam" in moved
+    plain = str(main.cluster_figures([{"dst": r"C:\sorted\x.jpg", "conf": 1.0, "zone": "home"}]))
+    assert 'data-title="x.jpg · conf 1.0"' in plain and 'class=""' in plain and 'data-type="photo"' in plain
+    for html in (day, moved, str(main.figures_html([{"path": "/in/r.jpg", "file": "r.jpg", "ts": "2026-06-27T10:15",
+                                                     "zone": "home"}]))):
+        assert html.count('<span class="view" role="button"') == 1 and html.count("<figcaption>") == 1

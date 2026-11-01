@@ -355,7 +355,11 @@ controls, and the overview was dropped as redundant. A setting that differs from
 says so under its control ("default: 4 · use default"), and a section's heading counts them
 (November 2026, issue #12), hidden rows of other modes included: a value tuned in expert mode
 stays visible in basic mode. The defaults come from the config dataclass (secrets left out);
-putting one back only changes the field, Save stores it.
+putting one back only changes the field, Save stores it. One look for the same thing everywhere (November 2026, issue #15): every photo
+grid (Review, Everyday, a cluster's page) is written by one function (`main._figure`; the pages
+only set what a click does and what the caption says), every destructive action (undo, revert,
+removing records, Start over) is a red button, confirmations come only where files move or
+records go (not in dry-run), and the conventions are written at the top of `style.css`.
 
 Photos change cluster in one way (September 2026, issue #14). Everyday and a cluster's page
 share one selection bar and one target list: open proposals, clusters already moved (the
