@@ -153,3 +153,26 @@ def detect_home(recs: list[dict]) -> dict | None:
         return None
     best = max(counts, key=lambda c: (len(days[c]), counts[c]))
     return {"lat": best[0], "lon": best[1], "days": len(days[best]), "photos": counts[best]}
+
+
+def detect_homes(recs: list[dict], n: int = 4, min_km: float = 1.0, min_days: int = 5) -> list[dict]:
+    """The places photos are taken on the most distinct days, best first (issue #3): the best
+    is detect_home's answer, the others are candidates for further homes (a partner's flat, the
+    parents' house). Cells within min_km of a better one are the same place; a place needs
+    photos on at least min_days different days to be a candidate."""
+    days: dict[tuple, set] = {}
+    counts: dict[tuple, int] = {}
+    for r in recs:
+        if r.get("lat") is None or r.get("lon") is None or not r.get("ts"):
+            continue
+        cell = (round(r["lat"], 3), round(r["lon"], 3))
+        days.setdefault(cell, set()).add(str(r["ts"])[:10])
+        counts[cell] = counts.get(cell, 0) + 1
+    out: list[dict] = []
+    for cell in sorted(counts, key=lambda c: (-len(days[c]), -counts[c], c)):
+        if len(out) >= n or (out and len(days[cell]) < min_days):
+            break
+        if any(haversine_km(cell[0], cell[1], o["lat"], o["lon"]) < min_km for o in out):
+            continue
+        out.append({"lat": cell[0], "lon": cell[1], "days": len(days[cell]), "photos": counts[cell]})
+    return out

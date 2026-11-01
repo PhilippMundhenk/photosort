@@ -327,3 +327,48 @@ def test_run_records_without_timestamp_are_counted(cfg, library):
     ingest.write_sidecar(p, rec_, cfg)
     stats = cluster.run(cfg)
     assert stats["no_timestamp"] == 1 and stats["photos"] == library.n - 1
+
+
+# --- several homes (issue #3) -------------------------------------------------------------------------
+
+GRANNY = (48.70, 9.30)
+
+
+def _at(home: str, t: datetime, pos=HOME) -> dict:
+    return {**rec(t, Z.ZONE_HOME, pos), "home": home, "file": f"{home}-{t:%m%d%H%M}.jpg",
+            "path": f"/in/{home}-{t.isoformat()}"}
+
+
+def test_each_home_has_its_own_usual_day_and_its_bursts_say_where(data_dir):
+    cfg = config.Config(home_lat=HOME[0], home_lon=HOME[1], burst_min_photos=4, burst_baseline_factor=4,
+                        homes=[{"name": "Granny", "lat": GRANNY[0], "lon": GRANNY[1]}])
+    recs = [_at("home", T0 + timedelta(days=d, hours=8 + i)) for d in range(10) for i in range(8)]   # 8 a day
+    recs += [_at("Granny", T0 + timedelta(days=d, hours=12), GRANNY) for d in range(0, 10, 2)]        # 1 a day
+    recs += [_at("Granny", T0 + timedelta(days=20, hours=14, minutes=10 * i), GRANNY) for i in range(6)]
+    recs.sort(key=lambda r: r["_t"])
+    assert cluster.home_baselines(recs) == {"home": 8, "Granny": 1}
+    assert cluster.home_baseline(recs) == 8                                   # all homes together, reported
+    made, _ = cluster.automatic_proposals(cfg, recs, T0 + timedelta(days=60), 8, baselines={"home": 8, "Granny": 1})
+    names = [p["name"] for p in made.values()]
+    assert names == ["2026-06-22 (6 Fotos) @ Granny"]                          # 6 >= 4 x 1 at Granny's
+    made, _ = cluster.automatic_proposals(cfg, recs, T0 + timedelta(days=60), 8)   # one baseline: 6 < 4 x 8
+    assert made == {}
+    assert cluster.burst_home([rec(T0, Z.ZONE_AWAY, LISBON)]) is None
+
+
+def test_the_old_flat_baseline_file_belongs_to_the_first_home(data_dir):
+    cluster.BASELINE_PATH.write_text('{"2026-05-01": 7, "2026-05-02": 9}', encoding="utf-8")
+    recs = [_at("home", T0 + h(i)) for i in range(2)]
+    assert cluster.home_baselines(recs) == {"home": 7}                        # 7, 9 and today's 2
+    stored = cluster.BASELINE_PATH.read_text(encoding="utf-8")
+    assert '"home": {' in stored and '"2026-05-02": 9' in stored
+    cluster.BASELINE_PATH.write_text('["not", "a", "mapping"]', encoding="utf-8")
+    assert cluster.home_baselines(recs) == {"home": 2}                        # unreadable: recomputed
+
+
+def test_one_home_keeps_the_old_occasion_name():
+    from app import rules
+    one = config.Config(home_lat=HOME[0], home_lon=HOME[1])
+    two = config.Config(home_lat=HOME[0], home_lon=HOME[1], homes=[{"name": "Granny", "lat": 48.7, "lon": 9.3}])
+    assert rules.defaults(one)["burst_rules"][0]["name_template"] == "{span} ({media})"
+    assert rules.defaults(two)["burst_rules"][0]["name_template"] == "{span} ({media}) @ {home}"

@@ -569,6 +569,32 @@ def test_detect_home_from_photos(client, library):
     assert events.read(limit=1, kind="settings")[0]["detected"]["days"] >= 9
 
 
+def test_detect_offers_further_homes_and_adds_one(client, library):
+    """The synthetic library spends 14 days in Lisbon: "Detect" sets home and offers Lisbon as a
+    further home (issue #3); added, it is a home and no longer offered."""
+    cfg = config.load()
+    for d in range(40):                                                   # a normal stretch at home
+        library.photo(Path(cfg.inboxes[0]["path"]), synth.T0 + timedelta(days=40 + d, hours=19), synth.HOME)
+    r = client.post("/settings/detect_home")
+    assert (config.load().home_lat, config.load().home_lon) == synth.HOME
+    assert "mode=advanced" in r.headers["location"] and "offered%20under%20Further%20homes" in r.headers["location"]
+    page = client.get("/settings", params={"mode": "advanced"}).text
+    assert "Found by “Detect”" in page and 'action="/settings/add_home"' in page and 'form="addhome-1"' in page
+    r = client.post("/settings/add_home", data={"lat": "38.72", "lon": "-9.14", "name": "Holiday flat"})
+    assert r.status_code == 303 and "Holiday%20flat%20is%20a%20home" in r.headers["location"]
+    cfg = config.load()
+    assert cfg.homes[-1] == {"name": "Holiday flat", "lat": 38.72, "lon": -9.14, "radius_km": cfg.home_radius_km}
+    assert "Found by “Detect”" not in client.get("/settings", params={"mode": "advanced"}).text
+    assert events.read(limit=1, kind="settings")[0]["added"]["name"] == "Holiday flat"
+    client.post("/settings/add_home", data={"lat": "95", "lon": "0"})               # out of range: ignored
+    client.post("/settings/add_home", data={"lat": "1", "lon": "2"})                # no name: numbered
+    assert len(config.load().homes) == 2 and config.load().homes[-1]["name"] == "Home 3"
+    main.HOME_CANDIDATES_PATH.write_text('[{"lat": "x"}, {"lon": 1}]', encoding="utf-8")   # a damaged file
+    assert "Found by “Detect”" not in client.get("/settings", params={"mode": "advanced"}).text
+    main.HOME_CANDIDATES_PATH.write_text("{broken", encoding="utf-8")
+    assert client.get("/settings").status_code == 200
+
+
 def test_unset_home_is_detected_by_the_run(client, library):
     cfg = config.load()
     cfg.home_lat, cfg.home_lon = 0.0, 0.0

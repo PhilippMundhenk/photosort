@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from app import config, geo
 from tests.synth import HOME, LISBON, RATINGEN, SEVILLE
 
@@ -117,3 +119,16 @@ def test_interpolate_along_the_great_circle():
     for f in (0.0, 0.25, 1.0):
         p = geo.interpolate(*a, *b, f)
         assert abs(geo.haversine_km(*a, *p) - f * geo.haversine_km(*a, *b)) < 0.01
+
+
+def test_detect_homes_offers_the_next_places_with_many_days():
+    t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    def at(pos, days, per_day=1):
+        return [{"lat": pos[0], "lon": pos[1], "ts": (t + timedelta(days=d, hours=i)).isoformat()}
+                for d in range(days) for i in range(per_day)]
+    near = (HOME[0] + 0.004, HOME[1])                                         # 450 m away: the same place
+    recs = at(HOME, 30) + at(near, 20) + at(RATINGEN, 12, 3) + at(LISBON, 8) + at(SEVILLE, 3, 9)
+    found = geo.detect_homes(recs)
+    assert [(f["lat"], f["lon"]) for f in found] == [HOME, RATINGEN, LISBON]   # Seville: 3 days only
+    assert found[0] == geo.detect_home(recs) and found[0]["days"] == 30 and found[1]["photos"] == 36
+    assert geo.detect_homes(recs, n=1) == found[:1] and geo.detect_homes([]) == []
