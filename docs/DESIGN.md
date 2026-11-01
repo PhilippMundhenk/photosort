@@ -141,10 +141,17 @@ offers them as further homes.
 
 `<span> <places>`. The span is the month (`2026-08`) when a multi-day cluster stays within one
 month (user request, September 2026: the day range added nothing once the folder is inside a
-year tree), the day for a single day, and a full range only across months. Places in order of
-first appearance, deduplicated, at most four; then
-countries; then "Multiple". Places mentioned by fewer than 3 % of a run's photos (and fewer
-than two) are dropped, so a motorway stop does not name the trip. The place comes from:
+year tree), the day for a single day, and a full range only across months. Places most
+photographed first (November 2026, issue #5; before, in order of first appearance),
+deduplicated, at most four; then countries; then "Multiple". Places mentioned by fewer than
+3 % of a run's photos (and fewer than two) are dropped, so a motorway stop does not name the
+trip, and so are short stops at either end: a place whose photos all come before (or after)
+every other place's, span less than 3 h, are at most 5 photos (or 5 %) and at most a third of
+what the rest has. A four-photo airport layover named a trip "Zeppelinheim, Yangpu, Shanghai";
+now it is "Shanghai, Yangpu". Every one of these numbers is a key of the rules' `naming` block
+(expert Settings). City districts (Yangpu) and airports in general would need place data of
+our own (a GeoNames extract with the admin hierarchy, an airport list); decided against for
+now, "remember this place" covers them by hand. The place comes from:
 
 1. the user's **named places** (`named_places`: name, centre, radius), because nothing
    offline knows that a spot is "Black Forest", "the Alps" or "the allotment garden". The list is
