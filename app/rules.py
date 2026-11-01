@@ -101,9 +101,12 @@ def zone_at(cfg: Config, lat: float, lon: float) -> tuple[float | None, str, str
 
 
 def defaults(cfg: Config) -> dict:
-    """The rules the code applied before the engine, with the settings fields as parameters."""
+    """The rules the code applied before the engine, with the settings fields as parameters.
+    With more than one home, a home occasion's name says which home (issue #3)."""
+    hs = homes(cfg)
+    occasion = "{span} ({media}) @ {home}" if len(hs) > 1 else "{span} ({media})"
     return {
-        "homes": homes(cfg),
+        "homes": hs,
         "excursions": {"split_gap_days": float(cfg.trip_gap_days),
                        "split_distance_km": float(cfg.trip_split_distance_km),
                        "local_gap_hours": float(cfg.local_gap_hours), "merge_devices": True,
@@ -127,7 +130,7 @@ def defaults(cfg: Config) -> dict:
             {"name": "home occasion", "kind": "home",
              "when": {"zone": geo.ZONE_HOME, "photos_min": int(cfg.burst_min_photos),
                       "baseline_factor": float(cfg.burst_baseline_factor)},
-             "name_template": "{span} ({media})"},
+             "name_template": occasion},
         ],
     }
 
