@@ -20,6 +20,7 @@
 </p>
 {% if msg %}<div class="warnbox">{{ msg }}</div>{% endif %}
 <form method="post" action="/settings/detect_home" id="detect"></form>
+<form method="post" action="/start_over" id="start-over" onsubmit="return confirm('Start over? Every proposal that has not been moved is dropped with what you decided about it (approvals, rejections, names, excluded photos, clusters built by hand); every photo in the inbox is read again and clustered with the current settings. Moved clusters stay. Save changed settings first.')"></form>
 <form method="post" action="/settings/sidecars/migrate" id="sc-migrate"></form>
 <form method="post" action="/settings/sidecars/purge" id="sc-purge" onsubmit="return confirm('Delete the records of photos in the sorted tree and records without a photo?')"></form>
 <form method="post" action="/settings" class="settings">
@@ -307,6 +308,16 @@
       <button form="sc-migrate" class="secondary small" type="submit">Move existing records to this location</button>
       <button form="sc-purge" class="secondary small" type="submit">Remove stale records now</button>
     </div></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Start over</h2>
+  <p class="intro">Everything in review is temporary until it is moved. After changing settings or adding a source (a camera imported after the phones), you can rebuild it all from the inbox.</p>
+  <div class="field">
+    <div class="what"><span class="title">Read the inbox again and recluster</span>
+      <p>Drops every proposal that has not been moved, together with what you decided about it: approvals, rejections, edited names, excluded photos, clusters built by hand. Then every photo in the inbox is read again from scratch (time, position, place) and clustered with the settings as saved. Clusters already moved, the history and the settings stay; with dry-run on nothing is moved afterwards either. Save changed settings first.</p></div>
+    <div class="ctl"><button form="start-over" class="secondary" type="submit">Start over</button></div>
   </div>
 </div>
 

@@ -25,6 +25,10 @@ inbox/camera/**.dng  ─┘                          sorted/_unnamed/2026-06-30 
   delete; approvals wait until you switch it off. Approve, rename, exclude single photos, name
   bursts, undo whole folders; the Everyday page shows what was not clustered and lets you build
   clusters by hand.
+- **Everything in review is temporary.** Until a cluster is moved, nothing is final: **Settings →
+  Start over** drops every proposal that has not been moved (approvals, rejections, names,
+  exclusions, clusters built by hand), reads every inbox photo again and clusters with the
+  current settings. Moved clusters, the history and the settings stay.
 - **Every move is on record and can be taken back.** A journal keeps one line per file operation,
   grouped by action; the History page reverts any action, or puts one file back where it was
   before a given action, as far as the files are still where that action left them.
