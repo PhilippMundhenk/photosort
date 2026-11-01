@@ -1,6 +1,8 @@
 """photosort web service: scheduler + review UI. Run: uvicorn app.main:app"""
 from __future__ import annotations
 
+import csv
+import io
 import logging
 import mimetypes
 import os
@@ -524,6 +526,27 @@ def history(request: Request, file: str = ""):
     rows = journal.batches(limit=300)
     trace = journal.trace(file) if file.strip() else []
     return render(request, "history.html", rows=rows, file=file.strip(), trace=trace)
+
+
+@app.get("/history/originals.{fmt}")
+def history_originals(fmt: str):
+    """The originals copy mode left in the inbox, for deleting them by hand: .txt is one path per
+    line (only those whose copy was found), .csv adds the copy and when it was made."""
+    rows = journal.originals_left(config.load())
+    if fmt == "txt":
+        body = "".join(r["original"] + "\n" for r in rows if r["copy_found"])
+        media = "text/plain; charset=utf-8"
+    elif fmt == "csv":
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["original", "copy", "copy_found", "copied"])
+        for r in rows:
+            w.writerow([r["original"], r["copy"], "yes" if r["copy_found"] else "no", r["copied"]])
+        body, media = buf.getvalue(), "text/csv; charset=utf-8"
+    else:
+        return HTMLResponse("", status_code=404)
+    return Response(body, media_type=media,
+                    headers={"Content-Disposition": f'attachment; filename="photosort-originals.{fmt}"'})
 
 
 @app.post("/history/{batch}/revert")
