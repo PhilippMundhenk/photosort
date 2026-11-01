@@ -1,282 +1,89 @@
+<p align="center"><img src="docs/logo.svg" width="128" alt="photosort"></p>
+
+<p align="center">
+  <a href="https://github.com/PhilippMundhenk/photosort/actions/workflows/ci.yml"><img src="https://github.com/PhilippMundhenk/photosort/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/PhilippMundhenk/photosort/pkgs/container/photosort"><img src="https://img.shields.io/badge/container-ghcr.io-2A6FDB?logo=docker&amp;logoColor=white" alt="Container image"></a>
+  <img src="https://img.shields.io/badge/coverage%20gate-99%25-2E7D32" alt="99 % coverage gate">
+  <img src="https://img.shields.io/badge/runs-offline-5aa9ff" alt="Runs offline">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/PhilippMundhenk/photosort" alt="License"></a>
+</p>
+
 # photosort
 
-[![CI](https://github.com/PhilippMundhenk/photosort/actions/workflows/ci.yml/badge.svg)](https://github.com/PhilippMundhenk/photosort/actions/workflows/ci.yml)
+Sorts the photos and videos from your phones and cameras into folders of trips, day outs and
+occasions, by where and when they were taken. It runs on your NAS or a small home server, fully
+offline, and moves nothing until you have looked at it in its web page.
 
-Sorts the photos and videos from your phones into a folder tree of trips, day outs and
-occasions, by rules alone, fully offline, on weak hardware, with a web UI that reviews every move.
+```
+inbox/phone/…      ─┐                            sorted/2026-06 Lisbon, Sevilla/
+inbox/partner/…    ─┼─ photosort ─ you review ─► sorted/2026-06-27 Starnberg/
+inbox/camera/…     ─┘                            sorted/_unnamed/2026-06-30 (25 Fotos)/  ← you name it
+                                                 sorted/2026/06/                         ← everything else
+```
 
 ## What it does
 
-```
-inbox/phone-a/**.jpg ─┐                          sorted/2026-06 Lisbon, Sevilla/
-inbox/phone-b/**.jpg ─┼─ scan ─ zone ─ cluster ─► sorted/2026-06-27 Ratingen/
-inbox/camera/**.dng  ─┘                          sorted/_unnamed/2026-06-30 (25 Fotos)/ ← name it
-                                                 sorted/2026/06/                        ← the rest
-```
+- **Trips, day outs and occasions, without typing dates.** Photos away from home form a trip
+  when they span a night and a day out otherwise; a burst of photos at home is an occasion you
+  name. Folder names come from the places: `2026-06 Lisbon, Sevilla`.
+- **Several devices, one library.** Phones, a partner's phone and a camera without GPS: their
+  photos meet in the same trip; a camera's shots take their position from the phones around them.
+- **You decide.** Dry-run is on until you switch it off. Approve, rename, leave out single
+  photos, build clusters by hand, move photos between clusters; every move can be undone.
+- **Nothing is final until it moves.** After changing a setting or adding a device, *Start
+  over* clusters everything that is not sorted yet again, from scratch.
+- **Fits a NAS.** One small container, Synology thumbnails used as they are, moves are renames
+  on the share, read-only inboxes work with copy mode.
+- **Adjustable.** Every threshold is a setting; expert mode takes rules of your own and shows
+  which proposals they would change before you save them.
 
-## Key features
-
-- **Rules, not a database.** Where a photo was taken relative to home and when decides
-  everything; the folder tree is the result and other tools keep working on it.
-- **Trips, day outs and occasions from plain observation.** A run of photos away from home is a
-  trip if it spans a night and a day out otherwise; a dense burst at home is an occasion for you
-  to name. No dates or hints to type in.
-- **Review before anything moves.** Dry-run is the default and blocks every move, copy and
-  delete; approvals wait until you switch it off. Approve, rename, exclude single photos, name
-  bursts, undo whole folders; the Everyday page shows what was not clustered and lets you build
-  clusters by hand.
-- **Everything in review is temporary.** Until a cluster is moved, nothing is final: **Settings →
-  Start over** drops every proposal that has not been moved (approvals, rejections, names,
-  exclusions, clusters built by hand), reads every inbox photo again and clusters with the
-  current settings. Moved clusters, the history and the settings stay.
-- **Every move is on record and can be taken back.** A journal keeps one line per file operation,
-  grouped by action; the History page reverts any action, or puts one file back where it was
-  before a given action, as far as the files are still where that action left them.
-- **Two phones, one library.** Each device is followed on its own timeline: the family trip
-  with two phones is one folder, the partner's photos at home never cut it short, and two
-  phones on different continents are two trips.
-- **Cameras without GPS join the trip.** A photo without a position gets one from the photos
-  with GPS around it in time (same device first, then any): interpolated between the two
-  located photos before and after it when they are close in time, else the nearest one.
-- **An approval covers what you saw.** A cluster you approved but that has not moved yet (dry-run,
-  a failed move) goes back to review when photos join it later, e.g. a camera imported after the
-  phones; it never moves photos nobody looked at.
-- **Per-device quirks.** A camera on local time without a time zone in its photos takes the
-  offset of the phone photos around it; videos that store local time instead of UTC, a shorter
-  GPS window or a wider home radius for one device: one line per input in Settings.
-- **Videos included.** iPhone and Android MP4/MOV get correct local timestamps (UTC converted
-  to your home zone), GPS from the QuickTime metadata and a thumbnail frame.
-- **Readable names.** `2026-06 Lisbon, Sevilla`; your own place names ("Black Forest") beat
-  the offline geocoder and are learned when you rename a cluster.
-- **Thumbnails without a NAS.** Generated once and cached; RAW previews and video frames too.
-- **Move or copy.** Moves are renames on the same share; copy mode leaves originals untouched.
-- **A nudge in Matrix, if you like.** Off by default: with a homeserver, a token and a room in
-  Settings (advanced), each new proposal is announced once in the room with a link to it; the
-  Review page stays where you decide.
-- **One small container.** Runs on a CPU-only laptop; the whole test suite runs in Docker.
-
-See [docs/DESIGN.md](docs/DESIGN.md) for the rules and why they were chosen. The rules are
-declared, not coded (`app/rules.py`): the settings fields feed a default ruleset, and expert
-mode of Settings takes a YAML ruleset of your own (several homes, your own conditions such as
-weekday, number of devices, distance from home or inbox, your own folder-name templates), with
-a preview of which proposals it would change before you save it.
-
-## Deploy
-
-```bash
-git clone … photosort && cd photosort
-cp .env.example .env          # set PUID/PGID (the NAS user), the inbox root and the target root
-docker compose pull && docker compose up -d      # image from ghcr.io/philippmundhenk/photosort
-# or build locally:  docker compose up -d --build
-```
-
-Open `http://<host>:8080`. A first run starts by itself; when the home location is not set
-it is detected from the photos (the spot with photos on the most different days) and can be
-corrected in **Settings** (three modes: *basic* for a first setup, *advanced* adds the
-clustering thresholds, *expert* everything; every setting says in a sentence or two what it does). Press **Run now** any time. The first scan runs `exiftool` over every photo once (a few minutes for
-20k files); afterwards only new files are read.
-
-- Photos are mounted, not copied. Moves are `rename()` on the same mount; keep inbox and
-  target on the same share. **Copy instead of move** (Settings → Behaviour) copies into the
-  sorted tree and leaves the originals in the inbox; their sidecar records `copied_to`, so they
-  are not proposed again. Undo and "move out" then delete the copy and clear that mark. It is
-  also the way to work with read-only inboxes (a move there fails): **History** offers the list
-  of originals that were copied and are still there, to delete them yourself later (this needs
-  central sidecars, which are written under `data/`).
-- Config lives in `data/config.yaml`, the event log in `data/events.jsonl`, current proposals in
-  `data/proposals.json`. Losing `data/` loses history and pending proposals, never photos.
-- Behind Traefik/Authelia: uncomment the labels in `docker-compose.yml`. There is no
-  built-in auth.
-- Thumbnails come from the Synology `@eaDir` folders (pattern configurable); a small box never
-  decodes an image. Without thumbnails the UI shows a placeholder (small JPEGs are served
-  directly).
-
-### Input folders
-
-Mount the folder that holds `inbox/` and `sorted/` once, at `/photos` (`PHOTOS_BASE` in `.env`):
-a move is then a rename on the share. Two separate mounts, as earlier versions used, make every
-move a copy through the container and back over the network (the pages warn when they see it).
-The inbox root is `/photos/inbox`, the sorted root `/photos/sorted`; both are editable in
-Settings for other layouts. Every subfolder of the inbox root is an
-input named after the folder: `hans/` becomes `hans=/photos/inbox/hans`, discovered on every
-scan, so a new device folder needs no configuration. Settings shows what was found; the
-override box takes explicit `name=/path` lines when the layout is different. Each input is
-scanned recursively. With **Per-source subfolders** on, a trip folder gets one subfolder per
-input (`2026-10 Lisbon/hans/`, `2026-10 Lisbon/phone-b/`); the everyday tree does the same.
-
-### NAS share mounts
-
-The share must be mounted on the host before the container starts. Docker binds what is at
-`PHOTOS_BASE` at that moment. A systemd `.automount` does not work: Docker binds the empty
-placeholder, and the real share mounted later never shows up inside the container. Mount the
-share at boot with a `.mount` unit instead. `nofail` lets the host boot without the NAS,
-`_netdev` waits for the network. An example for a CIFS share at `/mnt/nas/photos`
-(the file name must match the path: `/etc/systemd/system/mnt-nas-photos.mount`):
-
-```ini
-[Unit]
-Description=NAS photos share
-After=network-online.target
-Wants=network-online.target
-
-[Mount]
-What=//nas.local/photos
-Where=/mnt/nas/photos
-Type=cifs
-Options=credentials=/etc/nas-credentials,uid=1000,gid=1000,file_mode=0664,dir_mode=0775,nofail,_netdev
-
-[Install]
-WantedBy=multi-user.target
-```
-
-For NFS use `What=nas.local:/volume1/photos`, `Type=nfs` and `Options=nofail,_netdev`.
-Then `sudo systemctl daemon-reload && sudo systemctl enable --now mnt-nas-photos.mount`.
-
-If you want to keep the automount, use the long volume syntax with `propagation: rslave` in
-`docker-compose.yml`, and touch the path first so the share is mounted when Docker binds it:
+## Getting started
 
 ```yaml
+# docker-compose.yml
+services:
+  photosort:
+    image: ghcr.io/philippmundhenk/photosort:latest
+    container_name: photosort
+    restart: unless-stopped
+    user: "1000:1000"                 # the user that owns the photos on the share
+    environment:
+      TZ: Europe/Berlin               # your home time zone
     volumes:
-      - type: bind
-        source: ${PHOTOS_BASE:-/mnt/nas/photos}
-        target: /photos
-        bind:
-          propagation: rslave
+      - ./data:/data                  # settings, proposals, history (small)
+      - /mnt/nas/photos:/photos       # holds inbox/ (one folder per device) and sorted/
+    ports:
+      - "8080:8080"
 ```
 
-```bash
-ls /mnt/nas/photos > /dev/null && docker compose up -d
+```sh
+docker compose up -d
 ```
 
-With CIFS, `uid=` and `gid=` must be the same numbers as `PUID` and `PGID` in `.env`. The
-container runs as that user. If the share belongs to someone else, reading still works,
-but every move fails: the directories are `0755`, so "other" may read them but not create
-or rename files in them. NFS shows the owners from the NAS; there `PUID`/`PGID` must be the
-NAS user that owns the photos.
+1. Put each device's photos in its own folder under `inbox/` (`inbox/phone/`, `inbox/camera/`).
+2. Open `http://<host>:8080`. The first scan starts by itself; home is detected from where most
+   photos were taken. Check it under *Settings → Home*.
+3. Look at the proposals under *Review*: approve, rename or reject them. With dry-run on, an
+   approval only marks a proposal.
+4. When the proposals look right, switch dry-run off in *Settings*: approved clusters move.
 
-### Commands in the container
+Mounting a NAS share, permissions, a reverse proxy: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-The container is called `photosort`. `docker exec photosort …` works from any directory.
-`docker compose exec photosort …` works only in the folder with `docker-compose.yml`.
+## Screenshots
 
-```bash
-docker exec photosort id                 # which user the container runs as
-docker exec photosort ls -l /photos      # is the share there, and who owns it?
-docker logs -f photosort                 # follow the scan
-```
-
-### Home occasions
-
-A burst at home is proposed when it has at least `burst_min_photos` files and exceeds your
-median photos/day by `burst_baseline_factor`. Nothing judges whether it *was* an occasion:
-metadata cannot tell a birthday from twenty shots of the same thing, and neither could the
-decision model that was tried for exactly this (DESIGN.md, section 10). You name it or reject it.
-
-## How it works
-
-1. **Scan** (every N minutes): every photo and video in every input folder (recursive) gets a
-   JSON record (by default in `data/index/`, optionally as a sidecar next to the file; see
-   Settings → Sidecars) with timestamp, GPS, offline reverse-geocoded place and
-   its *zone* relative to your home: `home` (< 0.5 km), `local` (< 20 km), `away` (beyond).
-   Photos without GPS take the position of the nearest photo in time that has one.
-   Videos (iPhone and Android MP4/MOV) are read the same way: GPS from the QuickTime keys,
-   the timestamp from `CreationDate` (iPhone, with offset) or the spec-UTC `CreateDate`
-   converted to your home time zone (`TZ` / Settings), the device from the metadata or, when
-   the video carries none (Android), from the inbox name.
-2. **Cluster** (deterministic):
-   - **Trip** = a run of photos away from home spanning at least 20 hours. Any `home` photo
-     ends it, no matter how short the stay. No-GPS photos inside the run ride along.
-     Lisbon → Seville → Lisbon is one trip. Name: `YYYY-MM Place, Place` when the trip stays
-     within one month, `YYYY-MM-DD..MM-DD` otherwise (places in order of first appearance;
-     countries if more than four; "Multiple" beyond that). Places
-     are your own named places (Settings, or "remember this place" when renaming), else the
-     town from the offline geocoder.
-   - **Day out** = a run of not-at-home photos shorter than 20 hours: `YYYY-MM-DD Place`.
-     (Trip and day out are the same rule; only the duration differs.)
-   - **Occasion at home** = a burst at home well above your normal photos/day. Every such burst
-     is proposed and goes to `_unnamed/` until you name it (`2026-06-30 Birthday Party`) or
-     reject it (then it stays everyday).
-   - Everything else is *everyday*: shown on the Everyday page; moved into `YYYY/MM/` by the
-     button there once older than `everyday_keep_days` (4), or on every run with *Auto-move everyday*.
-3. **Review** in the web UI: approve, reject, rename, toggle single photos, name unnamed
-   bursts, undo whole clusters, move single photos back out. *why* on a proposal shows the
-   rule that made it, its conditions against the run's numbers, the rules checked before it
-   and the longest pause inside the run, before you tune a threshold. **Everyday** lists every photo
-   that is in no cluster, by month and day; tick photos to add them to a pending proposal or
-   to create a cluster by hand (kept across runs, marked "by hand"). A cluster's page has the
-   same bar: tick photos and move them to another cluster (moved in by the worker), to an
-   open proposal, to a new cluster, or back to the inbox. Every action is logged and every
-   folder gets a `manifest.json` (source paths, confidences, corrections). Approving in the
-   UI settles every photo; only auto-applied clusters park their low-confidence photos in
-   `<folder>/_review/` for a later look.
-
-**Dry-run is on by default, and it means exactly that: nothing is moved, copied or deleted.**
-Approving only marks proposals; they are moved once you switch dry-run off in Settings (which
-asks for confirmation). Every function that touches a file checks the flag itself.
-
-## Layout
-
-```
-app/
-  config.py    dataclass + YAML load/save + form coercion
-  geo.py       haversine, zones, offline reverse geocoding (reverse-geocode)
-  ingest.py    exiftool → sidecar; optional .xmp keywords
-  cluster.py   the rules; proposals with review status
-  mover.py     apply / undo / rename / move-out; manifest.json; cluster listing
-  notify.py    Matrix message per new proposal in Review (off by default)
-  main.py      FastAPI app, scheduler, routes
-  templates/   dashboard, review, clusters, cluster, log, settings
-tests/           pytest suites (see Development & tests); tests/synth.py builds the synthetic library
-Dockerfile       stages: base -> test (ruff, pytest, Playwright) -> runtime (default)
-```
-
-## Development & tests
-
-Everything runs in Docker; nothing but Docker is needed on the host or the CI runner.
-
-```bash
-docker compose -f docker-compose.test.yml run --rm tests                 # ruff + unit + web + browser tests
-docker compose -f docker-compose.test.yml run --rm tests pytest -m e2e -v
-```
-
-| Suite | Where | What |
+| Review: a trip | Everyday photos | Settings |
 |---|---|---|
-| unit | `tests/test_{geo,config,ingest,events,cluster,devices,mover,video,thumbs,manual,sidecars,perf_paths,edges}.py` | rules, two devices, coercion, records, moving/copying, videos, thumbnails (helper process), manual clusters, caches and hot paths, every error path |
-| notifier | `tests/test_notify.py` | the Matrix notifier against a fake homeserver: off by default, one message per new proposal and never twice, a summary for many, failures logged without the token and retried, the run unharmed, the Settings controls |
-| web e2e | `tests/test_app.py`, `tests/test_live_pages.py`, `tests/test_moving_matrix.py`, `tests/test_templates.py`, `tests/test_jobs.py` | every page and form action through FastAPI's TestClient; batched clicks, a run finishing mid-review; every way a file can move against dry-run, live-with-switches-off and each switch; undo, rename and put back queued for the worker, busy folders, dry-run switched on while they wait |
-| soak | `tests/test_soak.py` | thirty run-approve-undo cycles: no memory growth, nothing left in queues or threads |
-| fuzz | `tests/test_fuzz.py` | a thousand random tag sets, timestamps, offsets, user texts and timelines through every parser and the clustering: never a crash, always well-formed output (it found five defects on its first run) |
-| latency | `tests/test_perf_features.py` | every feature timed on a 20 500-photo library (pages, polls, clicks, approvals, moves of thousands of files, undo, settings); its own CI step without the coverage tracer; `PERF_BASELINE=1` prints without failing |
-| scale | `tests/test_perf_scale.py` | 20 000 records clustered, 5 000 records loaded from disk, a 3 000-photo proposal through the web layer; latencies printed with `pytest -s`, generous bounds |
-| browser e2e | `tests/e2e/test_browser.py`, `tests/e2e/test_smooth.py`, `tests/e2e/test_features.py`, `tests/e2e/test_scenarios.py`, `tests/e2e/test_restart.py`, `tests/e2e/test_memory.py` | real uvicorn + headless Chromium (Playwright): the review flow; no growth of JS heap, DOM nodes or listeners while a page polls or the same clicks repeat (measured after garbage collection); no reload while the user works, hidden-tab polling, a 4000-photo library; every feature end to end (everyday selection and manual clusters, keyboard, viewer, remembered places, approve all, the everyday move button, settings dialogs, home detection, sidecar buttons, log filters, month navigation, dashboard, phone width); copy mode, two phones on different continents, wall-clock times in the home zone and an own place name from Settings through the whole pipeline; a kill and restart in the middle of a 2 500-file move |
-| smoke | `python -m tests.smoke` | one synthetic end-to-end run without pytest |
-| journal | `tests/test_journal.py` | every action is one batch of file operations; revert of a batch, of one file, of a revert; skipped files reported; dry-run refused; the History page |
-| rules | `tests/test_rules.py` | the rule engine: golden test against the frozen pre-engine rules on every library and many parameter sets, custom rules, validation, multi-home zoning, the Settings editor |
-| why panel | `tests/test_why.py` | what a proposal stores about the rule that made it, every condition in plain words, the panel on the review and cluster pages |
-| docs | `tests/test_docs.py` | the README's test table matches the files on disk, every configuration field has a form control, the design document names every module |
-| coverage | the test image's default command | line and branch coverage of `app/` must stay at 99 % or above (it is 100 % as of 2026-09-29); `tests/e2e/test_script_coverage.py` measures how much of `ui.js` one browser session executes (99 % or above; every function runs); `tests/test_templates.py` renders every template branch; CI also starts the published runtime image and calls every page |
+| ![review](docs/screenshots/review.png) | ![everyday](docs/screenshots/everyday.png) | ![settings](docs/screenshots/settings.png) |
 
-Locally without Docker (needs exiftool and `playwright install chromium`):
+<img src="docs/screenshots/review-phone.png" width="260" alt="the review page on a phone">
 
-```bash
-pip install -r requirements-dev.txt -c constraints.txt   # the exact versions CI tests
-pytest                                    # -m "not e2e" to skip the browser tests
-PHOTOSORT_DATA=./data uvicorn app.main:app --reload --port 8080
-```
+## Documentation
 
-CI (`.github/workflows/ci.yml`) runs the test image on every push and PR, then builds
-`photosort` (amd64+arm64) and publishes it to GHCR on `main` and on `v*` tags.
+* [docs/USAGE.md](docs/USAGE.md) — how sorting works and how to use each page
+* [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — every setting, devices that differ, your own rules
+* [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — Docker, NAS shares, permissions, reverse proxy
+* [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — code layout, tests and coverage, CI, screenshots
+* [docs/DESIGN.md](docs/DESIGN.md) — design notes and the reasons behind the rules
 
-## Status / roadmap
-
-Done: inputs discovered per device folder; trips, day outs, home bursts, everyday tree; review
-UI with undo, corrections, Everyday page and manual clusters; videos, thumbnails, named places;
-dry-run that blocks every file operation; background moves, undo, renames and put-backs with
-progress. A decision model
-(Model, external API) was tried on the home-burst question and dropped (DESIGN.md §10).
-
-Open work is tracked as [issues](https://github.com/PhilippMundhenk/photosort/issues), among
-them a generic rule engine (#2), multi-home (#3), naming of transit
-stops and city districts (#5), a per-proposal "why" panel (#6), large-library performance (#7),
-content-based signals for home bursts (#9) and multi-user support (#1, which will also map users
-to Matrix rooms; the notifier itself, #8, posts into one room).
+Status: in daily use. Questions and problems:
+[GitHub issues](https://github.com/PhilippMundhenk/photosort/issues).
