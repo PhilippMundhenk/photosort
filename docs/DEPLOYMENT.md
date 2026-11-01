@@ -22,8 +22,8 @@ docker compose pull && docker compose up -d
 | `PHOTOSORT_IMAGE` | another image than `ghcr.io/philippmundhenk/photosort:latest` |
 
 Open `http://<host>:8080`. The first scan reads every photo once with exiftool (a few minutes
-for 20 000 files over a share); afterwards only new files are read. The compose file limits the
-container to 1 GB of memory, enough for a library of 20 000 photos.
+for tens of thousands of files over a share); afterwards only new files are read. The compose
+file limits the container to 1 GB of memory, enough for a library of tens of thousands of photos.
 
 Updating: `docker compose pull && docker compose up -d`. Settings, proposals and history stay
 in `data/`.

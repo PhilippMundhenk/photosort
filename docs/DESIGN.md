@@ -1,298 +1,235 @@
 # Design notes
 
-Written from the design conversation that produced this project (September 2026). The aim
-is that someone (including future-you) can see *why* the pipeline looks the way it does and
-which alternatives were rejected.
+Why photosort works the way it does: the rules, the state it keeps, how it stays fast on a small
+box, and the alternatives that were considered and not taken. How to use it is in
+[USAGE.md](USAGE.md), every setting in [CONFIGURATION.md](CONFIGURATION.md).
 
 ## 1. Purpose and scope
 
-Goal: automatically sort photos from several devices into a folder tree by trip / day out /
-occasion, with names like `2026-10-03..24 Lisbon, Sevilla`, and get hands-on experience with
-"external" decision models (an Jev and its open reproductions Kev, Model, SemIf) on a
-task where they add real value rather than as a toy.
+Goal: sort the photos and videos of several devices into a folder tree of trips, day outs and
+occasions, with names like `2026-06 Lisbon, Sevilla`, without anyone typing dates, and move
+nothing a person has not seen.
 
 Non-goals:
 
 - No database-driven photo manager (Immich, Paperless-style). The folder tree *is* the
-  product; other tools must keep working on it.
-- No image content analysis on the server. The target machine is a CPU-only small laptop
-  that already OOM-kills a 7B LLM; it must never decode an image.
-- No cloud or API models. Everything local.
+  product; other tools keep working on it.
+- No image content analysis on the server. The target machine is a CPU-only small box; the only
+  images it decodes are thumbnails, bounded and cached (section 7).
+- No cloud services and no API models. Everything runs offline.
 
-## 2. Why a decision model at all — and why so little of it
+## 2. Rules, not a decision model
 
-*(Superseded: the model was dropped after the experiment in section 10. The reasoning below
-is kept because it explains the shape of the rules.)*
-
-Jev-style models take a short text *state* and typed questions (`Choice`, `Noul` = yes/no,
-`Score`) and return calibrated probabilities in ~100 ms, without generating text. They are
-small (Model ≈ 1 GB, sub-second on CPU) and cheap to call thousands of times. They are weak on
-long, noisy input with many fuzzy categories — which is exactly what the *first* idea
-(sorting OCR'd scans into a large folder tree) would have been. So the photo task was chosen
-instead: short states, few options, thousands of calls, harmless failures, free labels.
-
-During design the model's share kept shrinking, deliberately. Every time a rule could
-express what we wanted, the rule won: rules are debuggable, need no calibration and run in
-microseconds. The model is reserved for genuine judgment calls the rules cannot see. Today
-that is one question — *is this dense burst of photos at home an occasion or just a busy
-day?* — plus room for two more (photo-less gaps, fringe photos) if the rules prove
-insufficient. This is intentional: a first project where the model is load-bearing would be
-a worse project.
+Every decision is a rule over metadata: time, position, device. Rules are debuggable, need no
+calibration, run in microseconds and can be explained in the review page ("why"). A decision
+model was considered for the one question metadata cannot answer, and is not part of the
+pipeline (section 10). The review queue is where that question is answered: by the user.
 
 ## 3. The rules, and the decisions behind them
 
-### Zones instead of "holiday detection"
+### Zones
 
-Three zones by distance from a configured home point: **home** (< 0.5 km), **local**
-(< 20 km), **away**. The home point can be set from the data ("Detect home from photos" in
-Settings: the ~100 m cell with photos on the most distinct days), which the first real run
-showed to be necessary: a home point 3 km off turned every day into a day out and no trip
-ever ended. Earlier ideas — a static "holiday or not" filter, DBSCAN over
-time+space, a window around user-given dates — were dropped because trips vary from one day
-to four weeks and the user does not want to type exact dates. Distance from home is the one
-feature that is always available and always meaningful.
+Three zones by distance from the nearest home: **home** (< `home_radius_km`, 0.5 km), **local**
+(< `local_radius_km`, 20 km), **away**. Distance from home is the one feature that is always
+available and always meaningful; a "holiday or not" filter, DBSCAN over time and space, or a
+window around dates the user types were rejected because trips vary from one day to weeks and
+nobody wants to type dates.
 
-### Excursion = maximal run of photos not at home, ended by any `home` photo (revised September 2026)
+The home point can come from the data: *Detect home* (Settings) takes the ~100 m cell with photos
+on the most distinct days. A home point a few kilometres off turns every day into a day out, so
+the detected point is offered rather than a guessed one. Detect also offers the next places with
+photos on many days (at least 5, 1 km apart) as further homes.
 
-After the first run on real photos the distance-based split (day out = local burst, trip =
-away run) produced a 13-photo "trip" to a place 25 km away and would have merged a
-one-day outing 30 km away with a two-week holiday. The user's observation: what makes a trip
-is *staying away overnight without photos at home in between*, not the distance. So both
-kinds now come from one rule: a run of photos outside the home radius, ended by any home
-photo, is a **trip** when it spans at least `trip_min_hours` (20 h, i.e. an overnight stay)
-and a **day out** otherwise. Day outs near home need `dayout_min_photos` (8) so the school run
-and the supermarket stay everyday; day outs mostly in the away zone, like trips, need only
+### Excursions: a run of photos away from home, ended by any home photo
+
+What makes a trip is staying away overnight without photos at home in between, not the
+distance. So trips and day outs come from one rule: a run of photos outside the home radius,
+ended by any home photo, is a **trip** when it spans at least `trip_min_hours` (20 h, an
+overnight stay) and a **day out** otherwise. Day outs near home need `dayout_min_photos` (8),
+so the school run and the supermarket stay everyday; day outs mostly in the away zone need only
 `trip_min_photos` (3): three photos 30 km from home are an outing, three photos in the next
-town are noise. The local/away
-zone remains as a label and for confidences only. The earlier notes below describe the run
-mechanics, which are unchanged.
+town are noise. The local/away zone is a label and feeds the confidences.
 
-### One timeline per device (September 2026)
+Mechanics of a run:
 
-With two phones in the inbox the single merged timeline broke in both directions: a photo
-taken at home with one phone ended the other phone's trip (the trip fell apart into day-long
-fragments, none long enough to be a trip), and two phones 10 000 km apart at the same time
-produced one "trip" with both places in its name, because the gap-and-distance split only
-looks at consecutive photos and the gaps between interleaved photos are minutes. Excursions
-are therefore found per device (`source`, the inbox folder), and runs of different devices
-become one excursion only when they overlap in time and some of their photos are within a
-day and `trip_split_distance_km` of each other: the family trip with two phones stays one
-folder, the partner at home stays out of it. The same rule applies to GPS-less photos: they
-borrow a position from the nearest located photo *of the same device*; a device with no
-located photo of its own within `neighbour_gps_hours` borrows from the others. That covers
-the camera without GPS, and also the camera that geotags only now and then: it used to count
-as a GPS device, found nothing of its own during the trip, and its shots stayed everyday.
-Between two located photos at most `gps_interpolation_hours` apart (6 h by default) the
-position is not copied but interpolated by time along the great circle (issue #22): on a day
-of travel the camera shots spread along the phone's track instead of piling up at its stops.
-Across a longer gap (a night, a flight) the nearest photo stays the better guess; such
-positions are marked `interpolated:<before>..<after>` and count as borrowed (confidence 0.8). Home bursts still look at the merged
-timeline, since a birthday photographed with two phones is one occasion.
+- Returning home ends a run *no matter how short the stay*. There is no place-based adjacency
+  logic.
+- Lisbon → Seville → Lisbon is one trip, flat: no nested "leg" folders.
+- Local and GPS-less photos inside a run ride along with lower confidence (transit, an airport
+  photo). They do not define the trip and do not break it.
+- A photo-less gap splits a run only if it is long (`trip_gap_days`, 4) **and** the two sides
+  are far apart (`trip_split_distance_km`, 300 km): same area, same trip. Near home the
+  assumption is reversed: you sleep at home, so in the local zone a gap longer than
+  `local_gap_hours` (12 h) ends the outing even without a home photo, and two evenings out on
+  different days stay two day outs.
+- A run whose last photo is recent is *ongoing* (the home photo may not have synced yet) and is
+  never moved automatically.
 
-### Trip runs: mechanics
+### One timeline per device
 
-- Returning home ends a trip *no matter how short the stay*. This was an explicit
-  requirement and removes all place-based adjacency logic.
-- Lisbon → Seville → Lisbon is one trip, cross-country, flat (no nested "leg" folders —
-  nesting was proposed and rejected).
-- Local / no-GPS photos inside a run ride along with lower confidence (transit, an airport
-  photo). They are not needed to define the trip; they must not break it either.
-- A photo-less gap splits a run only if it is long (`trip_gap_days`) **and** the two sides are
-  far apart. "Same area → same trip" was the user's rule for gaps; a model question was
-  considered and dropped. Near home (local zone) the assumption is reversed: you sleep at
-  home, so a gap longer than `local_gap_hours` (12 h) ends the outing even when no photo was
-  taken at home in between (added after two evenings two days apart, and a day out plus a
-  video the next morning, were merged into one "trip").
-- Photos without GPS inherit the nearest GPS'd photo in time (within 48 h). Also the user's
-  rule; simpler than asking the model.
-- A run whose last photo is recent is marked *ongoing* (the home photo may not have synced
-  yet) and is never applied automatically.
+Excursions are found per device (`source`, the inbox folder). A single merged timeline breaks in
+both directions: a photo at home from one phone would end the other phone's trip, and two phones
+far apart at the same time would form one trip with both places in its name, because the gaps
+between interleaved photos are minutes. Runs of different devices become one excursion only
+when they overlap in time and some of their photos are within a day and
+`trip_split_distance_km` of each other: the family trip with two phones is one folder, the
+partner at home stays out of it. Home bursts look at the merged timeline, since a birthday
+photographed with two phones is one occasion.
 
-### The rules as data (September 2026)
+### Positions for photos without GPS
 
-The three rules above and their parameters were code; now they are a ruleset (`rules.py`)
-evaluated in order: excursion runs go through `excursion_rules` (trip if the run spans the
-trip minimum with enough located photos; a long run without positions is everyday; a day out
-far away needs the trip minimum of photos, near home the day-out minimum), bursts of the
-rest through `burst_rules` (a home occasion above the baseline multiple). The first rule
-whose conditions hold decides, `everyday` is a kind of its own, so a custom ruleset can say
-"a burst of 30 photos in the local zone on a weekend is a day out" or "a trip needs two
-devices". The default ruleset is held to the old code by a golden test that runs a frozen copy
-of that code (`tests/legacy_rules.py`) and the engine over every synthetic library and many
-parameter sets and requires identical proposals. What used to be constants are parameters
-now (November 2026, issue #2): what "mostly" means (`mostly_share`), which places name a
-cluster (`naming`: 3 % of its files and at least 2), the confidence under which a photo is
-uncertain (`review`: 0.7); new conditions look at the farthest photo's distance from home and
-at the inboxes a run comes from. The editor's **Preview** clusters the inbox with the rules in
-force and with the ones typed, from the same records, and lists what would be new, gone or
-different; nothing is saved until Save. Conditions stay named keys (`photos_min: 8`) rather
-than the expression syntax first sketched: they validate one by one with messages a person
-can act on, and the why panel can put each into words. Several homes (issue #3) are a list in the
-ruleset: a photo inside any home is at home, ends excursions and is everyday there; the
-zone beyond follows the distance to the nearest home, and the record keeps that home's name.
-Each home has its own usual day: `data/baseline.json` keeps the photos per day per home, and a
-home burst is measured against the home it was taken at (a dozen photos at the grandparents',
-where you take one a visit, is an occasion; at home, where you take ten a day, it is not). With
-more than one home, an occasion's default name says where (`2026-06-30 (25 Fotos) @ Granny`).
-"Detect" keeps the next places with photos on many days (at least 5, 1 km apart) and Settings
-offers them as further homes.
+A GPS-less photo borrows a position from the nearest located photo *of the same device*; a
+device with no located photo of its own within `neighbour_gps_hours` (48 h) borrows from the
+others. That covers the camera without GPS and the camera that geotags only now and then.
+Between two located photos at most `gps_interpolation_hours` apart (6 h) the position is
+interpolated by time along the great circle, so on a day of travel the camera's shots spread
+along the phone's track instead of piling up at its stops. Across a longer gap (a night, a
+flight) the nearest photo is the better guess. Interpolated positions are marked
+`interpolated:<before>..<after>` and count as borrowed (confidence 0.8).
+
+### The rules as data
+
+The rules are a ruleset (`rules.py`) evaluated in order: excursion runs go through
+`excursion_rules` (a trip if the run spans the trip minimum with enough located photos; a long
+run without positions is everyday; a day out far away needs the trip minimum of photos, near
+home the day-out minimum), the bursts of the rest through `burst_rules` (a home occasion above
+the baseline multiple). The first rule whose conditions hold decides; `everyday` is a kind of
+its own. A custom ruleset can say "a burst of 30 photos in the local zone on a weekend is a day
+out" or "a trip needs two devices".
+
+`defaults(cfg)` builds the default ruleset from the settings fields. A golden test runs a frozen
+copy of the pre-engine clustering code (`tests/legacy_rules.py`) and the engine over every
+synthetic library and many parameter sets and requires identical proposals, so the defaults stay
+what the rules have always meant. Every number of the rules is a parameter, expert mode at
+least: what "mostly" means (`mostly_share`), which places name a cluster, the confidence under
+which a photo is uncertain, the clock-offset window, the home detection.
+
+Conditions are named keys (`photos_min: 8`) rather than an expression syntax: they validate one
+by one with messages a person can act on, and the why panel can put each into words. The
+editor's **Preview** clusters the inbox with the rules in force and with the ones typed, from the
+same records, and lists what would be new, gone or different; nothing is saved until Save.
+
+### Several homes
+
+Homes are a list in the ruleset. A photo inside any home is at home, ends excursions and is
+everyday there; the zone beyond follows the distance to the nearest home, and the record keeps
+that home's name. Each home has its own usual day: `data/baseline.json` keeps the photos per day
+per home, and a home burst is measured against the home it was taken at (a dozen photos at the
+grandparents', where you take one a visit, is an occasion; at home, where you take ten a day, it
+is not). With more than one home an occasion's default name says where
+(`2026-06-30 (25 Fotos) @ Granny`).
+
+### Home occasions are bursts
+
+Photos at home closer together than `burst_gap_hours` (3 h) form a burst. A burst is an occasion
+when it has at least `burst_min_photos` (12) and exceeds the home's median photos per day by
+`burst_baseline_factor` (4). Home bursts carry no location signal: a birthday and twenty shots of
+something for sale look identical in metadata. So nothing judges whether a burst *was* an
+occasion: it waits in `_unnamed/` and the user names or rejects it. Reading a calendar (CalDAV)
+to name bursts was rejected: the pipeline stays observational and asks the human.
 
 ### Naming
 
 `<span> <places>`. The span is the month (`2026-08`) when a multi-day cluster stays within one
-month (user request, September 2026: the day range added nothing once the folder is inside a
-year tree), the day for a single day, and a full range only across months. Places most
-photographed first (November 2026, issue #5; before, in order of first appearance),
-deduplicated, at most four; then countries; then "Multiple". Places mentioned by fewer than
-3 % of a run's photos (and fewer than two) are dropped, so a motorway stop does not name the
-trip, and so are short stops at either end: a place whose photos all come before (or after)
-every other place's, span less than 3 h, are at most 5 photos (or 5 %) and at most a third of
-what the rest has. A four-photo airport layover named a trip "Gateway, Harbourside, Manila";
-now it is "Manila, Harbourside". Every one of these numbers is a key of the rules' `naming` block
-(expert Settings). City districts (Harbourside) and airports in general would need place data of
-our own (a GeoNames extract with the admin hierarchy, an airport list); decided against for
-now, "remember this place" covers them by hand. The place comes from:
+month (the day range adds nothing inside a year tree), the day for a single day, and a full range
+across months. Places most photographed first, deduplicated, at most four; then countries; then
+"Multiple". A place mentioned by fewer than 3 % of a cluster's photos (and fewer than two) is
+dropped, so a motorway stop does not name the trip, and so is a short stop at either end: a place
+whose photos all come before (or after) every other place's, span less than 3 h, are at most 5
+photos (or 5 %) and at most a third of what the rest has. A four-photo airport layover on the
+way out does not name the trip. Every one of these numbers is a key of the rules' `naming` block.
 
-1. the user's **named places** (`named_places`: name, centre, radius), because nothing
-   offline knows that a spot is "Black Forest", "the Alps" or "the allotment garden". The list is
-   grown from the UI: tick "remember this place" when renaming a cluster and the cluster's
-   photos define the circle (mean position, radius to the farthest photo).
+The place comes from:
+
+1. the user's **named places** (`named_places`: name, centre, radius), because nothing offline
+   knows that a spot is "Black Forest" or "the allotment garden". Ticking "remember this place"
+   when renaming a cluster adds one: the cluster's photos define the circle (mean position,
+   radius to the farthest photo, within the `naming` limits).
 2. else the offline geocoder's town when its population is at least `min_city_population`
-   (1000 since September 2026; 20000 produced state names for most of Germany), else the
-   region.
+   (1000; a much higher bar gives state names for most of a country), else the region.
 
-### Why "trip" and "day out" are separate rules although the output is the same
-
-Asked in September 2026: a trip folder and a day-out folder look alike (`root/<span> <place>`),
-so is the distinction worth anything? In the *output* it is not, and the code treats both the
-same there (same target folder, same manifest, same review UI). It is kept because the two
-zones need opposite evidence rules, and no single threshold set serves both:
-
-- **Trip = run logic, sparse-tolerant.** Any run of `away` photos between two `home` photos,
-  at least 3 photos, no density requirement; photo-less days do not end it. One beach photo a
-  day is still the trip. Applied within 20 km of home this would turn the school run, the
-  supermarket and the grandparents in the next town into "trips" whenever three photos fall
-  between two home photos, and merge errands on consecutive days.
-- **Day out = burst logic, density-based.** At least `burst_min_photos` (12) with no gap over
-  `burst_gap_hours` (3). This filters everyday local noise, but would destroy trips: a
-  two-week trip with one photo a day never forms a burst.
-- Distance from home is therefore a proxy for *how much everyday background noise the zone
-  has*: far away almost everything is signal, nearby only a dense burst is.
-
-Other things that hang off the distinction: per-kind auto-apply trust (trips first), the
-`ongoing` status for trips (the home photo may not have synced yet), local/no-GPS photos
-riding along inside an away run as transit, and naming (date range + up to four places vs.
-one date + the most common place).
-
-Possible simplification, not done: one "excursion" rule using the run algorithm for both
-zones with zone-dependent thresholds (away: 3 photos, split on a 4-day/300 km gap; local: 12
-photos, split on a 3 h gap). `kind` would survive as metadata for trust and calibration. It
-would change one behaviour: today a local burst is decided by *majority* zone, so a burst that
-starts with a few home photos and continues at the lake is one day out including the home
-photos; under the run rule the home photos would end it. Probably an improvement, but a
-behaviour change that needs its own test before switching.
-
-### Day outs and home occasions = bursts
-
-Photos closer together than `burst_gap_hours` form a burst; the majority zone decides the
-kind. Local bursts are named from the geocoder. Home bursts have no location signal at all
-— a birthday and the laundry look identical in metadata — so:
-
-- the burst must exceed the user's baseline photos/day by a factor (occasions are dense);
-- the decision model judges `occasion / busy_day` from the burst summary (count, duration,
-  weekday, hours, number of devices, ratio to baseline);
-- accepted bursts go to `_unnamed/` and the *user* names them later. Reading the calendar
-  (CalDAV) to name them was proposed and rejected: keep the pipeline observational and ask
-  the human.
-
-Leftover non-occasion photos inside a burst are accepted as a small cost; an optional CLIP
-pass (Immich already computes vectors) is the noted follow-up if it bothers.
+City districts and airports would need place data of photosort's own (a GeoNames extract with the
+admin hierarchy, an airport list); "remember this place" covers them by hand instead.
 
 ## 3b. Code map
 
 One package, `app/`, no framework beyond FastAPI and Jinja:
 
 - `config.py`: the dataclass behind `config.yaml`, loaded per request from a content-hashed cache,
-  coerced to field types, discovered inputs, time zone.
+  coerced to field types, discovered inputs, time zone, per-device options.
 - `ingest.py`: exiftool in batches, one JSON record per photo (central index or beside the photo),
   timestamps and offsets, GPS sanity, the scan with its change tracking and re-zoning key.
-- `cluster.py`: the record cache, per-device excursions and their merge, bursts, naming,
-  proposals and their identity across runs, the proposals file and its lock.
-- `rules.py`: the clustering rules as data (September 2026, issue #2): a ruleset of homes,
-  excursion cutting parameters, excursion rules and burst rules; `defaults(cfg)` is built from
-  the settings fields and is exactly what the code did before, `effective(cfg)` lays the
-  custom blocks from the config over it; validation, a YAML round trip, the feature
-  extraction and the first-match evaluation live here. `cluster.py` asks it what a run is.
+- `cluster.py`: the record cache, positions for photos without GPS, per-device excursions and
+  their merge, bursts, naming, proposals and their identity across runs, the proposals file and
+  its lock.
+- `rules.py`: the clustering rules as data: homes, excursion cutting parameters, excursion rules,
+  burst rules, naming, review and detection parameters; `defaults(cfg)` from the settings fields,
+  `effective(cfg)` with the custom blocks from the config laid over it; validation, the YAML round
+  trip, feature extraction, first-match evaluation and the words of the why panel.
 - `mover.py`: every file operation (move, copy, undo, rename, move out, put back), the dry-run
   guard, manifests written incrementally, the cluster list and the cross-mount warning.
-- `geo.py`: distance, zones, the offline geocoder with the covering-town rule, own places,
-  home detection.
+- `geo.py`: distance, zones, great-circle interpolation, the offline geocoder with the
+  covering-town rule, own places, home detection.
 - `thumbs.py`: thumbnails and previews in a helper process, the cache and its failure markers,
   the paced prefetch.
 - `events.py`: the append-only log and its tail reader.
 - `journal.py`: the transaction journal, one line per file operation in batches (one per action),
-  and revert of a batch or of one file (see section 4b).
-- `main.py`: the pages and actions, the pipeline, the apply worker, the status endpoint.
+  and revert of a batch or of one file (section 4b).
+- `main.py`: the pages and actions, the pipeline, the worker for moves and folder jobs, the
+  status endpoint.
 
 ## 4. State: filesystem, not a database
 
-Explicit requirement: databases get lost and break. So:
+Databases get lost and break; files in folders do not need a server. So:
 
-- **One JSON record per photo**: timestamp, GPS, place, zone, cluster, decision.
-  Regenerable — delete it and the next scan rebuilds it. Since September 2026 it lives by
-  default in a central index (`data/index/<inbox>/<relative path>/<file>.photosort.json`)
-  because the first real run doubled the file count in the photo folders; "beside the
-  photo" remains an option (the record then follows the file wherever another tool moves
-  it), the file name pattern is configurable, and once a photo has been sorted its record
-  is dropped by default (the folder's `manifest.json` carries everything; copy-mode
-  originals keep theirs, which marks them as done). Keywords are optionally mirrored into a
-  standard `.xmp` sidecar for digiKam/Lightroom. Writing into the originals was rejected
-  (no benefit, risky for RAW). The sidecar holds the keywords only: until November 2026 a new
-  one was made with `exiftool -o`, which also copied the photo's metadata, dates without their
-  offset and a video's UTC clock as local time, and photo managers prefer the sidecar to the
-  file (#49).
+- **One JSON record per photo**: timestamp, GPS, place, zone, cluster, decision. Regenerable:
+  delete it and the next scan rebuilds it. By default it lives in a central index
+  (`data/index/<inbox>/<relative path>/<file>.photosort.json`), so the photo folders do not
+  double their file count; "beside the photo" is an option (the record then follows the file
+  wherever another tool moves it), and the file name pattern is configurable. Once a photo is
+  sorted its record is dropped by default (the folder's `manifest.json` carries everything);
+  copy-mode originals keep theirs, which marks them as done.
+- **Keywords** are optionally mirrored into a standard `.xmp` sidecar for digiKam and Lightroom.
+  The sidecar holds the keywords only, not a copy of the photo's metadata: photo managers prefer
+  the sidecar to the file, so copied dates (without their offset) or a video's UTC clock would
+  override the right values. Writing into the originals is rejected (no benefit, risky for RAW).
 - **Manifest per cluster folder** (`manifest.json`): proposal, decision and confidence,
-  source→target of every photo, later corrections. It is the undo log and the eval set.
+  source→target of every photo, later corrections. It is what undo uses.
 - **The folder tree is the decision**: a photo in a trip folder is settled; `_unnamed/` holds
-  bursts waiting for a label (each folder carries its date, `_unnamed/2026-06-30 (25 Fotos)/`,
-  so several can wait at once). `_review/` inside a folder holds low-confidence photos of
-  *auto-applied* clusters only: when a human approves a proposal in the UI, that *is* the
-  review, and everything goes straight into the folder (decided September 2026, after the
-  first version parked them in `_review/` in both cases).
-- `data/` (config.yaml, proposals.json, events.jsonl) is the only non-photo state and only
-  costs history if lost.
+  bursts waiting for a label (each folder carries its date, `_unnamed/2026-06-30 (25 Fotos)/`, so
+  several can wait at once). `_review/` inside a folder holds low-confidence photos of clusters
+  moved *without asking* only: when a human approves a proposal, that is the review, and
+  everything goes straight into the folder.
+- `data/` (config.yaml, proposals.json, journal.jsonl, events.jsonl, small caches) is the only
+  other state; losing it costs history and open proposals, never photos.
 
 ### Inputs are discovered
 
-Input folders were fixed in the config (`phone-a=/photos/inbox/phone-a`, `phone-b=...`) and
-thus had to be edited for every device. Since September 2026 the container mounts one inbox
-root and every direct subfolder is an input named after the folder, re-read on each scan; the
-config only holds an optional override. The folder name is the device name that appears in
-per-source subfolders and in the records (`source`), so naming the folders after their owners
-("hans", "maria") gives readable trees.
+The container mounts one inbox root, and every direct subfolder is an input named after the
+folder, re-read on each scan; the config only holds an optional list of inputs that overrides
+this. The folder name is the device name that appears in per-source subfolders and in the
+records (`source`), so naming folders after their owners ("anna", "ben") gives readable trees,
+and per-device settings go by that name.
 
 ### When the share drops out
 
-An inbox folder that is not there at scan time (the network share unmounted, the NAS down) is
-reported on the dashboard and its records leave the cache for that run: nothing is proposed
-from photos nobody can reach, so an approve-all during the outage cannot mark a trip "applied"
-without moving a file. Should such an approval happen anyway, a move that finds none of its
-files raises instead of succeeding emptily; the proposal stays approved with the error and the
-retry works once the share is back. When it returns, the records are still in the index, the
-same proposals come back with the same ids, and nothing is re-indexed.
+An inbox folder that is not there at scan time (the share unmounted, the NAS down) is reported on
+the dashboard and its records leave the cache for that run: nothing is proposed from photos
+nobody can reach, so an approve-all during the outage cannot mark a trip "applied" without moving
+a file. A move that finds none of its files raises instead of succeeding emptily; the proposal
+stays approved with the error, and the retry works once the share is back. When it returns, the
+records are still in the index, the same proposals come back with the same ids, and nothing is
+re-indexed.
 
-### 4b. The transaction journal (September 2026)
+### 4b. The transaction journal
 
-The user's ask after a month of use: "How about transactional? To make sure we can always trace,
-revert to previous state." The per-folder manifests recorded what a cluster contained, but the
-everyday move had no manifest and could not be undone, a folder rename left no trace, and there
-was no single place to ask where a file is now. `data/journal.jsonl` is that place: every file
-operation passes through two primitives in `mover` (`_transfer`, `_delete_with_sidecars`) and
+`data/journal.jsonl` answers "where is this file now, and how do I get back?". Every file
+operation passes through two primitives in `mover` (`_transfer`, `_delete_with_sidecars`), and
 each writes one line (op, src, dst); every action (apply, everyday move, undo, rename, move out,
 put back, revert) opens a batch, so a batch is one user or worker action. The History page lists
 the batches with a Revert button and traces a file by name, offering to put it back where it was
 before any one action. Revert moves back what is still where the batch left it and reports the
-rest; it never guesses, never overwrites (a clash gets the `_1` suffix like any move), never
+rest; it never guesses, never overwrites (a clash gets the `_1` suffix like any move), and never
 deletes an original (a deleted copy cannot be restored and says so). A revert is a batch itself
 and can be reverted. Manifests stay as the per-folder view and follow a revert (an emptied folder
 stops being a cluster; a reverted undo gets its manifest back). Losing the journal costs history,
@@ -300,253 +237,208 @@ never photos. Nothing prunes it.
 
 ## 5. Triggers
 
-Originally: a Matrix message like "2026-10 Uruguay" seeds the trip, the model grows the edges.
-Replaced by pure observation: new photos in the inbox are enough, because "beyond 20 km" plus
-"ended by a home photo" defines a trip without any hint. A hand-created empty folder as a
-rename hint is still possible but no longer needed.
+Pure observation: new photos in the inbox are enough, because "outside the home radius" plus
+"ended by a home photo" defines a trip without any hint. Seeding trips from a chat message or a
+hand-made folder is not needed.
 
-Polling every N minutes instead of inotify, because inotify is unreliable over SMB/CIFS.
+Scans poll every `scan_interval_min` minutes instead of using inotify, which is unreliable over
+SMB/CIFS.
 
-## 6. Review UI instead of chat
+## 6. Review UI
 
-Matrix was the first choice for approvals and naming, then dropped for v1: chat is finicky,
-items get lost, there is no queue. A web service with a review queue, a log and a settings
-page is the durable form. A Matrix notifier on top of it (one message per new proposal,
-November 2026, issue #8) was removed again soon after (issue #82): it was not used, and the
-review queue stays the one place where proposals are decided.
+A web service with a review queue, a log and a settings page. Chat (Matrix) is not used for
+approvals or notifications: items get lost in a chat, it has no queue, and the review queue is the
+one place where proposals are decided.
 
-Dry-run is the default. Auto-apply is per rule (trips first, bursts later) so trust can be
-built incrementally.
+### Dry-run is absolute
 
-Dry-run semantics were tightened on 2026-09-26 after an incident: the first version moved
-files when the user approved a proposal *in* dry-run mode ("nothing moves until you approve"),
-and an "approve all" in dry-run then moved every approved file. The user's rule: dry-run means nothing
-is moved, copied or deleted, whatever is approved. It is enforced in one place, the two
-functions in `mover` through which every file operation passes (`_transfer`,
-`_delete_with_sidecars`), plus `apply`/`apply_everyday`/`undo`/`rename` themselves; they raise
-`DryRun`. Approvals are only recorded; switching dry-run off (with a confirmation) queues them.
-An invariant test drives every UI action with dry-run on and asserts the inbox is untouched.
+Dry-run is the default and means nothing is moved, copied or deleted, whatever is approved.
+It is enforced in one place, the two functions in `mover` through which every file operation
+passes (`_transfer`, `_delete_with_sidecars`), plus `apply`/`apply_everyday`/`undo`/`rename`
+themselves; they raise `DryRun`. Approvals are only recorded; switching dry-run off (with a
+confirmation) queues them. An invariant test drives every UI action with dry-run on and asserts
+the inbox is untouched. Auto-apply is per kind (trips first, bursts later), so trust can be built
+step by step.
 
-The page never reloads itself (September 2026). The first version reloaded every page when a
-scan or a move finished, "for fresh counts"; with a scan every ten minutes on a large library
-that meant losing ticked photos, a half-typed name and the open viewer several times an hour,
-and each reload re-fetched hundreds of thumbnails. Now one poll per page updates the busy
-banner and the move progress in place and, when a run finished or files were moved, offers a
-reload in the banner; only the pages without user state (dashboard, log, clusters) refresh
-on their own. Clicks on photos flip at once and travel batched, one request in flight per
-proposal, because a page full of lazily loading thumbnails otherwise queues every click
-behind the browser's six connections per host.
+### The page never reloads itself
 
-Settings come in three modes (September 2026, issues #12 and #15): basic shows what a first
-setup needs (dry-run, what moves by itself, folders, home), advanced adds the clustering
-thresholds, expert everything else (folder details, records, rarely touched limits). A hidden
-setting is still in the form, so a save in basic mode keeps every value; the mode is
-remembered in the config. The page is one column (October 2026): a section per topic, a row
-per setting with a description in plain language on the left (what it does, when to change
-it, an example) and the control on the right. The first version was a grid of narrow cards
-with terse labels and an overview card repeating what the fields said; it read as a wall of
-controls, and the overview was dropped as redundant. A setting that differs from its default
-says so under its control ("default: 4 · use default"), and a section's heading counts them
-(November 2026, issue #12), hidden rows of other modes included: a value tuned in expert mode
-stays visible in basic mode. The defaults come from the config dataclass (secrets left out);
-putting one back only changes the field, Save stores it. One look for the same thing everywhere (November 2026, issue #15): every photo
-grid (Review, Everyday, a cluster's page) is written by one function (`main._figure`; the pages
-only set what a click does and what the caption says), every destructive action (undo, revert,
-removing records, Start over) is a red button, confirmations come only where files move or
-records go (not in dry-run), and the conventions are written at the top of `style.css`.
+With a scan every few minutes, a reload would lose ticked photos, a half-typed name and the open
+viewer, and re-fetch hundreds of thumbnails. One poll per page updates the busy banner and the
+move progress in place and, when a run finished or files were moved, offers a reload in the
+banner; only pages without user state (dashboard, log, clusters) refresh on their own. Clicks on
+photos flip at once and travel batched, one request in flight per proposal, because a page full
+of lazily loading thumbnails would otherwise queue every click behind the browser's six
+connections per host.
 
-Photos change cluster in one way (September 2026, issue #14). Everyday and a cluster's page
-share one selection bar and one target list: open proposals, clusters already moved (the
-worker moves the photos into their folder, the manifest grows), a new cluster, or, on a
-cluster page, back to the inbox. Moving out of a cluster is a correction like before (the
-old manifest lists it, the old proposal excludes it), so undo of either cluster stays exact;
-the moves out of one action are one journal batch, the move into the target is the worker's.
+### Settings
 
-Undo, rename and put back run in the worker too (November 2026, issue #4). A 400-file undo
-over a share blocked the browser for minutes and a reverse proxy could time it out. The queue
-holds job keys: a proposal id, the everyday job, or a folder job (`undo:<folder>`,
-`rename:<folder>`, `put_back:<folder>:<photo>`) whose type and arguments wait in `_jobs`. The
-worker runs one at a time under `_lock`, so a job never moves files while a scan runs; each job
-is one journal batch as before, and dry-run is checked when the request comes (refused, nothing
-queued) and again when the job starts (switched on meanwhile: the job fails with "dry-run is
-on", nothing moves). While a job waits or runs, every other action on its folder (another job,
-move out, move to another cluster, or a proposal being moved into it) is refused with "folder
-busy" instead of racing it. A rename stays inside the request when it is the directory rename
-plus a few records in the central index; with records beside the photos (on the share) or more
-than 300 photos it is queued, and the request answers with the new folder's page, which shows
-the progress until the folder is there. Job cards on the clusters page and a cluster's page show
-progress like an approval; when a job is done these pages reload themselves (they show the
-folder as it was), and a failure stays on them for fifteen minutes and in the log.
+Three modes: basic shows what a first setup needs (dry-run, what moves by itself, folders, home),
+advanced adds the clustering thresholds, expert everything else (folder details, records, rarely
+touched limits, custom rules). A hidden setting is still in the form, so a save in basic mode
+keeps every value; the mode is remembered in the config. The page is one column: a section per
+topic, a row per setting with a plain-language description on the left (what it does, when to
+change it, an example) and the control on the right. A setting that differs from its default says
+so under its control ("default: 4 · use default"), and a section's heading counts them, hidden
+rows of other modes included, so a value tuned in expert mode stays visible in basic mode.
+Putting a default back only changes the field; Save stores it.
 
-A proposal keeps its identity across runs. Its id is a hash of first and last photo, so a
-photo that synced late and landed at either end gave the same excursion a new id and the
-review state (toggled photos, an edited name, an approval) was lost on the next run. A new
-proposal that contains at least half of the photos of an old live proposal now takes over
-its id; the larger half keeps it when a late home photo splits an old one in two.
+### One look for the same thing
 
-An approval covers the photos you saw. A proposal approved by hand but not moved yet (dry-run,
-a move that failed on a read-only inbox) that gains photos on a later run (typically a camera
+Every photo grid (Review, Everyday, a cluster's page) is written by one function
+(`main._figure`; the pages only set what a click does and what the caption says), every
+destructive action (undo, revert, removing records, Start over) is a red button, confirmations
+come only where files move or records go (not in dry-run), and the conventions are written at
+the top of `style.css`.
+
+### Moving photos between clusters
+
+Everyday and a cluster's page share one selection bar and one target list: open proposals,
+clusters already moved (the worker moves the photos into their folder, the manifest grows), a new
+cluster, or, on a cluster page, back to the inbox. Moving out of a cluster is a correction (the
+old manifest lists it, the old proposal excludes it), so undo of either cluster stays exact; the
+moves out of one action are one journal batch, the move into the target is the worker's.
+
+### Long actions run in the worker
+
+Moves, undo, rename and put back run in a background worker, so the browser and a reverse proxy
+never wait for a share. The queue holds job keys: a proposal id, the everyday job, or a folder
+job (`undo:<folder>`, `rename:<folder>`, `put_back:<folder>:<photo>`) whose type and arguments
+wait in `_jobs`. The worker runs one job at a time under `_lock`, so a job never moves files
+while a scan runs; each job is one journal batch, and dry-run is checked when the request comes
+(refused, nothing queued) and again when the job starts (switched on meanwhile: the job fails
+with "dry-run is on", nothing moves). While a job waits or runs, every other action on its folder
+is refused with "folder busy" instead of racing it. A rename stays inside the request when it is
+the directory rename plus a few records in the central index; with records beside the photos or
+more than 300 photos it is queued, and the request answers with the new folder's page, which
+shows the progress until the folder is there. A failure stays on the page for fifteen minutes and
+in the log.
+
+### Proposals keep their identity
+
+A proposal's id is a hash of its first and last photo. A new proposal that contains at least half
+of the photos of an old live proposal takes over its id (the larger half keeps it when a late
+home photo splits one in two), so a photo that syncs late does not lose the review state (toggled
+photos, an edited name, an approval).
+
+An approval covers the photos you saw. A proposal approved by hand but not moved yet (dry-run, a
+move that failed on a read-only inbox) that gains photos on a later run (typically a camera
 imported after the phones) goes back to the review queue with a note of how many joined
-(`new_photos`) instead of moving them unseen. One approved by an auto-apply rule just takes
-them. Once moved, a cluster is final: photos that arrive later are proposed on their own or
-stay everyday, and adding them is up to you.
+(`new_photos`) instead of moving them unseen. One approved by an auto-apply rule just takes them.
+Once moved, a cluster is final: photos that arrive later are proposed on their own or stay
+everyday, and adding them is up to you.
 
-Everything in review is temporary (issue #23). A scheduled run keeps review state, so typing
-a name or an approval is not lost every few minutes; **Start over** (Settings) throws all of it
-away: every proposal that has not been moved is dropped, every inbox photo is read again with
-exiftool (`scan(force=True)`) and the run clusters with the settings as saved. It waits for a
-run or a move in progress rather than being skipped. Moved clusters, the journal and the
-settings stay; the copy-mode mark (`copied_to`) survives the re-read, so originals already
-sorted in copy mode are not proposed again.
+### Everything in review is temporary
+
+A scheduled run keeps review state, so a typed name or an approval survives the next scan.
+**Start over** (Settings) throws all of it away: every proposal that has not been moved is
+dropped, every inbox photo is read again with exiftool (`scan(force=True)`) and the run clusters
+with the settings as saved. It waits for a run or a move in progress rather than being skipped.
+Moved clusters, the journal and the settings stay; the copy-mode mark (`copied_to`) survives the
+re-read, so originals already sorted in copy mode are not proposed again.
 
 ## 7. Hardware constraints and how they shaped the code
 
-- EXIF via `exiftool` in batches of 200, `scan_workers` (3) of them at once: over a share
-  the reading waits mostly for the share, so a first scan of 20 000 files takes about a third
-  of the time (November 2026, issue #7). Thumbnails come from the NAS's `@eaDir` when present;
-  otherwise (revised September 2026, after the first real run showed mostly placeholders)
-  they are generated once into `data/thumbs`: Pillow in JPEG draft mode (decodes at 1/8
-  scale, ~30 ms per 12 MP photo), the embedded preview for RAW via exiftool, one frame via
-  ffmpeg for videos. A background thread pre-generates after each scan, pausing whenever a
-  page is loading thumbnails. Decoding runs in a helper process (September 2026: with a
-  512 MB memory limit the container was killed and restarted a few seconds after every run,
-  without a traceback, as soon as the prefetch reached a handful of broken and very large
-  files; the kill hit uvicorn itself). A helper that dies or exceeds its memory cap costs one
-  thumbnail; a file that gave none is remembered and not decoded again on every run. This is
-  the one place the app decodes images; it is bounded and cached, and can be switched off.
-- The status poll and the pages must stay cheap on a library of tens of thousands of files:
-  the proposals file is parsed only when it changed, the sorted tree is walked for the cluster
-  list at most every few minutes, records are re-zoned only when home, radii or named places
-  changed (not on every run), and the neighbour-GPS fill runs in one thread at a time.
+- EXIF via `exiftool` in batches of 200, `scan_workers` (3) of them at once: over a share the
+  reading waits mostly for the share, so parallel batches cut a first scan to about a third.
+- Thumbnails come from the NAS's `@eaDir` when present; otherwise they are generated once into
+  `data/thumbs`: Pillow in JPEG draft mode (decodes at 1/8 scale, ~30 ms per 12 MP photo), the
+  embedded preview for RAW via exiftool, one frame via ffmpeg for videos. A background thread
+  pre-generates after each scan, pausing whenever a page is loading thumbnails. Decoding runs in
+  a helper process with a memory cap, so a broken or huge file costs one thumbnail instead of
+  the container; a file that gave none is remembered and not decoded again. This is the one
+  place the app decodes images; it is bounded, cached and can be switched off.
+- The status poll and the pages stay cheap on a library of tens of thousands of files: the
+  proposals file is parsed only when it changed, the sorted tree is walked for the cluster list
+  at most every few minutes, records are re-zoned only when homes, radii or named places change,
+  and the neighbour-GPS fill runs in one thread at a time.
 - Offline reverse geocoding with a pure-Python package (no numpy/scipy build on a small box).
-- The app is one ~60 MB container; the decision-model container that was planned next to it
-  (~1 GB resident) is gone with the model (section 10).
-- No JS build, no CDN: server-rendered Jinja templates and plain forms.
-- Moves are `rename()` on the same mount; inbox and target must share it. That means one
-  bind mount for both (`PHOTOS_BASE:/photos`): two bind mounts of the same share are two mount
-  points inside the container, `rename()` fails with EXDEV, and `shutil.move` copies every
-  file through the container and back over the network (80 files took minutes, September
-  2026). The pages warn when an inbox and the root are on different devices. On a read-only
-  inbox such a copy-move can leave the original behind while the share reports success, so a
-  transfer verifies the source is gone and removes the copy otherwise. Keywords for a whole
-  cluster are written by one exiftool process (`-execute`), not one per file. The folder's
-  manifest is written every 25 files while a cluster moves and extended, never replaced, on a
-  later apply into the same folder: a kill mid-move (power, a container restart) loses at most
-  one batch of entries, and the continuation after the restart records the files it finds in
-  the folder without an entry, so undo always covers everything (a browser test kills the server
-  in the middle of a 2 500-file move and restarts it).
+- One small container; no second service.
+- No JS build, no CDN: server-rendered Jinja templates, plain forms and one `ui.js`.
+- Moves are `rename()` on the same mount; inbox and target must share it. That means one bind
+  mount for both (`PHOTOS_BASE:/photos`): two bind mounts of the same share are two mount points
+  inside the container, `rename()` fails with EXDEV, and `shutil.move` copies every file through
+  the container and back over the network. The pages warn when an inbox and the root are on
+  different devices. Across devices a move copies in chunks and shows how far the current file
+  is. On a read-only inbox such a copy-move can leave the original behind while the share reports
+  success, so a transfer verifies the source is gone and removes the copy otherwise.
+- Keywords for a whole cluster are written by one exiftool process (`-execute`), not one per
+  file. The folder's manifest is written every 25 files while a cluster moves and extended, never
+  replaced, on a later apply into the same folder: a kill mid-move (power, a container restart)
+  loses at most one batch of entries, and the continuation after the restart records the files it
+  finds in the folder without an entry, so undo always covers everything (a browser test kills
+  the server in the middle of a 2 500-file move and restarts it).
 
-### A page view must not cost what the library costs (October 2026)
+### A page view must not cost what the library costs
 
-On the 20 000-photo library the Review and Everyday pages still took a second or two on the
-NAS although the harness on a fast machine showed tens of milliseconds: the work was CPU, and
-a small box is five to ten times slower. A profile named it. Everyday copied all twenty
-thousand records three times per view (once to read them, once after the GPS fill, once
-more) and walked every proposal's photos to subtract them; Review rendered every photo of
-every open card through the template engine at 80 microseconds a figure, and a queue of a
-hundred open bursts is eight thousand figures. Every request, and every thumbnail, also
-listed and resolved the inbox folders on the share. Now: readers share the cached records
-(only code that edits gets copies), the everyday list is kept until a record or the proposals
-file changes, figures are written out by a plain function, the page has a budget of inline
-photos (400; the other open cards load their first photos when they scroll near; Everyday
-likewise renders 300 and loads the later days of a long month as they scroll near, issue #7), and the browser keeps little of what it has seen (November 2026, issue #69): thumbnails are made at
-twice their display size, 240x180 (they were 440x330, and a review card shown in full with
-two thousand photos held about a gigabyte of decoded images), every one declares its size and
-decodes off the main thread, and figures off screen are neither laid out nor painted
-(`content-visibility: auto`). A browser test holds pages to that: after garbage collection,
-a dozen status polls or twenty rounds of the same clicks add no nodes, listeners or heap; and the
-inbox folders and the resolved roots are remembered for ten seconds (a scan always looks
-afresh). The harness bounds for both pages are 150 ms.
+A small box is five to ten times slower than a developer machine, so the pages avoid work per
+view that grows with the library: readers share the cached records (only code that edits gets
+copies), the everyday list is kept until a record or the proposals file changes, figures are
+written out by a plain function rather than the template engine, the inbox folders and the
+resolved roots are remembered for ten seconds (a scan always looks afresh), and each page has a
+budget of inline photos (Review 400, the other open cards load their first photos when they
+scroll near; Everyday 300, the later days of a long month load as they scroll near).
 
-## 8. Feedback loop and calibration (historical, see section 10)
+The browser keeps little of what it has seen: thumbnails are made at twice their display size
+(240x180), every one declares its size and decodes off the main thread, and figures off screen
+are neither laid out nor painted (`content-visibility: auto`). A browser test holds pages to
+that: after garbage collection, a dozen status polls or twenty rounds of the same clicks add no
+nodes, listeners or heap. The harness bounds for Review and Everyday are 150 ms.
 
-Every model decision is logged with confidence and id. Rejecting a proposal, moving a photo
-out, or renaming a burst appends a *correction* that references the decision id. The Log page
-buckets decisions by confidence and shows accuracy per bucket — for a calibrated model the two
-match. This is the actual learning objective of the project: does "0.8" mean 0.8 on my data?
+## 8. Testing policy
 
-## 8b. Testing policy (September 2026)
+Everything runs in Docker (`docker compose -f docker-compose.test.yml run --rm tests`), nothing on
+the host. The test image's default command lints, runs the whole suite and fails below 99 % line
+and branch coverage of `app/`; dead code is removed rather than covered. One browser session
+executes `ui.js` under Chromium's coverage profiler (every function, 99 %+ of the code;
+page-initiated navigations are answered with 204 so the document survives for the snapshot),
+every template branch is rendered and asserted, every way a file can move is checked against
+dry-run, live with switches off and each switch, scale tests time 20 000 synthetic records and a
+3 000-photo proposal, and CI starts the published runtime image and calls every page. Randomized
+inputs (a thousand tag sets, timestamps, offsets, user texts and timelines) go through every
+parser and the clustering. The rule when a bug is fixed: the test that would have caught it lands
+in the same change. The suites are listed in [DEVELOPMENT.md](DEVELOPMENT.md#tests).
 
-Everything runs in Docker (`docker compose -f docker-compose.test.yml run --rm tests`), nothing
-on the host. The test image's default command lints, runs the whole suite and fails below 99 %
-line and branch coverage of `app/`; it stands at 100 %, with dead code removed rather than
-covered. Beyond the Python: one browser session executes `ui.js` under Chromium's coverage
-profiler (every function, 99 %+ of the code; page-initiated navigations are answered with 204
-so the document survives for the snapshot), every template branch is rendered and asserted,
-every way a file can move is checked against dry-run, live-with-switches-off and each switch,
-scale tests print latencies for 20 000 records and a 3 000-photo proposal, and CI starts the
-published runtime image and calls every page. Randomized inputs (a thousand tag sets, timestamps, offsets,
-user texts and timelines) go through every parser and the clustering; their first run found an
-out-of-range coordinate crashing the geocoder, an EXIF offset beyond +14:00 crashing the time
-parser, control characters surviving in folder names and a split run that could start with, or
-consist only of, GPS-less photos. The rule when a bug is fixed: the test that
-would have caught it lands in the same commit.
+## 9. Open points and time zones
 
-## 9. Open points
+- Home radius vs. transit: a photo in town on the way out is "local", so it starts the run early
+  (the run then carries a few in-town photos); a photo *inside* the home radius ends it. A larger
+  home radius for a small town is the tuning knob.
+- A device without GPS whose neighbours are all from another leg of a trip lands in the wrong
+  leg; moving photos between clusters fixes it.
+- Time zones: the config has a home zone (`timezone`, seeded from `TZ`). Photo times are exact
+  when the file has `OffsetTimeOriginal` or a GPS clock (`GPSDateTime`, UTC; the offset is the
+  difference to the wall time, rounded to 15 min); only a naive photo without either is read as
+  home-zone time. Video times are exact with iPhone's `Keys:CreationDate`; otherwise QuickTime
+  `CreateDate` is UTC by spec, converted to the home zone at scan time and re-expressed at cluster
+  time in the offset of the nearest photo (within `offset_borrow_hours`, 48 h) whose offset is
+  known, so a clip abroad shows 10:20 next to the 10:11 photo, not 04:20. Records carry
+  `ts_source` (exif, exif+offset, gps, utc-home, video-local, name, mtime). A phone without a fix
+  writes GPS 0/0 into videos; that is read as no position, not as the Gulf of Guinea.
+- Devices that differ get per-inbox settings (Settings → "How each device behaves",
+  `inbox_settings`): `video_clock=local` for Android builds that write local time into
+  `CreateDate` against the spec; `borrow_offset=yes` for a camera whose photos carry no offset
+  and is set to local time abroad: its wall time is re-read at cluster time in the offset of the
+  nearest photo of any device, the reverse of the videos (wall time kept, instant moved);
+  `gps_hours` for the window in which a photo without a position borrows one; `home_radius_km`
+  for a device with poor GPS. Burst thresholds stay global: a burst often mixes devices, so a
+  per-device minimum has no clear meaning.
+- Devices are identified by `Make`/`Model` from EXIF (photos, iPhone videos) or the Android
+  QuickTime keys; a file without device metadata (typical Android video) takes the inbox name
+  and, when counting devices, merges with the inbox's single named device.
 
-- Home radius vs. transit: a photo in town on the way out is "local", so it starts the run
-  early (the run then carries a few in-town photos); a photo *inside* the home radius ends
-  it. A larger home radius for a small town is the tuning knob.
-- Devices without GPS whose neighbours are all from another leg will land in the wrong leg;
-  corrections catch it.
-- Time zones (revised September 2026 when videos were added, again after the first trip to
-  Asia): the config has a home zone (`timezone`, seeded from `TZ`). Photo times are exact when
-  the file has `OffsetTimeOriginal` (newer phones) or a GPS clock (`GPSDateTime`, UTC; the
-  offset is the difference to the wall time, rounded to 15 min); only a naive photo without
-  either is read as home-zone time. Video times are exact with iPhone's `Keys:CreationDate`;
-  otherwise QuickTime `CreateDate` is UTC by spec, converted to the home zone at scan time and
-  re-expressed at cluster time in the offset of the nearest photo (within 48 h) whose offset is
-  known, so a clip in Manila shows 10:20 next to the 10:11 photo, not 04:20. Records carry
-  `ts_source` (exif, exif+offset, gps, utc-home, video-local, name, mtime). A phone without a
-  fix writes GPS 0/0 into videos; that is read as no position, not as the Gulf of Guinea.
-  Devices that differ get per-inbox settings (November 2026, issues #6 and #11, Settings →
-  "How each device behaves", `inbox_settings`): `video_clock=local` for the Android builds that
-  write local time into `CreateDate` against the spec (read in the home zone, `video-local`);
-  `borrow_offset=yes` for a camera whose photos carry no offset, so that set to local time
-  abroad it was hours off: its wall time is re-read at cluster time in the offset of the
-  nearest photo (any device, within 48 h) whose offset is known, the reverse of the videos
-  (wall time kept, instant moved); `gps_hours` for the window in which a photo without a
-  position borrows one, and `home_radius_km` for a device with poor GPS. Thresholds of bursts
-  stay global: a burst often mixes devices, so a per-device minimum has no clear meaning.
-- Devices: `Make`/`Model` from EXIF (photos, iPhone videos) or the Android QuickTime keys;
-  a file without any device metadata (typical Android video) takes the inbox name and, when
-  counting devices for the home-burst note, merges with the inbox's single named device.
+## 10. Why there is no decision model
 
-## 10. The decision model, tried and dropped (September 2026)
+A small text decision model (Laya, which takes a short text *state* and typed questions and
+returns calibrated probabilities in milliseconds) was evaluated for the one question the rules
+leave open: is this dense burst of photos at home an occasion or just a busy day? The metadata
+of a burst (count, duration, weekday, hours, number of devices, ratio to the usual day) carries
+no feature that separates a birthday from twenty shots of the same thing, and the model had
+nothing to read: its answers did not separate the two. So the pipeline has no model:
 
-Model (a vendor's open-weights external model, served behind an
-`/v1/systemone` API) was wired in as planned and asked the one question the rules cannot
-answer: is this dense burst of photos at home an occasion or just a busy day? On real photos
-it answered `busy_day` for every burst, with a confidence close to zero.
-Rephrasing the state as prose and adding an obvious party did not help:
-
-| burst described as                        | p(occasion) | confidence |
-|-------------------------------------------|-------------|------------|
-| birthday, numbers only (as the app sent)  | 0.34        | 0.08       |
-| birthday, prose                           | 0.29        | 0.13       |
-| chores, numbers only                      | 0.30        | 0.11       |
-| chores, prose                             | 0.33        | 0.09       |
-| a 60-photo, five-phone party, prose       | 0.26        | 0.17       |
-
-The party scores below the chores; the signal is absent, and the low confidence says so. A
-text-classification model trained on tickets, routing and moderation has no way to read a
-handful of counts and hours, and the metadata itself carries no feature that separates a
-birthday from twenty shots of the same thing. The rule-based fallback gave the same verdicts.
-
-**Decision (2026-09-26, user):** drop the model from the pipeline. Every burst above the size
-gate is proposed and the user names or rejects it, which is what the review queue is for. The
-adapter (`app/kev.py`), the Model container, the calibration view, the model settings and the
-model tests were removed rather than left as dead weight; they are in the git history (last
-commit with them: the last commit with the model) should a better question turn up.
-
-Consequences:
-
-- The pipeline is fully deterministic and needs no second container; a run costs no model
-  calls. The rules in section 3 are the whole logic.
-- The review queue is the only judge of home occasions. Its cost is more proposals to reject
-  (small bursts of a dozen photos
-  next to the real occasions). `burst_min_photos` and `burst_baseline_factor` set that trade-off.
-- Section 2's argument for a *small* model share stands; its conclusion that one question
-  would be load-bearing did not survive contact with data. What would make a model useful
-  here: image content (rejected for this hardware), or a few hundred reviewed bursts to
-  fine-tune on, which the review queue now collects as manifests.
+- It is fully deterministic and needs no second container; a run costs no model calls. The rules
+  in section 3 are the whole logic.
+- The review queue is the judge of home occasions. Its cost is proposals to reject;
+  `burst_min_photos` and `burst_baseline_factor` set that trade-off.
+- What could make a model useful: image content, which this hardware does not decode. Content
+  analysis is not planned; a burst that is not an occasion is rejected, or named like any other
+  (a sale, a project) when it deserves a folder.
