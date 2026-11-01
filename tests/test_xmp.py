@@ -210,6 +210,8 @@ def test_repair_works_in_batches(tmp_path, monkeypatch):
     assert ingest.repair_xmp_dates(config.Config(root=str(root)))["repaired"] == 3
     writes = [c for c in runs if "-json" not in c]
     assert len(writes) == 2 and writes[0].count("-execute") == 1               # two batches, one write each
+    reads = [c for c in runs if "-json" in c]
+    assert len(reads) == 4 and all("LargeFileSupport=1" in c for c in reads)   # videos over 2 GB are read too
 
 
 # --- the settings button ---------------------------------------------------------------------------

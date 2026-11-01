@@ -627,7 +627,9 @@ REPAIR_BATCH = 200                                 # files per exiftool run: mod
 
 
 def _exiftool_json(args: list[str], paths: list[Path]) -> dict[str, dict]:
-    res = subprocess.run(["exiftool", "-json", "-q", "-G1", *args, *map(str, paths)],
+    # LargeFileSupport: exiftool before 13 stops at the first atom of an MP4 over 2 GB (long phone
+    # videos), so it found no date in the file and a copied date would not be recognised
+    res = subprocess.run(["exiftool", "-json", "-q", "-G1", "-api", "LargeFileSupport=1", *args, *map(str, paths)],
                          capture_output=True, text=True, encoding="utf-8", errors="replace")
     if not res.stdout.strip():
         return {}
