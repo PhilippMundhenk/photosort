@@ -491,9 +491,17 @@ would have caught it lands in the same commit.
   otherwise QuickTime `CreateDate` is UTC by spec, converted to the home zone at scan time and
   re-expressed at cluster time in the offset of the nearest photo (within 48 h) whose offset is
   known, so a clip in Manila shows 10:20 next to the 10:11 photo, not 04:20. Records carry
-  `ts_source` (exif, exif+offset, gps, utc-home, name, mtime). A phone without a fix writes
-  GPS 0/0 into videos; that is read as no position, not as the Gulf of Guinea. Some Android
-  builds write local time into `CreateDate` against the spec; no fix without per-device rules.
+  `ts_source` (exif, exif+offset, gps, utc-home, video-local, name, mtime). A phone without a
+  fix writes GPS 0/0 into videos; that is read as no position, not as the Gulf of Guinea.
+  Devices that differ get per-inbox settings (November 2026, issues #6 and #11, Settings →
+  "How each device behaves", `inbox_settings`): `video_clock=local` for the Android builds that
+  write local time into `CreateDate` against the spec (read in the home zone, `video-local`);
+  `borrow_offset=yes` for a camera whose photos carry no offset, so that set to local time
+  abroad it was hours off: its wall time is re-read at cluster time in the offset of the
+  nearest photo (any device, within 48 h) whose offset is known, the reverse of the videos
+  (wall time kept, instant moved); `gps_hours` for the window in which a photo without a
+  position borrows one, and `home_radius_km` for a device with poor GPS. Thresholds of bursts
+  stay global: a burst often mixes devices, so a per-device minimum has no clear meaning.
 - Devices: `Make`/`Model` from EXIF (photos, iPhone videos) or the Android QuickTime keys;
   a file without any device metadata (typical Android video) takes the inbox name and, when
   counting devices for the home-burst note, merges with the inbox's single named device.

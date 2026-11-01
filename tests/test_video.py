@@ -250,3 +250,37 @@ def test_video_without_gps_inherits_neighbour(tmp_path):
     cfg = config.Config(home_lat=HOME[0], home_lon=HOME[1], timezone="Europe/Berlin")
     rec = ingest.build_record(cfg, p, ingest.exif_batch([p])[str(p)], source="phone-b")
     assert rec["lat"] is None and rec["zone"] == geo.ZONE_UNKNOWN and rec["ts"] == "2026-06-04T09:00:00+02:00"
+
+
+# --- per-device clocks (issue #11) ---------------------------------------------------------------------
+
+def test_a_camera_on_local_time_abroad_borrows_the_phones_offset():
+    """A camera set to Manila time writes no offset; read in the home zone it was six hours
+    off from the phone. With borrow_offset its wall time is read in the phone's offset."""
+    cfg = config.Config(timezone="Europe/Berlin", inbox_settings={"camera": {"borrow_offset": True}})
+    def r(ts, source, inbox, file):
+        d = datetime.fromisoformat(ts)
+        return {"ts": ts, "_t": d if d.tzinfo else d.replace(tzinfo=BERLIN), "ts_source": source,
+                "source": inbox, "file": file, "path": "/in/" + file}
+    phone = r("2026-07-10T10:11:41+08:00", "exif+offset", "phone", "p.jpg")
+    shot = r("2026-07-10T13:15:00", "exif", "camera", "c.jpg")                # 4 minutes later, local wall time
+    other = r("2026-07-10T13:15:00", "exif", "phone2", "o.jpg")                 # not opted in: stays home time
+    recs = sorted([phone, shot, other], key=lambda x: x["_t"])
+    cluster.borrow_offsets(cfg, recs)
+    assert shot["ts"] == "2026-07-10T13:15:00+08:00" and shot["offset_from"] == "p.jpg"
+    assert other["ts"] == "2026-07-10T13:15:00" and [x["file"] for x in recs] == ["p.jpg", "c.jpg", "o.jpg"]
+    before = dict(shot)
+    cluster.borrow_offsets(cfg, recs)                                          # a second pass changes nothing
+    assert shot == before
+    assert not cluster.borrow_naive_offsets([shot], {"camera"})                # nothing known: no-op
+    far = r("2026-10-20T10:00:00", "exif", "camera", "f.jpg")                  # weeks away from any known offset
+    assert not cluster.borrow_naive_offsets(sorted([phone, far], key=lambda x: x["_t"]), {"camera"})
+
+
+def test_a_video_clock_on_local_time_is_read_as_local(tmp_path):
+    tags = {"MIMEType": "video/mp4", "CreateDate": "2026:07:10 19:20:31"}
+    cfg = config.Config(timezone="Europe/Berlin", inbox_settings={"oldphone": {"video_clock": "local"}})
+    plain = ingest.build_record(cfg, tmp_path / "v.mp4", tags, source="phone")
+    local = ingest.build_record(cfg, tmp_path / "v.mp4", tags, source="oldphone")
+    assert plain["ts"] == "2026-07-10T21:20:31+02:00" and plain["ts_source"] == "utc-home"
+    assert local["ts"] == "2026-07-10T19:20:31+02:00" and local["ts_source"] == "video-local"

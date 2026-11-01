@@ -20,7 +20,7 @@ from pathlib import Path
 
 from . import config as _config
 from . import geo
-from .config import DATA_DIR, Config, inbox_dirs, tzinfo
+from .config import DATA_DIR, Config, inbox_dirs, inbox_option, tzinfo
 
 SIDECAR_SUFFIX = ".photosort.json"
 SIDECAR_VERSION = 2          # 2: ts_source, offsets from GPSDateTime, 0/0 GPS ignored (records < 2 are re-indexed)
@@ -351,7 +351,8 @@ def _gps_offset(local: datetime, tags: dict):
     return timezone(timedelta(seconds=off))
 
 
-def _parse_dt(tags: dict, video: bool = False, tz=None, name: str = "") -> tuple[str | None, str | None]:
+def _parse_dt(tags: dict, video: bool = False, tz=None, name: str = "",
+              video_local: bool = False) -> tuple[str | None, str | None]:
     """Best timestamp from the tags, as (ISO text, ts_source).
 
     Photos: local wall time; zone-aware when the EXIF offset is present ("exif+offset") or when
@@ -360,7 +361,9 @@ def _parse_dt(tags: dict, video: bool = False, tz=None, name: str = "") -> tuple
     QuickTime CreateDate/MediaCreateDate are UTC by spec and are converted to the home zone
     ("utc-home"); clustering later re-expresses such a video in the offset of the nearest photo
     whose offset is known, so a clip shot abroad shows local time. A capture time in the file
-    name ("name") beats the file modification time ("mtime"), which copies and syncs rewrite."""
+    name ("name") beats the file modification time ("mtime"), which copies and syncs rewrite.
+    `video_local` (a per-inbox setting, issue #11): this device writes local wall time into
+    CreateDate against the spec; it is read in the home zone ("video-local") instead of as UTC."""
     tz = tz or timezone.utc
     order = (("CreationDate", "local"), ("CreateDate", "utc"), ("MediaCreateDate", "utc"),
              ("@name", "local"), ("FileModifyDate", "local")) if video else \
@@ -386,7 +389,9 @@ def _parse_dt(tags: dict, video: bool = False, tz=None, name: str = "") -> tuple
                 if gps_tz is not None:
                     dt, source = dt.replace(tzinfo=gps_tz), "gps"
         if video:
-            if kind == "utc":                                  # QuickTime clock: UTC whether or not it says "Z"
+            if kind == "utc" and video_local:                  # this device's clock is local wall time
+                dt, source = dt.replace(tzinfo=tz), "video-local"
+            elif kind == "utc":                                # QuickTime clock: UTC whether or not it says "Z"
                 dt = (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).astimezone(tz)
                 source = "utc-home"
             elif dt.tzinfo is None:
@@ -412,7 +417,8 @@ def build_record(cfg: Config, photo: Path, tags: dict, source: str | None = None
                                                            # out of range: a corrupt tag, not a position
     video = is_video(photo, tags)
     camera, camera_source = _camera(tags, source)
-    ts, ts_source = _parse_dt(tags, video=video, tz=tzinfo(cfg), name=photo.name)
+    video_local = inbox_option(cfg, source, "video_clock") == "local"
+    ts, ts_source = _parse_dt(tags, video=video, tz=tzinfo(cfg), name=photo.name, video_local=video_local)
     rec = {
         "v": SIDECAR_VERSION,
         "file": photo.name,
@@ -431,6 +437,8 @@ def build_record(cfg: Config, photo: Path, tags: dict, source: str | None = None
         "decision": None,       # {"by": "rule"|"user", "conf": float, "kind": str}
         "indexed": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
+    if source is not None:
+        rec["source"] = source                             # zoning may depend on the inbox
     enrich_location(cfg, rec)
     return rec
 
@@ -440,7 +448,8 @@ def enrich_location(cfg: Config, rec: dict) -> None:
     if rec.get("lat") is None or rec.get("lon") is None:
         rec["dist_km"], rec["zone"], rec["place"], rec["home"] = None, geo.ZONE_UNKNOWN, None, None
         return
-    d, zone, home = rules.zone_at(cfg, rec["lat"], rec["lon"])     # the nearest of the homes (issue #3)
+    radius = inbox_option(cfg, rec.get("source"), "home_radius_km")   # a device with poor GPS (issue #6)
+    d, zone, home = rules.zone_at(cfg, rec["lat"], rec["lon"], radius)   # the nearest of the homes (issue #3)
     rec["dist_km"] = round(d, 3) if d is not None else None
     rec["zone"] = zone
     rec["home"] = home
@@ -477,7 +486,8 @@ def zoning_key(cfg: Config) -> str:
     (read, geocode, compare) on every run cost twenty thousand reads and lookups per ten
     minutes on a large library; it is only needed when one of these changed."""
     parts = [SIDECAR_VERSION, cfg.home_lat, cfg.home_lon, cfg.home_radius_km, cfg.local_radius_km,
-             cfg.named_places, cfg.min_city_population, cfg.sidecar_mode, cfg.sidecar_name, cfg.homes]
+             cfg.named_places, cfg.min_city_population, cfg.sidecar_mode, cfg.sidecar_name, cfg.homes,
+             {k: v.get("home_radius_km") for k, v in (cfg.inbox_settings or {}).items() if isinstance(v, dict)}]
     return hashlib.sha1(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()
 
 
@@ -546,8 +556,8 @@ def scan(cfg: Config, force: bool = False, progress=None) -> dict:
             if rec is None:
                 continue
             old = (rec.get("zone"), rec.get("dist_km"), rec.get("source"), rec.get("place"))
+            rec.setdefault("source", name)                  # before zoning: the radius may be the inbox's
             enrich_location(cfg, rec)
-            rec.setdefault("source", name)
             rec.setdefault("inbox", str(folder))
             if (rec.get("zone"), rec.get("dist_km"), rec.get("source"), rec.get("place")) != old:
                 write_sidecar(p, rec, cfg)

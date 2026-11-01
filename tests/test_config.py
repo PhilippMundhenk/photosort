@@ -119,3 +119,24 @@ def test_yaml_values_are_coerced_to_the_field_types(data_dir):
     cfg = config.load()
     assert cfg.dry_run is False and cfg.scan_interval_min == 3 and cfg.home_lat == 48.9
     assert cfg.inboxes == [] and cfg.photo_extensions == ["jpg"] and cfg.timezone == "7"
+
+
+def test_inbox_settings_parse_format_and_round_trip_through_the_form():
+    text = ("camera: borrow_offset=yes, video_clock=LOCAL, gps_hours=12, home_radius_km=1.5\n"
+            "oldphone: video_clock=utc; borrow_offset=off\n"
+            "broken line without colon\n: no name\n"
+            "junk: gps_hours=x, home_radius_km=-1, video_clock=mars, colour=red\n")
+    parsed = config.parse_inbox_settings(text)
+    assert parsed == {"camera": {"borrow_offset": True, "video_clock": "local", "neighbour_gps_hours": 12.0,
+                                 "home_radius_km": 1.5},
+                      "oldphone": {"video_clock": "utc", "borrow_offset": False}}
+    cfg = config.Config(inbox_settings=parsed)
+    assert config.inbox_settings_text(cfg) == ("camera: borrow_offset=yes, video_clock=local, gps_hours=12, "
+                                               "home_radius_km=1.5\noldphone: video_clock=utc, borrow_offset=no")
+    assert config.parse_inbox_settings(config.inbox_settings_text(cfg)) == parsed
+    assert config.inbox_option(cfg, "camera", "neighbour_gps_hours") == 12.0
+    assert config.inbox_option(cfg, "phone", "neighbour_gps_hours", 48) == 48
+    assert config.inbox_option(cfg, None, "video_clock") is None
+    updated = config.update_from_form(config.Config(), {"inbox_settings": "cam: gps_hours=6"})
+    assert updated.inbox_settings == {"cam": {"neighbour_gps_hours": 6.0}}
+    assert config.inbox_option(config.Config(inbox_settings={"x": "not a mapping"}), "x", "video_clock", "d") == "d"
