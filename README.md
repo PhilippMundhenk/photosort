@@ -55,7 +55,8 @@ inbox/camera/**.dng  ─┘                          sorted/_unnamed/2026-06-30 
 See [docs/DESIGN.md](docs/DESIGN.md) for the rules and why they were chosen. The rules are
 declared, not coded (`app/rules.py`): the settings fields feed a default ruleset, and expert
 mode of Settings takes a YAML ruleset of your own (several homes, your own conditions such as
-weekday or number of devices, your own folder-name templates).
+weekday, number of devices, distance from home or inbox, your own folder-name templates), with
+a preview of which proposals it would change before you save it.
 
 ## Deploy
 
