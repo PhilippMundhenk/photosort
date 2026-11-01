@@ -278,3 +278,26 @@ def test_index_paths_indexes_only_the_given_inbox_files(tmp_path, data_dir, monk
     monkeypatch.setattr(ingest, "exif_batch", lambda paths: {str(p): {} for p in paths})
     monkeypatch.setattr(ingest, "build_record", lambda *a, **k: (_ for _ in ()).throw(ValueError("odd")))
     assert ingest.index_paths(cfg, [b]) == 0                                # one bad file, no crash
+
+
+def test_list_photos_never_walks_into_thumbnail_or_hidden_folders(tmp_path, monkeypatch):
+    """On a NAS each photo has an @eaDir/<name>/ folder with thumbnails: the inbox walk must not
+    descend into it, nor ask the share about every entry (it took minutes on a large library)."""
+    import os
+    cfg = config.Config()
+    for name in ("a.jpg", "@eaDir/a.jpg/SYNOPHOTO_THUMB_XL.jpg", ".sync/b.jpg", "2026/06/c.jpg",
+                 "2026/06/@eaDir/c.jpg/SYNOPHOTO_THUMB_M.jpg"):
+        f = tmp_path / name
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_bytes(b"x")
+    seen: list[str] = []
+    real = os.walk
+    def spy(top, *a, **k):
+        for t, dirs, files in real(top, *a, **k):
+            seen.append(Path(t).name)
+            yield t, dirs, files
+    monkeypatch.setattr(os, "walk", spy)
+    monkeypatch.setattr(Path, "is_file", lambda self: (_ for _ in ()).throw(AssertionError("stat per entry")))
+    found = [str(p.relative_to(tmp_path)).replace("\\", "/") for p in ingest.list_photos(cfg, tmp_path)]
+    assert found == ["2026/06/c.jpg", "a.jpg"]
+    assert "@eaDir" not in seen and ".sync" not in seen and "a.jpg" not in seen

@@ -322,6 +322,28 @@ def test_list_clusters(cfg, library):
     assert trip["rel"] == kinds["trip"]["name"] and Path(trip["folder"]).is_dir()
 
 
+
+def test_list_clusters_reads_two_folders_instead_of_walking_the_tree(cfg, library, monkeypatch):
+    """A cluster lives right under the root or right under _unnamed/ (target_folder): the list
+    comes from those two listings; the everyday months and their @eaDir thumbnails are never
+    walked (that took minutes on a NAS before the first page appeared)."""
+    props, kinds = _props(cfg)
+    mover.apply(cfg, kinds["trip"])
+    mover.apply(cfg, kinds["home"])
+    root = Path(cfg.root)
+    (root / "@eaDir" / "x").mkdir(parents=True)
+    deep = root / "2026" / "06" / "old"                                    # deeper than a cluster can be
+    deep.mkdir(parents=True)
+    (deep / mover.MANIFEST).write_text((Path(mover.target_folder(cfg, kinds["trip"])) / mover.MANIFEST)
+                                       .read_text(encoding="utf-8"), encoding="utf-8")
+    (root / "notes.txt").write_text("a file, not a folder", encoding="utf-8")
+    monkeypatch.setattr(Path, "rglob", lambda *a, **k: (_ for _ in ()).throw(AssertionError("tree walk")))
+    out = mover._list_clusters(cfg)
+    assert sorted(c["kind"] for c in out) == ["home", "trip"]
+    assert {c["unnamed"] for c in out} == {True, False}
+    cfg.root = str(root / "missing")
+    assert mover._list_clusters(cfg) == []
+
 # --- copy mode -------------------------------------------------------------------------------
 
 @pytest.fixture

@@ -100,8 +100,22 @@ def is_photo(cfg: Config, p: Path) -> bool:
         and "@eaDir" not in p.parts and not p.name.startswith(".")
 
 
+def walk_files(folder: Path):
+    """Every file under folder, without descending into Synology's @eaDir thumbnail folders or
+    hidden folders. On a NAS every photo has an @eaDir/<name>/ folder with several thumbnails:
+    walking into them (rglob) and asking each entry whether it is a file meant five or more
+    requests to the share per photo, and minutes before the first page of a large library."""
+    import os
+    for top, dirs, files in os.walk(folder):
+        dirs[:] = [d for d in dirs if d != "@eaDir" and not d.startswith(".")]
+        for name in files:
+            yield Path(top) / name
+
+
 def list_photos(cfg: Config, folder: Path) -> list[Path]:
-    return sorted(p for p in folder.rglob("*") if is_photo(cfg, p))
+    exts = set(cfg.photo_extensions)
+    return sorted(p for p in walk_files(folder)
+                  if p.suffix.lower().lstrip(".") in exts and not p.name.startswith("."))
 
 
 def read_sidecar(photo: Path, cfg: Config | None = None) -> dict | None:
