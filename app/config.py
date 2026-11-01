@@ -80,6 +80,7 @@ class Config:
     everyday_keep_days: float = 4.0        # everyday photos younger than this stay in the inbox (a cluster may
                                            # still form around them); the Everyday button and auto-move use it
     scan_interval_min: int = 10
+    scan_workers: int = 3                 # exiftool processes at once on a scan (I/O bound over a share)
     write_xmp_sidecar: bool = True         # also write keywords into <file>.xmp via exiftool
     photo_extensions: list[str] = field(default_factory=lambda: [
         "jpg", "jpeg", "heic", "heif", "png", "dng", "cr2", "cr3", "nef", "arw", "orf", "rw2", "mp4", "mov"])

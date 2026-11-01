@@ -72,6 +72,11 @@
       <p>How often the inboxes are checked for new photos and the proposals are brought up to date. A scan with nothing new takes moments; “Run now” in the header starts one at once.</p></div>
     <div class="ctl"><input type="number" name="scan_interval_min" id="f-scan_interval_min" value="{{ cfg.scan_interval_min }}"></div>
   </div>
+  <div class="field" data-level="expert"{{ lv('expert') }}>
+    <div class="what"><label for="f-scan_workers">Files read at once on a scan</label>
+      <p>New photos are read by exiftool in batches of 200; this many batches run at the same time. Over a network share reading waits mostly for the share, so 3 is about three times as fast as 1 on a first scan. Lower it on a box with little memory.</p></div>
+    <div class="ctl"><input type="number" min="1" max="8" name="scan_workers" id="f-scan_workers" value="{{ cfg.scan_workers }}"></div>
+  </div>
   <div class="field" data-level="advanced"{{ lv('advanced') }}>
     <div class="what"><label for="wcm">Warn about slow moves</label>
       <p>Shows a note on the pages when an inbox and the sorted folder are on different mounts, because every move is then a copy over the network instead of a rename. Switch it off when they are different shares of one NAS and cannot share a mount.</p></div>

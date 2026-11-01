@@ -403,7 +403,9 @@ sorted in copy mode are not proposed again.
 
 ## 7. Hardware constraints and how they shaped the code
 
-- EXIF via `exiftool` in batches. Thumbnails come from the NAS's `@eaDir` when present;
+- EXIF via `exiftool` in batches of 200, `scan_workers` (3) of them at once: over a share
+  the reading waits mostly for the share, so a first scan of 20 000 files takes about a third
+  of the time (November 2026, issue #7). Thumbnails come from the NAS's `@eaDir` when present;
   otherwise (revised September 2026, after the first real run showed mostly placeholders)
   they are generated once into `data/thumbs`: Pillow in JPEG draft mode (decodes at 1/8
   scale, ~30 ms per 12 MP photo), the embedded preview for RAW via exiftool, one frame via
