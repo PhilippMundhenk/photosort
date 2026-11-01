@@ -429,7 +429,7 @@ def test_move_that_leaves_the_original_behind_fails_and_removes_the_copy(cfg, li
     import shutil
     cluster.run(cfg)
     local = next(p for p in cluster.load_proposals().values() if p["kind"] == "local")
-    real = shutil.move
+    real = mover._move_file
     calls = []
 
     def copy_only(src, dst):
@@ -438,7 +438,7 @@ def test_move_that_leaves_the_original_behind_fails_and_removes_the_copy(cfg, li
             return real(src, dst)                                  # the first three really move
         shutil.copy2(src, dst)                                     # then the delete "succeeds" silently
         return dst
-    monkeypatch.setattr(shutil, "move", copy_only)
+    monkeypatch.setattr(mover, "_move_file", copy_only)
     with pytest.raises(PermissionError, match="still there after the move"):
         mover.apply(cfg, local, reviewed=True)
     folder = mover.target_folder(cfg, local)
@@ -447,5 +447,31 @@ def test_move_that_leaves_the_original_behind_fails_and_removes_the_copy(cfg, li
     assert len([f for f in folder.rglob("*.jpg")]) == 3             # the fourth copy was removed again
     m = mover.read_manifest(folder)
     assert m and m["partial"] is True and len(m["photos"]) == 3     # the part that moved is recorded
-    monkeypatch.setattr(shutil, "move", real)
+    monkeypatch.setattr(mover, "_move_file", real)
     assert mover.undo(cfg, folder) == 3 and all(p.exists() for p in srcs)
+
+
+def test_a_move_across_devices_copies_in_chunks_and_reports_the_bytes(tmp_path, monkeypatch):
+    """Issue #7: where a move is no rename (another device), the copy is done in chunks and the
+    progress line learns the bytes copied; a delete that fails is left to the caller's check."""
+    import errno
+    import os
+    src, dst = tmp_path / "VID_1.mp4", tmp_path / "out" / "VID_1.mp4"
+    dst.parent.mkdir()
+    src.write_bytes(b"0123456789")
+    os.utime(src, (1_700_000_000, 1_700_000_000))
+    monkeypatch.setattr(mover, "COPY_CHUNK", 4)
+    monkeypatch.setattr(os, "rename", lambda a, b: (_ for _ in ()).throw(OSError(errno.EXDEV, "cross-device")))
+    entry = mover._current(src)
+    assert entry == {"file": "VID_1.mp4", "bytes": 10, "since": entry["since"]}
+    mover._move_file(src, dst)
+    assert entry["copied"] == 10 and dst.read_bytes() == b"0123456789" and not src.exists()
+    assert int(dst.stat().st_mtime) == 1_700_000_000                         # copystat, like shutil.move
+    other = tmp_path / "IMG_2.jpg"
+    other.write_bytes(b"abc")
+    mover._current(src)                                                       # the entry names another file
+    mover._copy_file(other, tmp_path / "out" / "IMG_2.jpg")
+    assert "copied" not in mover._live.entry
+    monkeypatch.setattr(os, "unlink", lambda p: (_ for _ in ()).throw(PermissionError("read-only")))
+    mover._move_file(other, tmp_path / "out" / "IMG_3.jpg")
+    assert other.exists() and (tmp_path / "out" / "IMG_3.jpg").exists()       # the caller sees the original left

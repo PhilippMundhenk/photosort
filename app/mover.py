@@ -8,6 +8,7 @@ from __future__ import annotations
 import bisect
 import contextlib
 import json
+import os
 import shutil
 import threading
 import time
@@ -31,14 +32,54 @@ class FolderInUse(OSError):
     """A folder could not be renamed because something holds a file in it (Windows only)."""
 
 
+_live = threading.local()          # the worker's current file entry: a copy updates its bytes copied
+
+
 def _current(p: Path) -> dict:
     """What the worker is on right now, for the progress line (a 100 MB video over a slow mount
-    takes a while and must not look stuck)."""
+    takes a while and must not look stuck): name, size, since when, and while a copy runs the
+    bytes copied so far (`copied`, issue #7)."""
     try:
         size = p.stat().st_size
     except OSError:
         size = 0
-    return {"file": p.name, "bytes": size, "since": time.time()}
+    entry = {"file": p.name, "bytes": size, "since": time.time()}
+    _live.entry = entry
+    return entry
+
+
+COPY_CHUNK = 8 * 1024 * 1024
+
+
+def _copy_file(src: Path, dst: Path) -> None:
+    """shutil.copy2, in chunks that report the bytes copied to the progress line."""
+    entry = getattr(_live, "entry", None)
+    if entry is not None and entry.get("file") != src.name:
+        entry = None                                   # the entry is about another file
+    done = 0
+    with open(src, "rb") as fin, open(dst, "wb") as fout:
+        while True:
+            block = fin.read(COPY_CHUNK)
+            if not block:
+                break
+            fout.write(block)
+            done += len(block)
+            if entry is not None:
+                entry["copied"] = done
+    shutil.copystat(src, dst)
+
+
+def _move_file(src: Path, dst: Path) -> None:
+    """shutil.move for one file: a rename on the same file system, else a copy (with progress)
+    and a delete. A delete that fails is left to the caller's check (a read-only inbox)."""
+    try:
+        os.rename(src, dst)
+        return
+    except OSError:
+        pass
+    _copy_file(src, dst)
+    with contextlib.suppress(OSError):
+        os.unlink(src)
 
 
 def _guard(cfg: Config) -> None:
@@ -73,8 +114,8 @@ def _transfer(cfg: Config, src: Path, dst_dir: Path, copy: bool = False, name: s
     dst_dir.mkdir(parents=True, exist_ok=True)
     dst = _unique(dst_dir / (name or src.name))
     size = src.stat().st_size
-    op = shutil.copy2 if copy else shutil.move      # move = rename on same fs; copy+delete across mounts
-    op(str(src), str(dst))
+    op = _copy_file if copy else _move_file          # move = rename on same fs; copy+delete across mounts
+    op(src, dst)
     # a move across mounts is a copy followed by a delete; on a read-only inbox the delete can
     # fail silently (the share says yes and keeps the file) and the photo would then exist twice
     # and be indexed again as new. Verify, and undo the copy rather than leave a duplicate.
@@ -88,7 +129,7 @@ def _transfer(cfg: Config, src: Path, dst_dir: Path, copy: bool = False, name: s
     ingest.move_sidecar(src, dst, cfg, keep_source=copy)
     xmp = src.with_suffix(".xmp")
     if xmp.exists():
-        op(str(xmp), str(dst_dir / (dst.stem + ".xmp")))
+        op(xmp, dst_dir / (dst.stem + ".xmp"))
     return dst
 
 
