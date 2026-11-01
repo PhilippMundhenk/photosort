@@ -31,7 +31,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import geo, ingest, rules
-from .config import DATA_DIR, Config, inbox_dirs, tzinfo
+from .config import DATA_DIR, Config, inbox_dirs, inbox_option, tzinfo
 
 PROPOSALS_PATH = DATA_DIR / "proposals.json"
 UNCERTAIN_BELOW = 0.7
@@ -144,7 +144,8 @@ moving = False                  # set by the worker while it moves files: pages 
 
 
 def _records_key(cfg: Config) -> tuple:
-    return (json.dumps(cfg.inboxes, sort_keys=True), cfg.sidecar_mode, cfg.sidecar_name,
+    return (json.dumps(cfg.inboxes, sort_keys=True), json.dumps(cfg.inbox_settings, sort_keys=True, default=str),
+            cfg.sidecar_mode, cfg.sidecar_name,
             cfg.timezone, cfg.home_lat, cfg.home_lon, cfg.home_radius_km, cfg.local_radius_km,
             tuple(cfg.photo_extensions))
 
@@ -188,36 +189,45 @@ def _next() -> int:
 
 def _refresh_records(cfg: Config) -> None:
     """Bring the cache up to date (the caller holds _records_lock). `version` counts its changes:
-    what is derived from the records (the everyday list) is cached against it."""
+    what is derived from the records (the everyday list) is cached against it. The change notes
+    are read and cleared under ingest.changed_lock (the worker adds to them while photos move);
+    the work itself happens outside it."""
     key = _records_key(cfg)
     ch = ingest.changed
-    if ch["paths"] and _records_cache["key"] == key:
-        # a record written outside every inbox (a moved photo's, in the sorted tree) is never part
-        # of the timeline: for the cache it only means the source's record is gone. Treated as
-        # such, a move takes the cheap path instead of a re-read, re-sort and re-fill per request
-        inboxes = [folder for _, folder in inbox_dirs(cfg)]
-        outside = {p for p in ch["paths"] if not any(Path(p).is_relative_to(f) for f in inboxes)}
-        if outside:
+    inboxes = [folder for _, folder in inbox_dirs(cfg)]
+    with ingest.changed_lock:
+        if ch["paths"] and _records_cache["key"] == key:
+            # a record written outside every inbox (a moved photo's, in the sorted tree) is never
+            # part of the timeline: for the cache it only means the source's record is gone, the
+            # cheap path, instead of a re-read, re-sort and re-fill per request
+            outside = {p for p in ch["paths"] if not any(Path(p).is_relative_to(f) for f in inboxes)}
             ch["paths"] -= outside
             ch["gone"] |= outside
-    stale_ok = ((busy or moving) and _records_cache["key"] == key and not ch["all"]
-                and (moving or time.time() - _records_cache["built"] < REFRESH_WHILE_BUSY_S))
-    if _records_cache["key"] != key or ch["all"]:
-        ch["all"], ch["paths"], ch["gone"] = False, set(), set()   # cleared first: a record written
-        recs, skipped = _load_records(cfg)      # while the load runs stays noted, patched in next time
+        stale_ok = ((busy or moving) and _records_cache["key"] == key and not ch["all"]
+                    and (moving or time.time() - _records_cache["built"] < REFRESH_WHILE_BUSY_S))
+        if _records_cache["key"] != key or ch["all"]:
+            todo = ("all", None)
+            ch["all"], ch["paths"], ch["gone"] = False, set(), set()   # cleared first: a record written
+        elif ch["gone"] and not ch["paths"]:                           # while the load runs is noted again
+            todo = ("gone", ch["gone"])
+            ch["gone"] = set()
+        elif ch["paths"] and not stale_ok:
+            todo = ("paths", ch["paths"] | ch["gone"])
+            ch["paths"], ch["gone"] = set(), set()
+        else:
+            todo = (None, None)
+    what, paths = todo
+    if what == "all":
+        recs, skipped = _load_records(cfg)
         _records_cache.update(key=key, recs=recs, skipped=skipped, filled=None, built=time.time(), version=_next())
-    elif ch["gone"] and not ch["paths"]:
+    elif what == "gone":
         # photos moved away (a cluster applied, everyday photos moved): one pass over the cache,
         # nothing read from the share; the GPS fill of the others stays valid
-        gone = set(ch["gone"])
-        ch["gone"] = set()
         for k in ("recs", "skipped", "filled"):
             if _records_cache[k] is not None:
-                _records_cache[k] = [r for r in _records_cache[k] if r["path"] not in gone]
+                _records_cache[k] = [r for r in _records_cache[k] if r["path"] not in paths]
         _records_cache.update(built=time.time(), version=_next())
-    elif ch["paths"] and not stale_ok:
-        paths = set(ch["paths"]) | set(ch["gone"])
-        ch["paths"], ch["gone"] = set(), set()
+    elif what == "paths":
         recs = [r for r in _records_cache["recs"] if r["path"] not in paths]
         skipped = [r for r in _records_cache["skipped"] if r["path"] not in paths]
         for path in paths:
@@ -226,7 +236,7 @@ def _refresh_records(cfg: Config) -> None:
                 continue
             (recs if rec.get("ts") else skipped).append(rec)
         recs.sort(key=lambda r: (r["_t"], r["path"]))   # same second: by path, so order and ids never flip
-        borrow_video_offsets(recs)
+        borrow_offsets(cfg, recs)
         _records_cache.update(recs=recs, skipped=skipped, filled=None, built=time.time(), version=_next())
 
 
@@ -281,7 +291,7 @@ def _load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
             rec["_t"] = _dt(rec["ts"], tz)
             recs.append(rec)
     recs.sort(key=lambda r: (r["_t"], r["path"]))   # same second: by path, so order and ids never flip
-    borrow_video_offsets(recs)
+    borrow_offsets(cfg, recs)
     return recs, skipped
 
 
@@ -313,7 +323,7 @@ def fill_gps_from_neighbours(cfg: Config, recs: list[dict], max_hours: float | N
             groups.setdefault(recs[i]["source"], []).append(i)
     times = {k: [recs[i]["_t"] for i in v] for k, v in groups.items()}
 
-    def position(key, t):
+    def position(key, t, window):
         """(lat, lon, gps_source) from the group's photos around t, or None."""
         idx = groups[key]                                   # the key was checked against `groups`
         k = bisect.bisect_left(times[key], t)
@@ -328,7 +338,7 @@ def fill_gps_from_neighbours(cfg: Config, recs: list[dict], max_hours: float | N
                 return lat, lon, f"interpolated:{b['file']}..{a['file']}"
         cands = [j for j in (before, after) if j is not None]
         best = min(cands, key=lambda j: abs((recs[j]["_t"] - t).total_seconds()))
-        if abs((recs[best]["_t"] - t).total_seconds()) > max_hours * 3600:
+        if abs((recs[best]["_t"] - t).total_seconds()) > window * 3600:
             return None
         return recs[best]["lat"], recs[best]["lon"], f"neighbour:{recs[best]['file']}"
 
@@ -336,13 +346,57 @@ def fill_gps_from_neighbours(cfg: Config, recs: list[dict], max_hours: float | N
         if r.get("lat") is not None:
             continue
         key = r.get("source") if r.get("source") in groups else None
-        found = position(key, r["_t"])
+        window = float(inbox_option(cfg, r.get("source"), "neighbour_gps_hours", max_hours))   # per inbox (#6)
+        found = position(key, r["_t"], window)
         if found is None and key is not None:         # nothing of its own nearby: anyone's
-            found = position(None, r["_t"])
+            found = position(None, r["_t"], window)
         if found is None:
             continue
         r.update({"lat": found[0], "lon": found[1], "gps_source": found[2]})
         ingest.enrich_location(cfg, r)
+
+
+def borrow_offsets(cfg: Config, recs: list[dict]) -> None:
+    """Videos get the offset of the photos around them (the instant stays); photos and local-
+    clock videos of an inbox with borrow_offset (issue #11) get it too, keeping their wall time:
+    a camera on local time abroad without an offset in its EXIF. Re-sorts when an instant moved."""
+    borrow_video_offsets(recs)
+    naive = {name for name, opts in (cfg.inbox_settings or {}).items()
+             if isinstance(opts, dict) and opts.get("borrow_offset")}
+    if naive and borrow_naive_offsets(recs, naive):
+        recs.sort(key=lambda r: (r["_t"], r["path"]))
+
+
+NAIVE_SOURCES = ("exif", "video-local")
+
+
+def borrow_naive_offsets(recs: list[dict], inboxes: set[str], max_hours: float = 48) -> bool:
+    """Photos (and local-clock videos) of these inboxes whose time had no offset were read as
+    home-zone wall time; re-read the same wall time in the offset of the nearest photo whose
+    offset is known (EXIF offset or GPS clock, any device). Idempotent: the wall time is kept.
+    Returns whether any instant changed."""
+    import bisect
+    known = [i for i, r in enumerate(recs)
+             if r.get("ts_source") in ("exif+offset", "gps") and r["_t"].utcoffset() is not None]
+    if not known:
+        return False
+    times = [recs[i]["_t"] for i in known]
+    moved = False
+    for r in recs:
+        if r.get("source") not in inboxes or r.get("ts_source") not in NAIVE_SOURCES:
+            continue
+        k = bisect.bisect_left(times, r["_t"])
+        cands = [known[j] for j in (k - 1, k) if 0 <= j < len(known)]
+        best = min(cands, key=lambda j: abs((recs[j]["_t"] - r["_t"]).total_seconds()))
+        if abs((recs[best]["_t"] - r["_t"]).total_seconds()) > max_hours * 3600:
+            continue
+        tz = recs[best]["_t"].tzinfo
+        if r["_t"].utcoffset() == recs[best]["_t"].utcoffset():
+            continue
+        r["_t"] = r["_t"].replace(tzinfo=None).replace(tzinfo=tz)
+        r["ts"], r["offset_from"] = r["_t"].isoformat(), recs[best]["file"]
+        moved = True
+    return moved
 
 
 def borrow_video_offsets(recs: list[dict], max_hours: float = 48) -> None:
