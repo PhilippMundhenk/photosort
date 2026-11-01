@@ -144,7 +144,7 @@ def test_full_review_flow(server, page):
     expect(trip.locator("input[name=name]")).to_have_value("2026-06 Portugal & Spain")
     expect(trip.get_by_role("button", name="rename")).to_have_count(0)
 
-    trip.locator("details summary").click()
+    trip.scroll_into_view_if_needed()                                  # every card arrives open
     page.wait_for_load_state("networkidle")                            # thumbnails loaded
     first_fig = trip.locator("figure").first
     first_fig.locator(".pick").click()
