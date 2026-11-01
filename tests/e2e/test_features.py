@@ -128,12 +128,14 @@ def test_the_review_page_works_with_the_keyboard_alone(server, browser):
         expect(first.locator(".save-state")).to_have_text(re.compile(r"saved|"), timeout=5_000)
         _wait(lambda: any(p["name"] == original + " (keyboard)" for p in _proposals(server["data"]).values()))
         summary = "[document.activeElement.tagName, (document.activeElement.closest('.card') || {}).id || '']"
-        for _ in range(30):                                                      # the collapsed photo list
+        for _ in range(30):                                                      # the photo list's summary
             if pg.evaluate(summary) == ["SUMMARY", tid]:
                 break
             pg.keyboard.press("Tab")
         assert pg.evaluate(summary) == ["SUMMARY", tid]
-        pg.keyboard.press("Enter")                                               # opens it
+        pg.keyboard.press("Enter")                                               # it arrives open: closes it
+        expect(first.locator("details")).not_to_have_attribute("open", "")
+        pg.keyboard.press("Enter")                                               # and opens it again
         expect(first.locator("details")).to_have_attribute("open", "")
         expect(first.locator("figure").first).to_be_visible()                   # the photos load lazily
         pick = ("[document.activeElement.classList.contains('pick'), "
@@ -167,7 +169,7 @@ def test_keyboard_toggles_and_the_viewer(server, page):
     page.goto(url + "/review")
     trip = _proposals(data)["trip"]
     card = _card(page, trip["id"])
-    card.locator("details summary").click()
+    card.scroll_into_view_if_needed()                                   # every card arrives open
     fig = card.locator("figure").nth(2)
     fig.locator(".pick").focus()
     page.keyboard.press("Space")

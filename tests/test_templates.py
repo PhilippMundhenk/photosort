@@ -154,7 +154,9 @@ def test_review_open_parameter_and_home_warning(client, library):
     local_card = html.split(f'id="{p["local"]["id"]}"')[1].split('<div class="card"')[0]
     assert "<details open" in local_card
     trip_card = html.split(f'id="{p["trip"]["id"]}"')[1].split('<div class="card"')[0]
-    assert "<details open" not in trip_card
+    assert "<details open" in trip_card                  # every card shows its photos, not only some
+    live = [q for q in cluster.load_proposals().values() if q["status"] in ("pending", "ongoing")]
+    assert html.count("<details open") == len(live)
     cfg.home_lat = cfg.home_lon = 0.0
     config.save(cfg)
     assert "Home location is not set" in client.get("/review").text
