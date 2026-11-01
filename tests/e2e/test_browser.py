@@ -128,7 +128,10 @@ def test_full_review_flow(server, page):
     expect(page.get_by_text("LIVE")).to_be_visible()                  # the e2e config runs live
     page.get_by_role("button", name="Run now").click()
     _wait_pending(url, 3)
-    page.reload()
+    try:
+        page.reload()
+    except pw.Error:          # the dashboard reloads itself once the run is over: a reload at the same
+        pass                  # moment is aborted by it, and the page shows the new state either way
     expect(page.locator(".stat").first).to_have_text("3")
 
     # review queue: rename, toggle a photo, approve the trip
