@@ -22,6 +22,7 @@
 <form method="post" action="/settings/detect_home" id="detect"></form>
 <form method="post" action="/settings/sidecars/migrate" id="sc-migrate"></form>
 <form method="post" action="/settings/sidecars/purge" id="sc-purge" onsubmit="return confirm('Delete the records of photos in the sorted tree and records without a photo?')"></form>
+<form method="post" action="/settings/sidecars/xmp" id="sc-xmp" onsubmit="return confirm('Remove the copied dates from the .xmp files in the sorted tree? The keywords stay.')"></form>
 <form method="post" action="/settings" class="settings">
 <input type="hidden" name="settings_mode" value="{{ cfg.settings_mode }}">
 
@@ -77,6 +78,11 @@
     <div class="what"><label for="xmp">Write keywords to .xmp files</label>
       <p>Next to every sorted photo an <code>.xmp</code> file receives keywords such as the zone and the cluster name, which photo managers (digiKam, Lightroom, Synology Photos) can read. Switch it off if you do not want extra files beside your photos.</p></div>
     <div class="ctl"><input type="checkbox" id="xmp" name="write_xmp_sidecar" {% if cfg.write_xmp_sidecar %}checked{% endif %}></div>
+  </div>
+  <div class="field" data-level="expert"{{ lv('expert') }}>
+    <div class="what"><span class="title">Dates in older .xmp files</span>
+      <p>Versions before November 2026 also copied the photo's dates into a new <code>.xmp</code> file, without the time zone, and a video's UTC clock as local time. Photo managers (PiGallery2, digiKam) prefer the <code>.xmp</code> to the file, so these photos and videos show up an hour or two off. This removes those copied dates; the keywords and any date you set yourself in another program stay.</p></div>
+    <div class="ctl"><button form="sc-xmp" class="secondary small" type="submit">Remove copied dates</button></div>
   </div>
   {% if show < 1 %}<p class="more">More in <a href="/settings?mode=advanced">advanced</a>: copy instead of move, the scan interval, the slow-moves note.</p>{% endif %}
 </div>

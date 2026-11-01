@@ -157,7 +157,7 @@ docker compose -f docker-compose.test.yml run --rm tests pytest -m e2e -v
 
 | Suite | Where | What |
 |---|---|---|
-| unit | `tests/test_{geo,config,ingest,events,cluster,devices,mover,video,thumbs,manual,sidecars,perf_paths,edges}.py` | rules, two devices, coercion, records, moving/copying, videos, thumbnails (helper process), manual clusters, caches and hot paths, every error path |
+| unit | `tests/test_{geo,config,ingest,events,cluster,devices,mover,video,thumbs,manual,sidecars,xmp,perf_paths,edges}.py` | rules, two devices, coercion, records, moving/copying, videos, thumbnails (helper process), manual clusters, .xmp sidecars, caches and hot paths, every error path |
 | web e2e | `tests/test_app.py`, `tests/test_live_pages.py`, `tests/test_moving_matrix.py`, `tests/test_templates.py` | every page and form action through FastAPI's TestClient; batched clicks, a run finishing mid-review; every way a file can move against dry-run, live-with-switches-off and each switch |
 | soak | `tests/test_soak.py` | thirty run-approve-undo cycles: no memory growth, nothing left in queues or threads |
 | fuzz | `tests/test_fuzz.py` | a thousand random tag sets, timestamps, offsets, user texts and timelines through every parser and the clustering: never a crash, always well-formed output (it found five defects on its first run) |

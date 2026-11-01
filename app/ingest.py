@@ -560,7 +560,10 @@ def _xmp_args(photo: Path, keywords: list[str]) -> list[str]:
         args += [f"-XMP-dc:Subject-=photosort/{k}", f"-XMP-dc:Subject+=photosort/{k}"]
     if xmp.exists():
         return ["-q", "-overwrite_original", *args, str(xmp)]
-    return ["-q", "-o", str(xmp), *args, str(photo)]
+    # a new sidecar holds the keywords only. "-o x.xmp photo" would also copy all of the photo's
+    # metadata in exiftool's default translation, which drops the offset of photo dates and writes
+    # the UTC clock of videos as local time; photo managers then prefer those dates to the file's own.
+    return ["-q", *args, str(xmp)]
 
 
 def index_paths(cfg: Config, paths: list[Path]) -> int:
@@ -612,3 +615,67 @@ def write_xmp_keywords_batch(items: list[tuple[Path, list[str]]]) -> None:
             subprocess.run(cmd, capture_output=True)
         except FileNotFoundError:
             return
+
+
+# Date tags exiftool's default translation put into the .xmp sidecars of photosort before
+# keyword-only sidecars: without the photo's offset, and a video's UTC clock as local time.
+XMP_COPIED_DATES = ["XMP-exif:DateTimeOriginal", "XMP-exif:DateTimeDigitized", "XMP-xmp:CreateDate",
+                    "XMP-xmp:ModifyDate", "XMP-xmp:MetadataDate", "XMP-photoshop:DateCreated"]
+_NAIVE_DATE = re.compile(r"^\d{4}:\d{2}:\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$")
+_NOT_FILE_DATES = {"System", "File", "Composite", "ExifTool"}
+REPAIR_BATCH = 200                                 # files per exiftool run: moderate for the T430's RAM
+
+
+def _exiftool_json(args: list[str], paths: list[Path]) -> dict[str, dict]:
+    res = subprocess.run(["exiftool", "-json", "-q", "-G1", *args, *map(str, paths)],
+                         capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if not res.stdout.strip():
+        return {}
+    return {item.get("SourceFile", ""): item for item in json.loads(res.stdout)}
+
+
+def _copied_dates(xmp_tags: dict, file_tags: dict) -> list[str]:
+    """The date tags of a photosort .xmp that are a copy of the file's own date: no offset (the
+    copy dropped it) and the same wall clock as a date in the file. A date set in another tool
+    differs from the file, or carries an offset, and is kept. Sidecars without photosort keywords
+    are not photosort's and are never touched."""
+    subjects = xmp_tags.get("XMP-dc:Subject") or []
+    subjects = subjects if isinstance(subjects, list) else [subjects]
+    if not any(str(s).startswith("photosort/") for s in subjects):
+        return []
+    own = {str(v)[:19] for k, v in file_tags.items()
+           if ":" in k and k.split(":", 1)[0] not in _NOT_FILE_DATES and _NAIVE_DATE.match(str(v)[:19])}
+    return [t for t in XMP_COPIED_DATES
+            if _NAIVE_DATE.match(str(xmp_tags.get(t) or "")) and str(xmp_tags[t])[:19] in own]
+
+
+def repair_xmp_dates(cfg: Config) -> dict:
+    """Remove the dates older photosort versions copied into the .xmp sidecars of the sorted tree
+    (see XMP_COPIED_DATES); the keywords and everything else stay. Photo managers then read the
+    date from the photo or video itself. Returns counts."""
+    stats = {"checked": 0, "repaired": 0, "tags": 0}
+    root = Path(cfg.root)
+    if not root.exists():
+        return stats
+    pairs = [(p, p.with_suffix(".xmp")) for p in list_photos(cfg, root) if p.with_suffix(".xmp").is_file()]
+    for i in range(0, len(pairs), REPAIR_BATCH):
+        chunk = pairs[i:i + REPAIR_BATCH]
+        try:
+            xmps = _exiftool_json(["-XMP-dc:Subject", *(f"-{t}" for t in XMP_COPIED_DATES)], [x for _, x in chunk])
+            files = _exiftool_json(["-time:all"], [p for p, _ in chunk])
+        except FileNotFoundError as e:
+            raise ExifToolMissing("exiftool not found on PATH") from e
+        cmd = ["exiftool"]
+        for p, x in chunk:
+            stats["checked"] += 1
+            tags = _copied_dates(xmps.get(str(x), {}), files.get(str(p), {}))
+            if not tags:
+                continue
+            if len(cmd) > 1:
+                cmd.append("-execute")
+            cmd += ["-q", "-overwrite_original", *(f"-{t}=" for t in tags), str(x)]
+            stats["repaired"] += 1
+            stats["tags"] += len(tags)
+        if len(cmd) > 1:
+            subprocess.run(cmd, capture_output=True)
+    return stats

@@ -584,6 +584,14 @@ def settings_sidecars(action: str):
     elif action == "purge":
         st = ingest.purge_sidecars(cfg)
         msg = f"Sidecars removed: {st['sorted']} in the sorted tree, {st['orphans']} without a photo."
+    elif action == "xmp":
+        try:
+            st = ingest.repair_xmp_dates(cfg)
+        except ingest.ExifToolMissing:
+            msg = "exiftool is not installed; nothing was changed."
+            return RedirectResponse("/settings?mode=expert&msg=" + quote(msg), status_code=303)
+        msg = (f".xmp files: copied dates removed from {st['repaired']} of {st['checked']} "
+               f"({st['tags']} dates); the keywords stay.")
     else:
         return RedirectResponse("/settings", status_code=303)
     events.log("settings", changed=[f"sidecars:{action}"], **st)
