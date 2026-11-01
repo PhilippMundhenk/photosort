@@ -110,6 +110,16 @@
     <div class="ctl"><textarea name="inboxes" id="f-inboxes" rows="3" placeholder="{% for name, path in discovered %}{{ name }}={{ path }}&#10;{% endfor %}">{{ inboxes_text }}</textarea></div>
   </div>
   <div class="field" data-level="advanced"{{ lv('advanced') }}>
+    <div class="what"><label for="f-inbox_settings">How each device behaves</label>
+      <p>Only for devices that differ from your phones. One per line, <code>input: option=value, …</code> with the input's name as above:
+        <code>borrow_offset=yes</code> a camera whose photo times carry no time zone (set to local time abroad) takes the offset of the phone photos around them;
+        <code>video_clock=local</code> its videos store local time where the standard says UTC (some Android builds);
+        <code>gps_hours=12</code> how many hours away a photo with a position may be for one without to borrow it (default 48);
+        <code>home_radius_km=1</code> how far “at home” reaches for this device, for one with poor GPS.
+        The next run applies them; only <code>video_clock</code> is read when a file is indexed, so after changing it use “Start over”.</p></div>
+    <div class="ctl"><textarea name="inbox_settings" id="f-inbox_settings" rows="3" placeholder="camera: borrow_offset=yes, gps_hours=12&#10;actioncam: home_radius_km=1">{{ inbox_settings_text }}</textarea></div>
+  </div>
+  <div class="field" data-level="advanced"{{ lv('advanced') }}>
     <div class="what"><label for="sbs">A subfolder per device</label>
       <p>Inside each cluster, photos are kept apart by the input they came from: <code>2026-10 Lisbon/phone-a/</code> and <code>2026-10 Lisbon/phone-b/</code> instead of one flat folder. Handy when two people's photos should stay separate.</p></div>
     <div class="ctl"><input type="checkbox" id="sbs" name="subfolder_by_source" {% if cfg.subfolder_by_source %}checked{% endif %}></div>

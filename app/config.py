@@ -25,6 +25,10 @@ class Config:
     # input named after the root.
     inbox_root: str = "/photos/inbox"
     inboxes: list[dict] = field(default_factory=list)
+    # per input (by inbox name, issues #6 and #11): how a device's clock and GPS behave, e.g.
+    # {"camera": {"borrow_offset": True, "video_clock": "local", "neighbour_gps_hours": 12.0,
+    #  "home_radius_km": 1.0}}; see inbox_option()
+    inbox_settings: dict = field(default_factory=dict)
     subfolder_by_source: bool = False      # 2026-10 Lisbon/smartphone-a/... instead of a flat folder
     root: str = "/photos/sorted"
     everyday_layout: str = "YYYY/MM"      # where non-clustered photos go; "leave" keeps them in inbox
@@ -220,6 +224,8 @@ def update_from_form(cfg: Config, form: dict) -> Config:
                 cfg.matrix_token = ""
         elif k in ("named_places", "homes"):
             setattr(cfg, k, parse_named_places(str(v)))
+        elif k == "inbox_settings":
+            setattr(cfg, k, parse_inbox_settings(str(v)))
         elif k == "inboxes":
             # one per line: "name=/path" or just "/path"
             items = []
@@ -246,6 +252,53 @@ def update_from_form(cfg: Config, form: dict) -> Config:
         if isinstance(cur, bool) and k not in form:
             setattr(cfg, k, False)
     return cfg
+
+
+INBOX_OPTIONS = {"borrow_offset": "borrow_offset", "video_clock": "video_clock", "gps_hours": "neighbour_gps_hours",
+                 "neighbour_gps_hours": "neighbour_gps_hours", "home_radius_km": "home_radius_km"}
+
+
+def parse_inbox_settings(text: str) -> dict:
+    """One per line: 'camera: borrow_offset=yes, video_clock=local, gps_hours=12, home_radius_km=1'.
+    Unknown options and values that do not parse are dropped (the line keeps the rest)."""
+    out: dict = {}
+    for line in text.splitlines():
+        name, sep, rest = line.partition(":")
+        name = name.strip()
+        if not sep or not name:
+            continue
+        opts: dict = {}
+        for part in rest.replace(";", ",").split(","):
+            key, _, value = part.partition("=")
+            key, value = INBOX_OPTIONS.get(key.strip().lower()), value.strip().lower()
+            if key == "borrow_offset" and value in ("yes", "no", "on", "off", "true", "false", "1", "0"):
+                opts[key] = value in ("yes", "on", "true", "1")
+            elif key == "video_clock" and value in ("local", "utc"):
+                opts[key] = value
+            elif key in ("neighbour_gps_hours", "home_radius_km"):
+                try:
+                    number = float(value)
+                except ValueError:
+                    continue
+                if number >= 0:
+                    opts[key] = number
+        if opts:
+            out[name] = opts
+    return out
+
+
+def inbox_settings_text(cfg: Config) -> str:
+    words = {"borrow_offset": lambda v: f"borrow_offset={'yes' if v else 'no'}",
+             "video_clock": lambda v: f"video_clock={v}", "neighbour_gps_hours": lambda v: f"gps_hours={v:g}",
+             "home_radius_km": lambda v: f"home_radius_km={v:g}"}
+    return "\n".join(f"{name}: " + ", ".join(words[k](v) for k, v in opts.items() if k in words)
+                     for name, opts in (cfg.inbox_settings or {}).items() if isinstance(opts, dict))
+
+
+def inbox_option(cfg: Config, inbox: str | None, key: str, default=None):
+    """One per-inbox setting (issues #6, #11), else the default."""
+    opts = (cfg.inbox_settings or {}).get(inbox) if inbox else None
+    return opts.get(key, default) if isinstance(opts, dict) else default
 
 
 def parse_named_places(text: str) -> list[dict]:

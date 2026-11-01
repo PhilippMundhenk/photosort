@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from app import cluster, config, geo
+from app import cluster, config, geo, ingest
 from tests.synth import HOME, LISBON, LUDWIGSBURG, T0
 from tests.test_cluster import h, rec
 
@@ -324,3 +324,33 @@ def test_changing_the_interpolation_setting_refills_the_cached_positions(cfg, li
     assert by_path[shot]["gps_source"].startswith("neighbour:")
     after = {r["path"]: r for r in cluster.everyday_records(cfg)}
     assert after[shot]["gps_source"].startswith("neighbour:") and before is not after
+
+
+# --- per-inbox parameters (issue #6) -------------------------------------------------------------------
+
+def test_an_inbox_can_have_its_own_home_radius_and_gps_window(tmp_path):
+    near = (HOME[0] + 0.009, HOME[1])                                          # 1 km from home
+    cfg = config.Config(home_lat=HOME[0], home_lon=HOME[1],
+                        inbox_settings={"actioncam": {"home_radius_km": 2.0, "neighbour_gps_hours": 2.0}})
+    tags = {"DateTimeOriginal": "2026:06:01 10:00:00", "GPSLatitude": near[0], "GPSLongitude": near[1]}
+    assert ingest.build_record(cfg, tmp_path / "a.jpg", tags, source="phone")["zone"] == geo.ZONE_LOCAL
+    assert ingest.build_record(cfg, tmp_path / "a.jpg", tags, source="actioncam")["zone"] == geo.ZONE_HOME
+    assert ingest.zoning_key(cfg) != ingest.zoning_key(config.Config(home_lat=HOME[0], home_lon=HOME[1]))
+    phone = dev(rec(T0, geo.ZONE_AWAY, LISBON, file="p.jpg"), "phone")
+    cam = dev(rec(T0 + h(5), geo.ZONE_UNKNOWN, file="c.jpg"), "actioncam")      # 5 h later: outside its 2 h
+    other = dev(rec(T0 + h(5), geo.ZONE_UNKNOWN, file="o.jpg"), "camera")       # default 48 h: borrows
+    cluster.fill_gps_from_neighbours(cfg, _sorted([phone, cam, other]))
+    assert cam["lat"] is None and other["gps_source"] == "neighbour:p.jpg"
+
+
+def test_settings_show_and_save_the_per_device_options(cfg, library):
+    from fastapi.testclient import TestClient
+
+    from app import main
+    with TestClient(main.app, follow_redirects=False) as client:
+        page = client.get("/settings", params={"mode": "advanced"}).text
+        assert 'name="inbox_settings"' in page and "borrow_offset=yes" in page
+        form = {"inbox_settings": "phone-b: borrow_offset=yes, gps_hours=6"}
+        client.post("/settings", data=form)
+        assert config.load().inbox_settings == {"phone-b": {"borrow_offset": True, "neighbour_gps_hours": 6.0}}
+        assert "phone-b: borrow_offset=yes, gps_hours=6" in client.get("/settings").text
