@@ -9,6 +9,12 @@
     {% if file %}<span class="small">{{ trace|length }} operation{{ 's' if trace|length != 1 }} touched “{{ file }}” · <a href="/history">all actions</a></span>{% endif %}
   </form>
 </div>
+<div class="card">
+  <div class="row"><b>Originals left in the inbox</b>
+    <a class="act small" href="/history/originals.txt" download>list (.txt)</a>
+    <a class="act small" href="/history/originals.csv" download>with their copies (.csv)</a></div>
+  <p class="small muted">With <i>copy instead of move</i> on{% if cfg.copy_instead_of_move %} (it is){% else %} (it is off now; a read-only inbox needs it: a move there fails){% endif %}, every sorted photo stays in its inbox as well. These lists name the originals that were copied, are still there and whose copy was found, so you can delete them yourself later, e.g. <code>xargs -d '\n' rm -- &lt; photosort-originals.txt</code>. The paths are the ones the container sees (<code>{{ cfg.inbox_root or '/photos' }}/…</code>): map them to your host folders first. A copy that was reverted or put back is not listed.</p>
+</div>
 {% if file %}
 <div class="card">
   {% for e in trace %}
