@@ -21,7 +21,7 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from markupsafe import escape as esc
 
-from . import cluster, config, events, geo, ingest, journal, mover, rules, thumbs
+from . import cluster, config, events, geo, ingest, journal, mover, notify, rules, thumbs
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("photosort")
@@ -201,6 +201,8 @@ def run_pipeline(trigger: str = "schedule") -> dict:
                 applied += mover.apply_everyday(cfg, min_age_days=cfg.everyday_keep_days)
                 mover.invalidate_clusters()
         stats = {"ingest": s1, "cluster": s2, "applied": applied, "queued": len(queued), "trigger": trigger}
+        if notify.configured(cfg):                # after auto-apply: only what really waits in Review
+            stats["notified"] = notify.new_proposals(cfg, cluster.load_proposals())
         _state["last_run"], _state["last_stats"] = datetime.now(timezone.utc).isoformat(timespec="seconds"), stats
         events.log("run", **{k: v for k, v in stats.items() if k != "ingest"}, new_photos=s1.get("new"))
         return stats
