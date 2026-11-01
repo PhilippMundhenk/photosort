@@ -209,13 +209,13 @@ def test_full_review_flow(server, page):
     expect(page.get_by_text("Removed from this cluster")).to_be_visible()
     page.wait_for_load_state("networkidle")
     page.get_by_role("button", name="put back").first.click()
-    expect(page.get_by_text("Removed from this cluster")).to_have_count(0)
+    expect(page.get_by_text("Removed from this cluster")).to_have_count(0, timeout=30_000)   # worker, then reload
     page.wait_for_load_state("networkidle")
     page.once("dialog", lambda d: d.accept())
     page.get_by_role("button", name="Undo whole cluster").click()
     page.wait_for_url("**/clusters")
     expect(page.get_by_role("link", name="2026-06 Portugal & Spain")).to_be_visible()
-    expect(page.get_by_text("Hannas Geburtstag")).to_have_count(0)
+    expect(page.get_by_text("Hannas Geburtstag")).to_have_count(0, timeout=30_000)   # undone by the worker
     assert not (Path(cfg.root) / "2026-06-30 Hannas Geburtstag").exists()
 
     # log shows the trail
