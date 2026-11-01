@@ -78,7 +78,7 @@
 {% for c in unnamed %}
 <div class="card">
   <div class="row"><b>{{ c.name }}</b> <span class="muted small">{{ c.n }} photos · {{ c.start[:16].replace('T',' ') }}</span></div>
-  <div class="thumbs">{% for ph in c.photos[:8] %}<figure><img src="/thumb?path={{ ph.dst|urlencode }}" loading="lazy" alt=""><span class="view" role="button" tabindex="0" data-view="/media?path={{ ph.dst|urlencode }}" data-type="{{ ph.media or 'photo' }}" data-title="{{ ph.dst.rsplit('/',1)[-1].rsplit('\\',1)[-1] }}" title="view full size">&#x2921;</span></figure>{% endfor %}</div>
+  <div class="thumbs">{% for ph in c.photos[:8] %}<figure><img src="/thumb?path={{ ph.dst|urlencode }}" loading="lazy" decoding="async" width="110" height="82" alt=""><span class="view" role="button" tabindex="0" data-view="/media?path={{ ph.dst|urlencode }}" data-type="{{ ph.media or 'photo' }}" data-title="{{ ph.dst.rsplit('/',1)[-1].rsplit('\\',1)[-1] }}" title="view full size">&#x2921;</span></figure>{% endfor %}</div>
   <form method="post" action="/cluster/rename" class="row">
     <input type="hidden" name="folder" value="{{ c.folder }}">
     <input type="text" name="name" placeholder="What was this? e.g. 2026-09-14 Hannas Geburtstag" style="width:380px" value="{{ c.start[:10] }} ">

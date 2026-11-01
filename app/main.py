@@ -453,7 +453,8 @@ def figures_html(photos: list[dict], excluded=()) -> Markup:
         out.append(
             f'<figure class="{classes}" data-path="{esc(path)}">'
             f'<span class="pick" role="button" tabindex="0" title="{file_} · {zone} · {esc(place)} · conf '
-            f'{esc(ph.get("conf"))} · click to exclude/include"><img src="/thumb?path={q}" loading="lazy" alt="">'
+            f'{esc(ph.get("conf"))} · click to exclude/include"><img src="/thumb?path={q}" loading="lazy" '
+            f'decoding="async" width="110" height="82" alt="">'
             f'</span><span class="view" role="button" tabindex="0" data-view="/media?path={q}" '
             f'data-type="{esc(ph.get("media"))}" data-title="{file_} · {when} · {esc(place or ph["zone"])}" '
             f'title="view full size">&#x2921;</span><figcaption>{badge}{esc(ts[5:16].replace("T", " "))} {zone}'

@@ -521,7 +521,7 @@ def test_raw_preview_in_an_odd_mode_is_converted(cfg, tmp_path, monkeypatch):
     monkeypatch.setattr(thumbs, "_raw_preview", lambda src: Image.new("RGBA", (600, 400), (1, 2, 3, 4)))
     t = thumbs.get(cfg, raw)
     with Image.open(t) as im:
-        assert im.mode == "RGB" and im.size == (440, 293)
+        assert im.mode == "RGB" and im.size == (240, 160)
 
 
 def test_index_housekeeping_with_non_record_json_and_a_busy_folder(cfg, library, monkeypatch):

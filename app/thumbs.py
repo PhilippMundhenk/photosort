@@ -26,7 +26,10 @@ from .config import DATA_DIR, Config
 
 log = logging.getLogger("photosort.thumbs")
 
-THUMB_SIZE = (440, 330)          # 110x82 css px at 4x for crisp hidpi thumbs, still ~30 kB
+THUMB_SIZE = (240, 180)          # 110x82 css px at 2x: crisp on hidpi screens, and a third of the
+                                 # browser memory of the 440x330 they were (issue #69): a page with two
+                                 # thousand of them held a gigabyte of decoded images
+THUMB_GENERATION = "t2"          # the cache name of thumbnails at this size; older ones are replaced
 PREVIEW_SIZE = (2000, 2000)      # "full image" view for formats browsers cannot show (HEIC, RAW)
 JPEG_QUALITY = 82
 CACHE_DIR = DATA_DIR / "thumbs"
@@ -69,7 +72,12 @@ def kind(p: Path) -> str:
 
 def cache_path(photo: Path, variant: str = "t") -> Path:
     h = hashlib.sha1(str(photo).encode("utf-8", "surrogateescape")).hexdigest()
-    return CACHE_DIR / h[:2] / f"{h}_{variant}.jpg"
+    return CACHE_DIR / h[:2] / f"{h}_{THUMB_GENERATION if variant == 't' else variant}.jpg"
+
+
+def _older_thumb(cached: Path) -> Path:
+    """The same photo's thumbnail at the size before (removed once the new one exists)."""
+    return cached.with_name(cached.name.replace(f"_{THUMB_GENERATION}.jpg", "_t.jpg"))
 
 
 def nas_thumb(cfg: Config, photo: Path) -> Path | None:
@@ -289,6 +297,8 @@ def get(cfg: Config, photo: Path, variant: str = "t") -> Path | None:
         _inflight.add(key)
     try:
         out = _run_generate(photo, cached, THUMB_SIZE if variant == "t" else PREVIEW_SIZE)
+        if out is not None and variant == "t":
+            _older_thumb(cached).unlink(missing_ok=True)      # its 440x330 predecessor: disk space back
         if out is None:
             try:
                 cached.parent.mkdir(parents=True, exist_ok=True)
