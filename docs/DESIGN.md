@@ -334,7 +334,11 @@ remembered in the config. The page is one column (October 2026): a section per t
 per setting with a description in plain language on the left (what it does, when to change
 it, an example) and the control on the right. The first version was a grid of narrow cards
 with terse labels and an overview card repeating what the fields said; it read as a wall of
-controls, and the overview was dropped as redundant.
+controls, and the overview was dropped as redundant. A setting that differs from its default
+says so under its control ("default: 4 · use default"), and a section's heading counts them
+(November 2026, issue #12), hidden rows of other modes included: a value tuned in expert mode
+stays visible in basic mode. The defaults come from the config dataclass (secrets left out);
+putting one back only changes the field, Save stores it.
 
 Photos change cluster in one way (September 2026, issue #14). Everyday and a cluster's page
 share one selection bar and one target list: open proposals, clusters already moved (the

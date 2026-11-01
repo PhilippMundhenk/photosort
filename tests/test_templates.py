@@ -386,3 +386,12 @@ def test_new_photos_since_approval_are_shown_and_cleared_by_approving(client, li
     _set(home["id"], new_photos=1)
     client.post("/proposals/approve_all")
     assert "new_photos" not in cluster.load_proposals()[home["id"]]
+
+
+def test_settings_carry_the_defaults_without_secrets(client, library):
+    import json as _json
+    page = client.get("/settings").text
+    raw = page.split('<script type="application/json" id="config-defaults">')[1].split("</script>")[0]
+    defaults = _json.loads(raw)
+    assert defaults["trip_gap_days"] == config.Config().trip_gap_days and defaults["dry_run"] is True
+    assert "matrix_token" not in defaults and "inboxes" not in defaults and "rules" not in defaults

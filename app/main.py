@@ -731,7 +731,7 @@ def settings(request: Request, msg: str = "", mode: str = ""):
     return render(request, "settings.html", inboxes_text=config.inboxes_text(cfg), discovered=discovered,
                   named_places_text=config.named_places_text(cfg), extensions=", ".join(cfg.photo_extensions),
                   msg=msg, mode=mode, modes=SETTINGS_MODES,
-                  homes_text=config.named_places_text(cfg, cfg.homes),
+                  homes_text=config.named_places_text(cfg, cfg.homes), defaults=config.scalar_defaults(),
                   rules_text=rules.to_yaml(cfg.rules) if cfg.rules else "",
                   rules_in_force=rules.to_yaml(rules.effective(cfg)))
 
