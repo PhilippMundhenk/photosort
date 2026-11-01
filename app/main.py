@@ -392,10 +392,12 @@ async def _start():
 
 
 def _warm_cache() -> None:
-    """Read the records once at startup so the first page does not pay for it (a thousand small
-    files through a bind mount take seconds)."""
+    """Read the records and list the clusters once at startup so the first page does not pay
+    for it (a thousand small files through a bind mount take seconds)."""
     try:
-        cluster.records_filled(config.load())
+        cfg = config.load()
+        mover.list_clusters(cfg)
+        cluster.records_filled(cfg)
     except Exception:  # noqa: BLE001
         log.exception("cache warm-up failed")
 

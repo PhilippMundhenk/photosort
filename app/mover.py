@@ -503,9 +503,9 @@ def put_back(cfg: Config, folder: Path, src: Path) -> dict | None:
 
 def _put_back(cfg: Config, folder: Path, src: Path, m: dict, entry: dict) -> dict | None:
     if not src.exists():                                  # moved on since (e.g. into the everyday tree): find it
-        found = [f for f in Path(cfg.root).rglob(src.name) if f.is_file()]
+        found = [f for f in ingest.walk_files(Path(cfg.root)) if f.name == src.name]
         found += [f for _, inbox in inbox_dirs(cfg)
-                  for f in inbox.rglob(src.name) if f.is_file()] if not found else []
+                  for f in ingest.walk_files(inbox) if f.name == src.name] if not found else []
         if len(found) != 1:
             raise FileNotFoundError(f"{src.name}: not found where it was left ({src}); "
                                     f"{len(found)} files of that name under the sorted tree and inboxes")
@@ -610,18 +610,38 @@ def _refresh_clusters(cfg: Config, key: tuple) -> None:
         _clusters_cache["dirty"] = True
 
 
+def _cluster_folders(root: Path, unnamed_dir: str):
+    """Where a cluster can be (target_folder): a folder right under the root, or right under
+    the unnamed folder. Two directory listings instead of a walk of the whole sorted tree (the
+    everyday months and their @eaDir thumbnails were tens of thousands of folders on a NAS)."""
+    import os
+    for base in (root, root / unnamed_dir):
+        try:
+            entries = list(os.scandir(base))
+        except OSError:
+            continue
+        for e in entries:
+            if e.name == "@eaDir" or e.name.startswith(".") or (base == root and e.name == unnamed_dir):
+                continue
+            try:
+                if e.is_dir():
+                    yield Path(e.path)
+            except OSError:
+                continue
+
+
 def _list_clusters(cfg: Config) -> list[dict]:
     root = Path(cfg.root)
     out = []
     if not root.exists():
         return out
-    for mp in root.rglob(MANIFEST):
-        if "@eaDir" in mp.parts:
+    for folder in _cluster_folders(root, cfg.unnamed_dir):
+        if not (folder / MANIFEST).is_file():
             continue
-        m = read_manifest(mp.parent)
+        m = read_manifest(folder)
         if not m:
             continue
-        out.append(_cluster_entry(root, cfg.unnamed_dir, mp.parent, m))
+        out.append(_cluster_entry(root, cfg.unnamed_dir, folder, m))
     out.sort(key=lambda m: m.get("start") or "", reverse=True)
     return out
 
