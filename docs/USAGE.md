@@ -83,12 +83,6 @@ mounted read-only (a move there fails). *History → Originals left in the inbox
 originals that were copied and are still there, as a plain list to delete them yourself later
 or as a CSV with the copies. Copy mode needs the records kept centrally (the default).
 
-## A message when there is something to review
-
-Optional, off by default: with a Matrix homeserver, an access token and a room (*Settings*,
-advanced), each new proposal is announced once in the room, with a link to it. More than five
-at once come as one summary.
-
 ## Your data
 
 | File | What |
@@ -99,6 +93,6 @@ at once come as one summary.
 | `data/events.jsonl` | the event log (Log) |
 | `data/index/` | one small record per photo in the inbox (rebuilt when lost) |
 | `data/thumbs/` | generated thumbnails |
-| `data/*.json` (others) | small caches: the usual day per home, notified proposals, home candidates |
+| `data/*.json` (others) | small caches: the usual day per home, home candidates, zoning |
 
 Losing `data/` loses history and the proposals, never photos.

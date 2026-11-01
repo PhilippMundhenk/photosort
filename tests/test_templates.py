@@ -394,4 +394,4 @@ def test_settings_carry_the_defaults_without_secrets(client, library):
     raw = page.split('<script type="application/json" id="config-defaults">')[1].split("</script>")[0]
     defaults = _json.loads(raw)
     assert defaults["trip_gap_days"] == config.Config().trip_gap_days and defaults["dry_run"] is True
-    assert "matrix_token" not in defaults and "inboxes" not in defaults and "rules" not in defaults
+    assert "inboxes" not in defaults and "rules" not in defaults and "homes" not in defaults
