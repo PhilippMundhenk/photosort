@@ -480,11 +480,14 @@ def _rule_of_kind(cfg: Config, block: str, kind: str, run: list[dict]) -> dict:
 
 
 def excursion_proposal(cfg: Config, rule: dict, run: list[dict], now: datetime | None,
-                       f: dict | None = None, closed: bool = False) -> dict:
-    """A trip or day-out proposal for a run under the rule that matched it. `closed`: a photo at
-    home after the run's end, from one of its devices, ended it (it is not ongoing, however
-    recent its last photo is)."""
+                       f: dict | None = None, rs: dict | None = None, block: str = "excursion_rules",
+                       closed: bool = False) -> dict:
+    """A trip or day-out proposal for a run under the rule that matched it (`block`: the rule
+    list it came from, the excursion rules or, for a custom burst rule, the burst rules).
+    `closed`: a photo at home after the run's end, from one of its devices, ended it (it is not
+    ongoing, however recent its last photo is)."""
     f = f or rules.features(run)
+    rs = rs or rules.effective(cfg)
     a, b = f["start"], f["end"]
     photos = [_photo_entry(r, _gps_conf(r)) for r in run]
     hours = f["span_hours"]
@@ -496,8 +499,34 @@ def excursion_proposal(cfg: Config, rule: dict, run: list[dict], now: datetime |
         "start": a.isoformat(), "end": b.isoformat(), "photos": photos,
         "n": len(photos), "n_uncertain": sum(p["uncertain"] for p in photos),
         "status": "ongoing" if not closed and rules.ongoing(rule, f, now) else "pending",
-        "decision": {"by": "rule", "conf": 1.0, "note": note, "rule": rule.get("name")},
+        "decision": {"by": "rule", "conf": 1.0, "note": note, "rule": rule.get("name"),
+                     "why": _why(rs, block, rule, run, f)},
     }
+
+
+def _why(rs: dict, block: str, rule: dict, run: list[dict], f: dict) -> dict:
+    """The why panel's numbers (rules.explain) and the pauses and steps inside the run, with the
+    parameters that would have cut it there: one pass over the run when the proposal is built."""
+    why = rules.explain(rs[block], rule, f)
+    longest, longest_km, step = 0.0, None, None
+    for prev, nxt in zip(run, run[1:], strict=False):
+        hours = (nxt["_t"] - prev["_t"]).total_seconds() / 3600
+        km = None
+        if block == "excursion_rules" and prev.get("lat") is not None and nxt.get("lat") is not None:
+            km = geo.haversine_km(prev["lat"], prev["lon"], nxt["lat"], nxt["lon"])
+            step = km if step is None else max(step, km)
+        if hours > longest:
+            longest, longest_km = hours, km
+    gaps: dict = {"longest_h": round(longest, 1)}
+    if block == "excursion_rules":
+        ex = rs["excursions"]
+        gaps.update(longest_km=None if longest_km is None else round(longest_km, 1),
+                    step_km=None if step is None else round(step, 1), split_gap_days=ex["split_gap_days"],
+                    split_distance_km=ex["split_distance_km"], local_gap_hours=ex["local_gap_hours"])
+    else:
+        gaps["gap_hours"] = rs["bursts"]["gap_hours"]
+    why["gaps"] = gaps
+    return why
 
 
 def _span(recs: list[dict]) -> tuple[datetime, datetime]:
@@ -663,12 +692,14 @@ def home_state(cfg: Config, burst: list[dict], threshold: float) -> dict:
     }
 
 
-def home_proposal(cfg: Config, burst: list[dict], threshold: float, rule: dict | None = None) -> dict:
+def home_proposal(cfg: Config, burst: list[dict], threshold: float, rule: dict | None = None,
+                  f: dict | None = None, rs: dict | None = None) -> dict:
     """A dense burst at home. Metadata cannot tell a birthday from a burst of shots of the same
     thing (neither could a decision model, see docs/DESIGN.md section 10), so every burst well
     above your usual day is proposed and you name or reject it."""
     rule = rule or _rule_of_kind(cfg, "burst_rules", "home", burst)
-    f = rules.features(burst)
+    f = f or rules.features(burst)
+    rs = rs or rules.effective(cfg)
     a, b = f["start"], f["end"]
     photos = [_photo_entry(r, 1.0) for r in burst]
     st = home_state(cfg, burst, threshold)
@@ -678,7 +709,8 @@ def home_proposal(cfg: Config, burst: list[dict], threshold: float, rule: dict |
             "name": rules.render_name(cfg, rule, burst, f),
             "start": a.isoformat(), "end": b.isoformat(), "photos": photos, "n": len(photos),
             "n_uncertain": 0, "status": "pending",
-            "decision": {"by": "rule", "conf": 1.0, "note": note, "state": st, "rule": rule.get("name")}}
+            "decision": {"by": "rule", "conf": 1.0, "note": note, "state": st, "rule": rule.get("name"),
+                         "why": _why(rs, "burst_rules", rule, burst, f)}}
 
 
 def automatic_proposals(cfg: Config, recs: list[dict], now: datetime, baseline: float,
@@ -702,7 +734,7 @@ def automatic_proposals(cfg: Config, recs: list[dict], now: datetime, baseline: 
         # after it, the run is over (it used to stay ongoing for ongoing_days whatever came after)
         closed = any(last_home.get(s) is not None and last_home[s] > f["end"]
                      for s in {r.get("source") for r in run_})
-        pr = excursion_proposal(cfg, rule, run_, now, f, closed)
+        pr = excursion_proposal(cfg, rule, run_, now, f, rs, closed=closed)
         new[pr["id"]] = pr
         taken.update(p["path"] for p in pr["photos"])
     rest = [r for r in recs if r["path"] not in taken]
@@ -714,9 +746,9 @@ def automatic_proposals(cfg: Config, recs: list[dict], now: datetime, baseline: 
         if rule is None:
             continue
         if rule["kind"] == "home":
-            pr = home_proposal(cfg, burst, rules.threshold(rule, baseline), rule)
+            pr = home_proposal(cfg, burst, rules.threshold(rule, baseline), rule, f, rs)
         else:                                               # a custom rule: a burst as a day out or a trip
-            pr = excursion_proposal(cfg, rule, burst, now, f)
+            pr = excursion_proposal(cfg, rule, burst, now, f, rs, "burst_rules")
         new[pr["id"]] = pr
         taken.update(p["path"] for p in pr["photos"])
     return new, threshold

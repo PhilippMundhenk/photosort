@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_why.html" import why_panel %}
 {% block content %}
 {% if not m %}<h1>Not a cluster folder</h1><p class="muted">{{ folder }}</p>{% else %}
 <h1>{{ m.name }} <span class="badge {{ m.kind }}">{{ m.kind }}</span></h1>
@@ -12,6 +13,7 @@
     <span class="muted small">{{ m.start[:16].replace('T',' ') }} → {{ m.end[:16].replace('T',' ') }} · applied {{ m.applied[:16].replace('T',' ') }} · {{ m.decision.by }} {{ '%.2f'|format(m.decision.conf) }}</span>
   </div>
   <div class="muted small">{{ folder }}</div>
+  {{ why_panel(m.decision) }}
 </div>
 {# one form per action for the whole page (a password manager watches every form and field) #}
 <form method="post" action="/cluster/move_out" id="move_out" hidden><input type="hidden" name="folder" value="{{ folder }}"><input type="hidden" name="photo"></form>

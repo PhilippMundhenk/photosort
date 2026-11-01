@@ -1,0 +1,21 @@
+{# The why panel of a proposal or a moved cluster (issue #6): the rule that made it, its
+   conditions against the run's values, the rules checked before it and why they did not apply,
+   and the pauses inside the run. Everything comes from the numbers stored with the proposal when
+   it was built (rules.explain); rules.describe only puts them into words. No form controls, and
+   no <details> (the card's photo list is the card's only one): ui.js shows and hides it. #}
+{% macro why_panel(decision) %}{% set w = why(decision) %}{% if w %}
+<div class="why small">
+  <span class="act" role="button" tabindex="0" data-why aria-expanded="false" title="the rule behind this proposal and the numbers it looked at">why{% if w.rule %}: rule “{{ w.rule }}”{% endif %}</span>
+  <div class="why-body" hidden>
+  {% if w.note %}<div>{{ w.note }}</div>{% endif %}
+  {% if w.conditions %}<div class="muted">The rule applies when the run</div>
+  <ul>{% for c in w.conditions %}<li><span class="{{ 'ok' if c.ok else 'missed' }}" title="{{ 'met' if c.ok else 'not met' }}">{{ '✓' if c.ok else '✗' }}</span> {{ c.need }} <span class="muted">— this run: {{ c.have }}</span></li>{% endfor %}</ul>
+  {% elif w.rule %}<div class="muted">The rule has no conditions: it applies to every run that reaches it.</div>{% endif %}
+  {% if w.before %}<div class="muted">Checked first, did not apply:</div>
+  <ul>{% for b in w.before %}<li>“{{ b.rule }}”{% if b.missed %}: {{ b.missed|join('; ') }}{% endif %}</li>{% endfor %}</ul>{% endif %}
+  {% if w.run %}<div><span class="muted">The run:</span> {{ w.run }}</div>{% endif %}
+  {% for g in w.gaps %}<div class="muted">{{ g }}</div>{% endfor %}
+  {% if w.conditions or w.before %}<div class="muted">The rules and their thresholds are in <a href="/settings">Settings</a>.</div>{% endif %}
+  </div>
+</div>
+{% endif %}{% endmacro %}
