@@ -330,6 +330,14 @@ review state (toggled photos, an edited name, an approval) was lost on the next 
 proposal that contains at least half of the photos of an old live proposal now takes over
 its id; the larger half keeps it when a late home photo splits an old one in two.
 
+Everything in review is temporary (issue #23). A scheduled run keeps review state, so typing
+a name or an approval is not lost every few minutes; **Start over** (Settings) throws all of it
+away: every proposal that has not been moved is dropped, every inbox photo is read again with
+exiftool (`scan(force=True)`) and the run clusters with the settings as saved. It waits for a
+run or a move in progress rather than being skipped. Moved clusters, the journal and the
+settings stay; the copy-mode mark (`copied_to`) survives the re-read, so originals already
+sorted in copy mode are not proposed again.
+
 ## 7. Hardware constraints and how they shaped the code
 
 - EXIF via `exiftool` in batches. Thumbnails come from the NAS's `@eaDir` when present;

@@ -151,8 +151,11 @@ def wait_for_apply(timeout: float = 120) -> None:
 
 # --- pipeline -------------------------------------------------------------------
 
-def run_pipeline(trigger: str = "schedule") -> dict:
-    if not _lock.acquire(blocking=False):
+def run_pipeline(trigger: str = "schedule", fresh: bool = False) -> dict:
+    """Scan and cluster. `fresh` (Start over, issue #23): drop every proposal that has not been
+    moved, re-read every inbox file from scratch, then cluster with the settings as they are;
+    it waits for a run or a move in progress instead of being skipped."""
+    if not _lock.acquire(blocking=fresh):
         return {"skipped": "already running"}
     _state["running"], _state["error"] = True, None
     _state["progress"] = {"phase": "scanning", "done": 0, "total": 0}
@@ -162,8 +165,12 @@ def run_pipeline(trigger: str = "schedule") -> dict:
     cfg, queued = None, []
     try:
         cfg = config.load()
+        dropped = None
+        if fresh:
+            dropped = cluster.start_over()
+            events.log("start_over", dropped=dropped)
         cluster.busy = True                       # page requests serve a slightly stale cache meanwhile
-        s1 = ingest.scan(cfg, progress=scanned)
+        s1 = ingest.scan(cfg, force=fresh, progress=scanned)
         if not cfg.home_lat and not cfg.home_lon:  # home unset: nothing could be clustered; detect it now
             found = geo.detect_home(cluster.load_records(cfg)[0])
             if found:
@@ -201,6 +208,8 @@ def run_pipeline(trigger: str = "schedule") -> dict:
                 applied += mover.apply_everyday(cfg, min_age_days=cfg.everyday_keep_days)
                 mover.invalidate_clusters()
         stats = {"ingest": s1, "cluster": s2, "applied": applied, "queued": len(queued), "trigger": trigger}
+        if dropped is not None:
+            stats["dropped"] = dropped
         _state["last_run"], _state["last_stats"] = datetime.now(timezone.utc).isoformat(timespec="seconds"), stats
         events.log("run", **{k: v for k, v in stats.items() if k != "ingest"}, new_photos=s1.get("new"))
         return stats
@@ -648,6 +657,15 @@ async def settings_save(request: Request):
 def run_now():
     threading.Thread(target=run_pipeline, args=("manual",), daemon=True).start()
     return RedirectResponse("/", status_code=303)
+
+
+@app.post("/start_over")
+def start_over_now():
+    """Settings → Start over: everything not moved is dropped and the pipeline runs from the
+    inbox again with the current settings (in the background; the banner shows its progress)."""
+    threading.Thread(target=run_pipeline, args=("start_over", True), daemon=True).start()
+    msg = "Starting over: every photo in the inbox is read again and clustered with the current settings."
+    return RedirectResponse("/settings?msg=" + quote(msg), status_code=303)
 
 
 @app.post("/proposal/{pid}/{action}")
