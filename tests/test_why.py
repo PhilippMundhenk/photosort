@@ -127,8 +127,9 @@ def test_describe_the_stored_numbers_and_old_or_hand_made_proposals():
     assert burst["run"] == "1 h, 1 file"
     assert burst["gaps"] == ["Longest pause between two photos: 0.5 h",
                              "A burst ends at a pause of more than 3 h between two photos"]
-    old = rules.describe({"by": "rule", "note": "an older proposal", "rule": "trip"})   # stored before the panel
-    assert old["note"] == "an older proposal" and old["conditions"] == [] and old["run"] is None
+    assert rules.describe({"by": "rule", "note": "an older proposal", "rule": "trip"}) is None   # stored before
+    bare = rules.describe({"rule": "x", "why": {"when": {"photos_min": 1}}})                    # no numbers kept
+    assert bare["run"] is None and bare["gaps"] == [] and bare["conditions"][0]["have"] == "? files"
     assert rules.describe({"by": "user", "conf": 1.0}) is None and rules.describe(None) is None
 
 
@@ -162,7 +163,7 @@ def test_review_cards_carry_a_closed_why_panel_without_form_controls(client):
     assert html.count("data-why") == len(cluster.load_proposals())
 
 
-def test_a_rule_without_conditions_old_proposals_and_hand_made_ones(client):
+def test_a_rule_without_conditions_and_no_panel_for_old_or_hand_made_proposals(client):
     cfg = config.load()
     cluster.run(cfg)
     props = cluster.load_proposals()
@@ -173,14 +174,13 @@ def test_a_rule_without_conditions_old_proposals_and_hand_made_ones(client):
     cluster.save_proposals(props)
     html = client.get("/review").text
     trip = html.split(f'id="{kinds["trip"]}"')[1].split('<div class="card"')[0]
-    assert "an older proposal" in trip and "The rule applies" not in trip and "Settings</a>." not in trip
+    assert "data-why" not in trip and "an older proposal" not in trip           # the next run rebuilds it
     local = html.split(f'id="{kinds["local"]}"')[1].split('<div class="card"')[0]
     assert "The rule has no conditions" in local
     home = html.split(f'id="{kinds["home"]}"')[1].split('<div class="card"')[0]
     assert "data-why" not in home
     pr = cluster.create_manual("local", "2026-05-24 Grillabend", cluster.records_filled(cfg)[:2])
-    w = rules.describe(pr["decision"])
-    assert w["note"] == "assembled by hand" and w["rule"] is None
+    assert rules.describe(pr["decision"]) is None                                # by hand: nothing to explain
 
 
 def test_the_cluster_page_keeps_the_why_of_the_proposal(client):

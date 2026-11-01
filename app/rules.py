@@ -406,10 +406,11 @@ def condition_text(k: str, v, facts: dict) -> tuple[str, str]:
 
 
 def describe(decision: dict | None) -> dict | None:
-    """The why panel in plain words, from what the proposal stored (None: nothing to show)."""
+    """The why panel in plain words, from what the proposal stored (None: nothing to show: a
+    proposal made by hand, or one stored before the panel existed, which the next run rebuilds)."""
     decision = decision or {}
     why, note = decision.get("why") or {}, decision.get("note")
-    if not why and not note:
+    if not why:
         return None
     facts = why.get("facts") or {}
     missed = set(why.get("failed") or ())
