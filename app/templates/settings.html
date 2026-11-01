@@ -361,7 +361,7 @@
       <p>After changing where records are kept, move the existing ones there. Removing stale records deletes those of photos already sorted and those whose photo is gone.</p></div>
     <div class="ctl"><div class="row">
       <button form="sc-migrate" class="secondary small" type="submit">Move existing records to this location</button>
-      <button form="sc-purge" class="secondary small" type="submit">Remove stale records now</button>
+      <button form="sc-purge" class="danger small" type="submit">Remove stale records now</button>
     </div></div>
   </div>
 </div>
@@ -372,7 +372,7 @@
   <div class="field">
     <div class="what"><span class="title">Read the inbox again and recluster</span>
       <p>Drops every proposal that has not been moved, together with what you decided about it: approvals, rejections, edited names, excluded photos, clusters built by hand. Then every photo in the inbox is read again from scratch (time, position, place) and clustered with the settings as saved. Clusters already moved, the history and the settings stay; with dry-run on nothing is moved afterwards either. Save changed settings first.</p></div>
-    <div class="ctl"><button form="start-over" class="secondary" type="submit">Start over</button></div>
+    <div class="ctl"><button form="start-over" class="danger" type="submit">Start over</button></div>
   </div>
 </div>
 

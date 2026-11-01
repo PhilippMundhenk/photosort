@@ -46,7 +46,7 @@
   <td>{% if b.reverted_by %}<span class="badge">reverted</span>
       {% elif b.n and b.action != 'revert' or (b.action == 'revert' and b.n) %}
       <form method="post" action="/history/{{ b.batch }}/revert" class="inline" onsubmit="return confirm('Revert “{{ b.action }}” ({{ b.n }} file operation{{ 's' if b.n != 1 }})? Files still where this action left them go back; the others are reported.')">
-        <button class="secondary small">Revert</button></form>{% endif %}</td>
+        <button class="danger small">Revert</button></form>{% endif %}</td>
 </tr>
 {% else %}<tr><td class="muted" colspan="5">Nothing has moved yet.</td></tr>{% endfor %}
 </table>
