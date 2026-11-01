@@ -7,6 +7,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # pinned exactly or narrowly by their parent: they can only move with it (pydantic sets
+      # pydantic-core, playwright sets pyee), so a PR for them alone never installs
+      - dependency-name: pydantic-core
+      - dependency-name: pyee
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -15,3 +20,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # patch releases of Python 3.12 only: a new minor version needs wheels for every pinned
+      # package first (3.15 had none for pydantic-core, and the slim image cannot compile it)
+      - dependency-name: python
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
