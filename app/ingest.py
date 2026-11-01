@@ -515,6 +515,9 @@ def scan(cfg: Config, force: bool = False, progress=None) -> dict:
                     continue
                 rec["source"] = name
                 rec["inbox"] = str(folder)
+                old = read_sidecar(p, cfg) if force else None
+                if old and old.get("copied_to"):          # a forced re-read (Start over) keeps what copy mode
+                    rec["copied_to"], rec["cluster"] = old["copied_to"], old.get("cluster")   # sorted already
                 write_sidecar(p, rec, cfg)
                 indexed.append(p)
             done += len(chunk)

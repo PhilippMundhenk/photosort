@@ -839,6 +839,19 @@ def _keep_identities(old: dict, new: dict) -> None:
             break
 
 
+def start_over() -> int:
+    """Everything in review is temporary (issue #23): drop every proposal that has not been
+    moved, with all its review state (pending, ongoing, rejected, approved but not moved,
+    edited names, excluded photos, clusters built by hand). Moved clusters stay; so do the
+    journal, the history and the settings. Returns how many proposals were dropped."""
+    with proposals_lock:
+        props = load_proposals()
+        keep = {pid: pr for pid, pr in props.items() if pr["status"] == "applied"}
+        save_proposals(keep)
+    ingest.changed["all"] = True                  # and every record is read again
+    return len(props) - len(keep)
+
+
 def run(cfg: Config) -> dict:
     """Recompute proposals from the inbox, keeping the status of ones already reviewed."""
     global busy

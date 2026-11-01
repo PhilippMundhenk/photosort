@@ -779,3 +779,79 @@ def test_settings_modes_hide_the_rare_settings_but_keep_their_values(client, cfg
     after = config.load()
     assert after.trip_min_hours == 33.0 and after.settings_mode == "basic" and after.auto_apply_trips
     assert after.everyday_layout == "YYYY/MM" and after.dry_run is False
+
+
+# --- start over (issue #23) -------------------------------------------------------------------------
+
+def _exif_from_records(monkeypatch, cfg: config.Config) -> None:
+    """The synthetic photos have no EXIF: a forced re-read gets the tags their records came from."""
+    def fake(paths):
+        out = {}
+        for p in paths:
+            rec = ingest.read_sidecar(p, cfg) or {}
+            tags = {"DateTimeOriginal": datetime.fromisoformat(rec["ts"]).strftime("%Y:%m:%d %H:%M:%S"),
+                    "Model": rec.get("camera") or "phone"}
+            if rec.get("gps_source") == "exif":
+                tags["GPSLatitude"], tags["GPSLongitude"] = rec["lat"], rec["lon"]
+            out[str(p)] = tags
+        return out
+    monkeypatch.setattr(ingest, "exif_batch", fake)
+
+
+def test_start_over_drops_everything_in_review_and_reclusters_from_the_inbox(client, library, monkeypatch):
+    cfg = config.load()
+    cfg.dry_run = True
+    config.save(cfg)
+    main.run_pipeline("test")
+    props = cluster.load_proposals()
+    kinds = {p["kind"]: p for p in props.values()}
+    kinds["trip"]["status"] = "rejected"                                   # its photos stay out of clustering
+    kinds["local"].update(status="approved", name="2026-06-27 Edited", name_edited=True)
+    kinds["home"]["excluded"] = [kinds["home"]["photos"][0]["path"]]
+    manual = cluster.create_manual("home", "By hand", [r for r in cluster.records_filled(cfg)][:2])
+    props[manual["id"]] = manual
+    cluster.save_proposals(props)
+    assert sum(p["status"] == "pending" for p in cluster.load_proposals().values()) == 2
+    _exif_from_records(monkeypatch, cfg)
+    stats = main.run_pipeline("start_over", fresh=True)
+    assert stats["dropped"] == 4 and stats["ingest"]["new"] == library.n   # every photo read again
+    fresh = cluster.load_proposals()
+    assert sorted(p["kind"] for p in fresh.values()) == ["home", "local", "trip"]
+    assert all(p["status"] == "pending" and not p.get("excluded") and not p.get("name_edited")
+               for p in fresh.values())
+    assert {p["kind"]: p["id"] for p in fresh.values()} == {k: p["id"] for k, p in kinds.items()}   # same runs
+    assert all(p.exists() for p in library.paths)                           # dry-run: nothing moved
+    assert any(e["kind"] == "start_over" and e["dropped"] == 4 for e in events.read(limit=20))
+
+
+def test_start_over_keeps_moved_clusters_and_copied_originals_stay_sorted(client, library, monkeypatch):
+    cfg = config.load()
+    cfg.dry_run, cfg.copy_instead_of_move = False, True
+    config.save(cfg)
+    cluster.run(cfg)
+    local = next(p for p in cluster.load_proposals().values() if p["kind"] == "local")
+    mover.apply(cfg, local, reviewed=True)
+    props = cluster.load_proposals()
+    props[local["id"]]["status"] = "applied"
+    cluster.save_proposals(props)
+    _exif_from_records(monkeypatch, cfg)
+    stats = main.run_pipeline("start_over", fresh=True)
+    main.wait_for_apply()
+    assert stats["dropped"] == 2                                            # trip and home; the moved one stays
+    fresh = cluster.load_proposals()
+    assert fresh[local["id"]]["status"] == "applied"
+    originals = {p["path"] for p in local["photos"]}
+    assert all(Path(p).exists() for p in originals)                         # copy mode: still in the inbox
+    assert all(ingest.read_sidecar(Path(p), cfg).get("copied_to") for p in originals)   # mark kept on re-read
+    assert not any(ph["path"] in originals for pid, p in fresh.items() if pid != local["id"] for ph in p["photos"])
+
+
+def test_start_over_button_runs_it_in_the_background(client, library, monkeypatch):
+    page = client.get("/settings").text
+    assert 'action="/start_over"' in page and ">Start over</button>" in page
+    _exif_from_records(monkeypatch, config.load())
+    main._state["last_run"] = None
+    r = client.post("/start_over")
+    assert r.status_code == 303 and r.headers["location"].startswith("/settings?msg=Starting%20over")
+    stats = _wait_run()
+    assert stats["trigger"] == "start_over" and "dropped" in stats
