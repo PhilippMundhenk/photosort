@@ -139,6 +139,8 @@ def _dt(s: str, tz=None) -> datetime:
 _records_cache: dict = {"key": None, "recs": None, "skipped": None, "filled": None, "built": 0.0, "version": 0}
 busy = False                    # set by the pipeline while it scans: page requests then accept a
 REFRESH_WHILE_BUSY_S = 5.0      # cache that is up to this many seconds old instead of re-patching
+moving = False                  # set by the worker while it moves files: pages use the cache as it is
+                                # (issue #62) and the worker brings it up to date when the job is done
 
 
 def _records_key(cfg: Config) -> tuple:
@@ -189,8 +191,17 @@ def _refresh_records(cfg: Config) -> None:
     what is derived from the records (the everyday list) is cached against it."""
     key = _records_key(cfg)
     ch = ingest.changed
-    stale_ok = (busy and _records_cache["key"] == key and not ch["all"]
-                and time.time() - _records_cache["built"] < REFRESH_WHILE_BUSY_S)
+    if ch["paths"] and _records_cache["key"] == key:
+        # a record written outside every inbox (a moved photo's, in the sorted tree) is never part
+        # of the timeline: for the cache it only means the source's record is gone. Treated as
+        # such, a move takes the cheap path instead of a re-read, re-sort and re-fill per request
+        inboxes = [folder for _, folder in inbox_dirs(cfg)]
+        outside = {p for p in ch["paths"] if not any(Path(p).is_relative_to(f) for f in inboxes)}
+        if outside:
+            ch["paths"] -= outside
+            ch["gone"] |= outside
+    stale_ok = ((busy or moving) and _records_cache["key"] == key and not ch["all"]
+                and (moving or time.time() - _records_cache["built"] < REFRESH_WHILE_BUSY_S))
     if _records_cache["key"] != key or ch["all"]:
         ch["all"], ch["paths"], ch["gone"] = False, set(), set()   # cleared first: a record written
         recs, skipped = _load_records(cfg)      # while the load runs stays noted, patched in next time

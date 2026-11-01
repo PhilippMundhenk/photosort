@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from app import cluster, config, geo, ingest
 from tests.synth import HOME, LISBON, RATINGEN, SEVILLE, T0
@@ -317,6 +318,51 @@ def test_records_filled_is_cached_and_patched(cfg, library, monkeypatch):
     cluster.records_filled(cfg)
     assert calls == [1, 1]                                               # a record change refills once
     assert len(cluster.everyday_records(cfg)) == library.n
+
+
+def test_a_move_costs_the_pages_no_refill_and_the_worker_catches_up(cfg, library, monkeypatch):
+    """Issue #62: a moved photo's record written in the sorted tree only drops the source from
+    the cache (no re-read, re-sort, re-fill per page request); while a job runs the pages use
+    the cache as it is, even for changes inside an inbox (copy mode marks its sources)."""
+    calls = []
+    real = cluster.fill_gps_from_neighbours
+    monkeypatch.setattr(cluster, "fill_gps_from_neighbours", lambda c, r, **k: calls.append(1) or real(c, r, **k))
+    cluster.records_filled(cfg)
+    src = library.paths[0]
+    dst = Path(cfg.root) / "2026-06 Somewhere" / src.name
+    dst.parent.mkdir(parents=True)
+    rec = ingest.read_sidecar(src, cfg)
+    ingest.write_sidecar(dst, rec, cfg)                                    # what a move does
+    ingest.delete_sidecar(src, cfg)
+    filled = cluster.records_filled(cfg)
+    assert calls == [1] and str(src) not in {r["path"] for r in filled}  # dropped, nothing refilled
+    monkeypatch.setattr(cluster, "moving", True)
+    other = library.paths[1]
+    ingest.write_sidecar(other, {**ingest.read_sidecar(other, cfg), "copied_to": str(dst)}, cfg)   # copy mode
+    assert str(other) in {r["path"] for r in cluster.records_filled(cfg)} and calls == [1]   # not now
+    monkeypatch.setattr(cluster, "moving", False)
+    assert str(other) not in {r["path"] for r in cluster.records_filled(cfg)} and calls == [1, 1]
+
+
+def test_the_worker_brings_the_cache_up_to_date_after_a_job(cfg, library, monkeypatch):
+    from app import main
+    cfg.dry_run = False
+    config.save(cfg)
+    cluster.run(cfg)
+    local = next(p for p in cluster.load_proposals().values() if p["kind"] == "local")
+    calls = []
+    real = cluster.records_filled
+    monkeypatch.setattr(cluster, "records_filled", lambda c: calls.append(1) or real(c))
+    props = cluster.load_proposals()
+    props[local["id"]]["status"] = "approved"
+    cluster.save_proposals(props)
+    import threading
+    if not any(t.name == "apply" for t in threading.enumerate()):
+        threading.Thread(target=main._apply_worker, name="apply", daemon=True).start()
+    main.queue_apply(local["id"])
+    main.wait_for_apply()
+    assert calls and cluster.moving is False
+    assert not {p["path"] for p in local["photos"]} & {r["path"] for r in real(config.load())}
 
 
 def test_run_records_without_timestamp_are_counted(cfg, library):
