@@ -200,7 +200,7 @@
         else if (p.phase === "clustering") parts.push("Clustering…");
         else parts.push("Working…");
       }
-      Object.keys(s.applying || {}).forEach(function (k) { parts.push("Moving " + s.applying[k].name + ": " + fmt(s.applying[k])); });
+      Object.keys(s.applying || {}).forEach(function (k) { parts.push(s.applying[k].verb + " " + s.applying[k].name + ": " + fmt(s.applying[k])); });
       if (s.approved && !Object.keys(s.applying || {}).length && !s.dry_run) parts.push(s.approved + " approved, queued");
       return parts.join(" · ");
     }
@@ -221,6 +221,8 @@
       var badge = card.querySelector(".badge.warn") || card.querySelector(".badge:not(.trip):not(.local):not(.home)");
       if (badge) { badge.textContent = failed ? "failed" : "moved"; badge.className = "badge " + (failed ? "bad" : "ok"); }
       el.textContent = failed ? what : "done";                          // the card says it; no reload offer
+      // undo, rename, put back: the page shows the folder as it was; reload it as it is now
+      if (!failed && el.hasAttribute("data-reload-done")) { reloading = true; location.reload(); }
     }
     function progressCards(s) {
       document.querySelectorAll("[data-progress]").forEach(function (el) {

@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
-{% if not m %}<h1>Not a cluster folder</h1><p class="muted">{{ folder }}</p>{% else %}
+{% if not m and jobs %}<h1>{{ jobs[0].verb }} {{ jobs[0].name }}</h1><p class="muted">{{ folder }}</p>{% include "_jobs.html" %}
+{% elif not m %}<h1>Not a cluster folder</h1><p class="muted">{{ folder }}</p>{% else %}
+{% include "_jobs.html" %}
 <h1>{{ m.name }} <span class="badge {{ m.kind }}">{{ m.kind }}</span></h1>
 <div class="card">
   <div class="row">

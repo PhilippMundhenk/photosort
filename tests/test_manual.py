@@ -211,6 +211,7 @@ def test_everyday_photos_can_join_a_cluster_that_was_already_moved(client, libra
     assert len(m["photos"]) == local["n"] + 2 and not any(Path(p).exists() for p in extra)
     assert all(str(folder) in e["dst"] for e in m["photos"])
     assert client.post("/cluster/undo", data={"folder": str(folder)}).status_code == 303
+    main.wait_for_apply()
     assert all(Path(p).exists() for p in extra) and all(Path(p["path"]).exists() for p in local["photos"])
 
 

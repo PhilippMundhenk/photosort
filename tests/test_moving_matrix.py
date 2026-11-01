@@ -138,6 +138,7 @@ def test_live_switches_off_each_button_moves_only_its_target(client, library):
 
     # undo one cluster: its photos come back, the others stay
     client.post("/cluster/undo", data={"folder": str(mover.target_folder(cfg, local))})
+    main.wait_for_apply()
     assert all(Path(p["path"]).exists() for p in local["photos"])
     assert not any(p.exists() for p in trip_paths)
 
