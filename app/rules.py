@@ -14,7 +14,9 @@ fields when none is set):
     bursts:           how the remaining photos are grouped into bursts (a gap in hours)
     burst_rules:      the same over every burst: a home occasion, or everyday
     naming:           which places name a cluster (place_min_share of its files, at least
-                      place_min_photos of them)
+                      place_min_photos of them; short stops at either end are left out:
+                      under stop_hours, at most stop_photos or stop_share of the files, and
+                      stop_ratio times fewer than the other places), most photographed first
     review:           uncertain_below: the confidence under which a photo counts as uncertain
 
 A rule: `name`, `kind` (trip / local / home / everyday), `when` (conditions, all must hold),
@@ -68,7 +70,8 @@ RULE_KEYS = {"name", "kind", "when", "name_template", "ongoing_days"}
 EXCURSION_KEYS = {"split_gap_days": float, "split_distance_km": float, "local_gap_hours": float, "merge_devices": bool,
                   "same_area_hours": float, "neighbour_gps_hours": float, "interpolate_gps_hours": float}
 BURST_KEYS = {"gap_hours": float}
-NAMING_KEYS = {"place_min_share": float, "place_min_photos": int}
+NAMING_KEYS = {"place_min_share": float, "place_min_photos": int, "stop_hours": float, "stop_photos": int,
+               "stop_share": float, "stop_ratio": float}
 REVIEW_KEYS = {"uncertain_below": float}
 TEMPLATE_FIELDS = ("span", "places", "place", "media", "n", "home")
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
@@ -140,7 +143,8 @@ def defaults(cfg: Config) -> dict:
         # a place names a cluster when it has at least place_min_photos files (small clusters:
         # any) and place_min_share of them; a photo whose position is borrowed or missing is
         # "uncertain" (parked in _review when a cluster is moved without asking) below this
-        "naming": {"place_min_share": 0.03, "place_min_photos": 2},
+        "naming": {"place_min_share": 0.03, "place_min_photos": 2, "stop_hours": 3.0, "stop_photos": 5,
+                   "stop_share": 0.05, "stop_ratio": 3.0},
         "review": {"uncertain_below": 0.7},
         "burst_rules": [
             {"name": "home occasion", "kind": "home",

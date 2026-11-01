@@ -612,11 +612,17 @@ def span_label(a: datetime, b: datetime, month_only: bool = True) -> str:
 
 
 def places_label(cfg: Config, recs: list[dict]) -> str:
-    """Places in order of first appearance, minus ones that only a couple of photos mention
-    (a photo at a motorway stop must not name the trip): a place needs place_min_photos files
-    (in a cluster of fewer than 20, any) and place_min_share of them (rules, `naming`)."""
+    """The places of a cluster for its name, most photographed first (issue #5). Left out:
+    places only a couple of photos mention (a photo at a motorway stop must not name the trip;
+    a place needs place_min_photos files, in a cluster of fewer than 20 any, and place_min_share
+    of them), and short stops at either end: a place whose photos all come before (or after)
+    every other place's, span less than stop_hours, are at most stop_photos (or stop_share of
+    the cluster, if more) and at most 1/stop_ratio of what the other places have: the airport
+    on the way out. Parameters in the rules' `naming` block."""
     naming = rules.effective(cfg).get("naming", {})
     min_share, min_photos = float(naming.get("place_min_share", 0.03)), int(naming.get("place_min_photos", 2))
+    stop_hours, stop_photos = float(naming.get("stop_hours", 3.0)), int(naming.get("stop_photos", 5))
+    stop_share, stop_ratio = float(naming.get("stop_share", 0.05)), float(naming.get("stop_ratio", 3.0))
 
     def ordered(key):
         counts = Counter((r.get("place") or {}).get(key) for r in recs if r["zone"] != geo.ZONE_HOME)
@@ -624,13 +630,26 @@ def places_label(cfg: Config, recs: list[dict]) -> str:
         counts.pop("", None)
         keep = {v for v, n in counts.items()
                 if (n >= min_photos or len(recs) < 20) and n >= min_share * len(recs)} or set(counts)
-        seen, out = set(), []
+        times: dict[str, list] = {}
         for r in recs:
             v = (r.get("place") or {}).get(key)
-            if v in keep and v not in seen:
-                seen.add(v)
-                out.append(v)
-        return out
+            if v in keep and r["zone"] != geo.ZONE_HOME:
+                times.setdefault(v, []).append(r["_t"])
+        first = list(times)                                        # in order of first appearance
+        small = max(stop_photos, stop_share * len(recs))
+
+        def short(v, rest):
+            ts = times[v]                                          # few photos, a short time, and far fewer
+            return (len(ts) <= small and (max(ts) - min(ts)).total_seconds() < stop_hours * 3600
+                    and stop_ratio * len(ts) <= sum(len(times[o]) for o in rest))   # than where it leads
+        live = list(first)
+        while (len(live) > 1 and short(live[0], live[1:])
+               and max(times[live[0]]) < min(min(times[v]) for v in live[1:])):
+            live.pop(0)                                            # a stop on the way out
+        while (len(live) > 1 and short(live[-1], live[:-1])
+               and min(times[live[-1]]) > max(max(times[v]) for v in live[:-1])):
+            live.pop()                                             # ... and on the way back
+        return sorted(live, key=lambda v: (-counts[v], first.index(v)))
     cities = ordered("place")
     if 0 < len(cities) <= cfg.max_places_in_name:
         return ", ".join(cities)

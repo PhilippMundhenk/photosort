@@ -448,3 +448,30 @@ def test_changes_noted_while_a_page_refreshes_the_cache_neither_crash_nor_get_lo
     assert errors == []
     left = {r["path"] for r in cluster.records_filled(cfg)}
     assert not {str(p) for p in library.paths[:5]} & left                  # every noted removal arrived
+
+
+def test_short_stops_at_either_end_leave_the_name_and_the_most_photographed_comes_first():
+    """Issue #5: a four-photo airport layover named a trip ("Gateway, Harbourside, Manila")."""
+    cfg = config.Config(home_lat=HOME[0], home_lon=HOME[1])
+    t = T0
+    airport = [rec(t + h(i / 4), Z.ZONE_AWAY, (52.36, 13.50), "Gateway", "Germany") for i in range(4)]
+    trip = [rec(t + h(14 + i * 3), Z.ZONE_AWAY, (14.60, 120.98), "Manila", "China") for i in range(30)]
+    trip += [rec(t + h(40 + i), Z.ZONE_AWAY, (14.65, 121.03), "Harbourside", "China") for i in range(6)]   # a district
+    trip.sort(key=lambda r: r["_t"])
+    back = [rec(t + h(120 + i / 4), Z.ZONE_AWAY, (52.36, 13.50), "Gateway", "Germany") for i in range(3)]
+    assert cluster.places_label(cfg, airport + trip) == "Manila, Harbourside"      # the stop out goes
+    assert cluster.places_label(cfg, trip + back) == "Manila, Harbourside"         # ... and the one back
+    middle = [rec(t + h(60 + i / 4), Z.ZONE_AWAY, (14.0, 121.5), "Batangas", "China") for i in range(3)]
+    assert cluster.places_label(cfg, sorted(trip + middle, key=lambda r: r["_t"])) == "Manila, Harbourside, Batangas"
+    big = [rec(t + h(i / 4), Z.ZONE_AWAY, (52.36, 13.50), "Hub City", "Germany") for i in range(5)]
+    few = [rec(t + h(14 + i * 3), Z.ZONE_AWAY, (14.60, 120.98), "Manila", "China") for i in range(10)]
+    assert cluster.places_label(cfg, big + few) == "Manila, Hub City"        # 5 of 15: not a mere stop
+    cfg.max_places_in_name = 1
+    assert cluster.places_label(cfg, airport + trip) == "China"                  # countries: the stop goes too
+    cfg.max_places_in_name = 2
+    cfg.rules = {"naming": {"stop_hours": 0.1}}                                  # stops must be shorter now
+    assert cluster.places_label(cfg, airport + trip) == "China, Germany"
+    cfg.rules = {"naming": {"stop_ratio": 20}}                                   # ... or far smaller (4 x 20 > 36)
+    assert cluster.places_label(cfg, airport + trip) == "China, Germany"
+    cfg.rules = {"naming": {"stop_photos": 2, "stop_share": 0.01}}               # ... or fewer photos
+    assert cluster.places_label(cfg, airport + trip) == "China, Germany"

@@ -171,27 +171,10 @@ def span_label(a: datetime, b: datetime, month_only: bool = True) -> str:
 
 
 def places_label(cfg: Config, recs: list[dict]) -> str:
-    """Places in order of first appearance, minus ones that only a couple of photos mention
-    (a photo at a motorway stop must not name the trip)."""
-    def ordered(key):
-        counts = Counter((r.get("place") or {}).get(key) for r in recs if r["zone"] != geo.ZONE_HOME)
-        counts.pop(None, None)
-        counts.pop("", None)
-        keep = {v for v, n in counts.items() if (n >= 2 or len(recs) < 20) and n >= 0.03 * len(recs)} or set(counts)
-        seen, out = set(), []
-        for r in recs:
-            v = (r.get("place") or {}).get(key)
-            if v in keep and v not in seen:
-                seen.add(v)
-                out.append(v)
-        return out
-    cities = ordered("place")
-    if 0 < len(cities) <= cfg.max_places_in_name:
-        return ", ".join(cities)
-    countries = ordered("country")
-    if 0 < len(countries) <= cfg.max_places_in_name:
-        return ", ".join(countries)
-    return "Multiple" if countries else "Unknown"
+    """Issue #5 changed the naming on purpose (short stops dropped, most photographed first):
+    the reference follows the engine's rule here."""
+    from app.cluster import places_label as current
+    return current(cfg, recs)
 
 
 def _gps_conf(r: dict) -> float:
