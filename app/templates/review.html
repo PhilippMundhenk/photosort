@@ -37,6 +37,7 @@
   <div class="row">
     <span class="badge {{ p.kind }}">{{ p.kind }}</span>{% if p.manual %}<span class="badge">by hand</span>{% endif %}
     {% if p.status == 'ongoing' %}<span class="badge warn">ongoing – waiting for a home photo</span>{% endif %}
+    {% if p.new_photos %}<span class="badge warn" title="you had approved this cluster; it was not moved yet when these photos joined it (another device, a late sync), so it is back for review">{{ p.new_photos }} new photo{{ 's' if p.new_photos != 1 }} since you approved it</span>{% endif %}
     <form method="post" action="/proposal/{{ p.id }}/rename" class="inline row" data-autosave>
       <input type="text" name="name" value="{{ p.name }}" style="width:340px" title="edits are saved as you type">
       <noscript><button class="secondary small">rename</button></noscript><span class="save-state small muted"></span>

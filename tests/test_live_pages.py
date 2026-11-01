@@ -422,10 +422,12 @@ def test_an_inbox_share_that_disappears_and_returns(client, library):
     parked.rename(inbox)                                                 # mounted again
     stats = main.run_pipeline("test")
     assert stats["ingest"]["missing"] == [] and stats["ingest"]["new"] == 0   # records were kept: no re-index
-    after = {pid: (p["kind"], p["n"]) for pid, p in cluster.load_proposals().items() if p["status"] != "approved"}
-    assert after == {k: v for k, v in before.items() if k != trip_id}   # same proposals, same ids
+    after = {pid: (p["kind"], p["n"]) for pid, p in cluster.load_proposals().items()}
+    assert after == before                                               # same proposals, same ids
     ghost = cluster.load_proposals()[trip_id]
-    assert ghost["status"] == "approved" and ghost["error"]              # still waiting for a retry, not buried
+    # the approval covered 3 photos; the real trip's others joined it again: back to review, not
+    # buried and not moved unseen (issue #18)
+    assert ghost["status"] == "pending" and ghost["new_photos"] > 0 and not ghost.get("error")
     assert "Inbox folders not found" not in client.get("/").text
 
 

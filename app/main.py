@@ -710,10 +710,12 @@ def _proposal_action(pid: str, action: str, form: dict, request: Request):
         # nothing before because the proposal was already "approved"
         retry = pr["status"] == "approved"
         pr["status"], pr["error"] = "approved", None  # the apply worker moves the files, after the save below
+        pr.pop("new_photos", None)
         events.log("review", proposal=pid, action="retry" if retry else "approve", name=pr["name"])
         queue_after_save = pid
     elif action == "reject":
         pr["status"] = "rejected"
+        pr.pop("new_photos", None)
         events.log("review", proposal=pid, action="reject", name=pr["name"], cluster_kind=pr["kind"])
     elif action == "rename":
         _rename(cfg, pid, pr, str(form.get("name", pr["name"])), bool(form.get("remember_place")))
@@ -766,6 +768,7 @@ async def approve_all(request: Request):
             if form.get(f"name_{pid}") is not None:
                 _rename(cfg, pid, pr, str(form[f"name_{pid}"]), bool(form.get(f"remember_place_{pid}")))
             pr["status"], pr["error"] = "approved", None
+            pr.pop("new_photos", None)
             events.log("review", proposal=pid, action="approve", name=pr["name"])
             queued.append(pid)
         cluster.save_proposals(props)

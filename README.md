@@ -31,6 +31,9 @@ inbox/camera/**.dng  ─┘                          sorted/_unnamed/2026-06-30 
 - **Two phones, one library.** Each device is followed on its own timeline: the family trip
   with two phones is one folder, the partner's photos at home never cut it short, and two
   phones on different continents are two trips.
+- **An approval covers what you saw.** A cluster you approved but that has not moved yet (dry-run,
+  a failed move) goes back to review when photos join it later, e.g. a camera imported after the
+  phones; it never moves photos nobody looked at.
 - **Videos included.** iPhone and Android MP4/MOV get correct local timestamps (UTC converted
   to your home zone), GPS from the QuickTime metadata and a thumbnail frame.
 - **Readable names.** `2026-06 Lisbon, Sevilla`; your own place names ("Black Forest") beat

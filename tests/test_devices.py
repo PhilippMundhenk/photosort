@@ -183,3 +183,54 @@ def test_named_burst_keeps_its_name_flag_through_a_run_after_approval(cfg, libra
     again = cluster.load_proposals()[home["id"]]
     assert again["status"] == "approved" and again["name_edited"] is True
     assert mover.target_folder(cfg, again) == Path(cfg.root) / "2026-06-29 Birthday Party"
+
+
+def _camera_inbox(cfg: config.Config) -> Path:
+    cam = Path(cfg.inboxes[0]["path"]).parent / "camera"
+    cfg.inboxes = [*cfg.inboxes, {"path": str(cam), "name": "camera"}]
+    config.save(cfg)
+    return cam
+
+
+def test_approved_trip_not_moved_yet_goes_back_to_review_when_a_camera_joins(cfg, library):
+    """Phones first, approved (dry-run, or a move that failed on a read-only inbox); then the
+    camera is added: its shots join the trip, and the trip is reviewed again instead of moving
+    photos nobody looked at."""
+    cluster.run(cfg)
+    props = cluster.load_proposals()
+    trip = next(p for p in props.values() if p["kind"] == "trip")
+    trip.update(status="approved", name="2026-06 Portugal", name_edited=True, error="PermissionError: read-only")
+    cluster.save_proposals(props)
+    cam = _camera_inbox(cfg)
+    start = datetime.fromisoformat(trip["start"])
+    shots = [library.photo(cam, start + timedelta(days=d, hours=2), cam="ILCE-7M4") for d in range(3)]
+    cluster.run(config.load())
+    again = cluster.load_proposals()[trip["id"]]
+    assert {str(s) for s in shots} <= {p["path"] for p in again["photos"]}
+    assert again["status"] == "pending" and again["new_photos"] == 3 and "error" not in again
+    assert again["name"] == "2026-06 Portugal"
+    cluster.run(config.load())                                             # nothing new: stays as it is
+    assert cluster.load_proposals()[trip["id"]]["new_photos"] == 3
+
+
+def test_approved_trip_without_new_photos_stays_approved(cfg, library):
+    cluster.run(cfg)
+    props = cluster.load_proposals()
+    trip = next(p for p in props.values() if p["kind"] == "trip")
+    trip["status"] = "approved"
+    cluster.save_proposals(props)
+    cluster.run(cfg)
+    again = cluster.load_proposals()[trip["id"]]
+    assert again["status"] == "approved" and "new_photos" not in again
+
+
+def test_auto_approved_trip_takes_new_photos_without_review(cfg, library):
+    cluster.run(cfg)
+    props = cluster.load_proposals()
+    trip = next(p for p in props.values() if p["kind"] == "trip")
+    trip.update(status="approved", auto=True)
+    cluster.save_proposals(props)
+    cam = _camera_inbox(cfg)
+    library.photo(cam, datetime.fromisoformat(trip["start"]) + timedelta(hours=2), cam="ILCE-7M4")
+    cluster.run(config.load())
+    assert cluster.load_proposals()[trip["id"]]["status"] == "approved"

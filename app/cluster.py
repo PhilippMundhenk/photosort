@@ -874,8 +874,23 @@ def _run_locked(cfg: Config, now: datetime, skipped: list[dict], recs: list[dict
             pr["auto"] = bool(prev.get("auto"))                 # (a run between approve and move lost both)
             if prev.get("error"):
                 pr["error"] = prev["error"]
+            if prev["status"] == "approved" and not prev.get("auto"):
+                # approved but not moved yet (dry-run, a failed move) and photos joined since, e.g.
+                # a camera imported after the phones: you approved what you saw, so it is reviewed
+                # again instead of moving photos nobody looked at (moves never run during a scan).
+                # What you saw is remembered (`seen`): a share that was offline for a run and comes
+                # back brings no "new" photos
+                seen = set(prev.get("seen") or (p["path"] for p in prev["photos"]))
+                arrived = sum(p["path"] not in seen for p in pr["photos"])
+                if arrived:
+                    pr["status"], pr["new_photos"] = "pending", arrived
+                    pr.pop("error", None)
+                else:
+                    pr["seen"] = sorted(seen)
         elif prev and prev.get("name_edited"):
             pr["name"], pr["name_edited"] = prev["name"], True
+        if prev and prev.get("new_photos") and pr["status"] == "pending" and "new_photos" not in pr:
+            pr["new_photos"] = prev["new_photos"]      # the note stays until the card is decided again
         have = {p["path"] for p in pr["photos"]}
         pr["excluded"] = sorted(p for p in (prev or {}).get("excluded", []) if p in have)
     # keep applied/rejected proposals whose photos are gone from the inbox (history)
