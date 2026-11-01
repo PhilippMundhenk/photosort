@@ -15,6 +15,7 @@ import json
 import logging
 import re
 import subprocess
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -34,6 +35,7 @@ log = logging.getLogger("photosort.ingest")
 # migrations and purges invalidate everything.
 generation = 0
 changed: dict = {"all": True, "paths": set(), "gone": set()}
+changed_lock = threading.Lock()   # the worker notes changes while a page request takes them (issue #62)
 
 
 def _bump(path: Path | None = None, gone: bool = False) -> None:
@@ -41,13 +43,14 @@ def _bump(path: Path | None = None, gone: bool = False) -> None:
     away), so the cache only has to drop it, without a stat on the share for each of the
     thousands of files a big move takes away."""
     global generation
-    generation += 1
-    if path is None:
-        changed["all"] = True
-    elif gone:
-        changed["gone"].add(str(path))
-    else:
-        changed["paths"].add(str(path))
+    with changed_lock:
+        generation += 1
+        if path is None:
+            changed["all"] = True
+        elif gone:
+            changed["gone"].add(str(path))
+        else:
+            changed["paths"].add(str(path))
 
 
 _known: dict[str, set[str]] = {}          # inbox folder -> photo paths seen by the last scan or load

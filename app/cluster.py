@@ -189,36 +189,45 @@ def _next() -> int:
 
 def _refresh_records(cfg: Config) -> None:
     """Bring the cache up to date (the caller holds _records_lock). `version` counts its changes:
-    what is derived from the records (the everyday list) is cached against it."""
+    what is derived from the records (the everyday list) is cached against it. The change notes
+    are read and cleared under ingest.changed_lock (the worker adds to them while photos move);
+    the work itself happens outside it."""
     key = _records_key(cfg)
     ch = ingest.changed
-    if ch["paths"] and _records_cache["key"] == key:
-        # a record written outside every inbox (a moved photo's, in the sorted tree) is never part
-        # of the timeline: for the cache it only means the source's record is gone. Treated as
-        # such, a move takes the cheap path instead of a re-read, re-sort and re-fill per request
-        inboxes = [folder for _, folder in inbox_dirs(cfg)]
-        outside = {p for p in ch["paths"] if not any(Path(p).is_relative_to(f) for f in inboxes)}
-        if outside:
+    inboxes = [folder for _, folder in inbox_dirs(cfg)]
+    with ingest.changed_lock:
+        if ch["paths"] and _records_cache["key"] == key:
+            # a record written outside every inbox (a moved photo's, in the sorted tree) is never
+            # part of the timeline: for the cache it only means the source's record is gone, the
+            # cheap path, instead of a re-read, re-sort and re-fill per request
+            outside = {p for p in ch["paths"] if not any(Path(p).is_relative_to(f) for f in inboxes)}
             ch["paths"] -= outside
             ch["gone"] |= outside
-    stale_ok = ((busy or moving) and _records_cache["key"] == key and not ch["all"]
-                and (moving or time.time() - _records_cache["built"] < REFRESH_WHILE_BUSY_S))
-    if _records_cache["key"] != key or ch["all"]:
-        ch["all"], ch["paths"], ch["gone"] = False, set(), set()   # cleared first: a record written
-        recs, skipped = _load_records(cfg)      # while the load runs stays noted, patched in next time
+        stale_ok = ((busy or moving) and _records_cache["key"] == key and not ch["all"]
+                    and (moving or time.time() - _records_cache["built"] < REFRESH_WHILE_BUSY_S))
+        if _records_cache["key"] != key or ch["all"]:
+            todo = ("all", None)
+            ch["all"], ch["paths"], ch["gone"] = False, set(), set()   # cleared first: a record written
+        elif ch["gone"] and not ch["paths"]:                           # while the load runs is noted again
+            todo = ("gone", ch["gone"])
+            ch["gone"] = set()
+        elif ch["paths"] and not stale_ok:
+            todo = ("paths", ch["paths"] | ch["gone"])
+            ch["paths"], ch["gone"] = set(), set()
+        else:
+            todo = (None, None)
+    what, paths = todo
+    if what == "all":
+        recs, skipped = _load_records(cfg)
         _records_cache.update(key=key, recs=recs, skipped=skipped, filled=None, built=time.time(), version=_next())
-    elif ch["gone"] and not ch["paths"]:
+    elif what == "gone":
         # photos moved away (a cluster applied, everyday photos moved): one pass over the cache,
         # nothing read from the share; the GPS fill of the others stays valid
-        gone = set(ch["gone"])
-        ch["gone"] = set()
         for k in ("recs", "skipped", "filled"):
             if _records_cache[k] is not None:
-                _records_cache[k] = [r for r in _records_cache[k] if r["path"] not in gone]
+                _records_cache[k] = [r for r in _records_cache[k] if r["path"] not in paths]
         _records_cache.update(built=time.time(), version=_next())
-    elif ch["paths"] and not stale_ok:
-        paths = set(ch["paths"]) | set(ch["gone"])
-        ch["paths"], ch["gone"] = set(), set()
+    elif what == "paths":
         recs = [r for r in _records_cache["recs"] if r["path"] not in paths]
         skipped = [r for r in _records_cache["skipped"] if r["path"] not in paths]
         for path in paths:
