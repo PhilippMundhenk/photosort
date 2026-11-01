@@ -47,10 +47,11 @@
       · {{ p.decision.by }} {{ '%.2f'|format(p.decision.conf) }}{% if p.decision.answer %} ({{ p.decision.answer }}){% endif %}
       · {{ p.start[:16].replace('T',' ') }} → {{ p.end[:16].replace('T',' ') }}</span>
   </div>
-  {% set is_open = p.n_uncertain or p.kind=='home' or p.id == open_id %}
-  {% set shown = p.photos[:inline] if is_open and budget.left > 0 else [] %}
+  {# every card shows its photos (some open and some collapsed looked random); cards beyond the
+     page's budget load their first photos when they scroll near #}
+  {% set shown = p.photos[:inline] if budget.left > 0 else [] %}
   {% set budget.left = budget.left - shown|length %}
-  <details{% if is_open %} open{% endif %} data-photos="/proposal/{{ p.id }}/photos" data-total="{{ p.n }}" data-loaded="{{ shown|length }}"{% if is_open and not shown and p.n %} data-lazy="{{ inline }}"{% endif %}>
+  <details open data-photos="/proposal/{{ p.id }}/photos" data-total="{{ p.n }}" data-loaded="{{ shown|length }}"{% if not shown and p.n %} data-lazy="{{ inline }}"{% endif %}>
     <summary>photos</summary>
     {# Only what is on screen is rendered: the first photos of the first open cards (a budget for
        the page), nothing inside a collapsed one; ui.js fetches the first photos of the other open

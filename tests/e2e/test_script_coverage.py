@@ -173,7 +173,10 @@ async def _session(url: str, data: Path, cfg) -> list[dict]:
         await go(url + "/review")
         props = _proposals(data)
         trip = page.locator(f"#{props['trip']['id']}")
-        await trip.locator("details summary").click()                         # opens: the first chunk loads
+        await trip.locator("details summary").click()                         # every card arrives open: closes
+        await expect(trip.locator("details")).not_to_have_attribute("open", "")
+        await trip.locator("details summary").click()                         # opens again (loads if still empty)
+        await expect(trip.locator("details")).to_have_attribute("open", "")
         figs = trip.locator("figure")
         await expect(figs.first).to_be_visible()
         photos_url = re.compile(r"/proposal/.*/photos")
@@ -184,9 +187,13 @@ async def _session(url: str, data: Path, cfg) -> list[dict]:
         await trip.locator("[data-more]").first.click()
         await trip.locator("[data-more]").first.click()                        # a second click while loading: ignored
         while await trip.locator("[data-more]").count():                      # "show all" until nothing is left
-            await trip.locator("[data-more]").first.click()
+            try:                                                              # the button vanishes with the
+                await trip.locator("[data-more]").first.click(timeout=3000)   # last chunk: a click that finds
+            except pw.Error:                                                  # it gone is no failure
+                pass
             await page.wait_for_timeout(300)
         await expect(figs).to_have_count(props["trip"]["n"])
+        await figs.nth(0).scroll_into_view_if_needed()                        # two thousand figures: let it settle
         await figs.nth(0).locator(".pick").click()
         await figs.nth(1).locator(".pick").click()
         await figs.nth(1).locator(".pick").click()
