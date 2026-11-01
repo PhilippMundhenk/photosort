@@ -31,6 +31,9 @@ inbox/camera/**.dng  ─┘                          sorted/_unnamed/2026-06-30 
 - **Two phones, one library.** Each device is followed on its own timeline: the family trip
   with two phones is one folder, the partner's photos at home never cut it short, and two
   phones on different continents are two trips.
+- **Cameras without GPS join the trip.** A photo without a position gets one from the photos
+  with GPS around it in time (same device first, then any): interpolated between the two
+  located photos before and after it when they are close in time, else the nearest one.
 - **Videos included.** iPhone and Android MP4/MOV get correct local timestamps (UTC converted
   to your home zone), GPS from the QuickTime metadata and a thumbnail frame.
 - **Readable names.** `2026-06 Lisbon, Sevilla`; your own place names ("Black Forest") beat

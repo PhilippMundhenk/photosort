@@ -193,7 +193,7 @@ def places_label(cfg: Config, recs: list[dict]) -> str:
 def _gps_conf(r: dict) -> float:
     """How sure we are the photo belongs where its position says: own GPS, a neighbour's, none."""
     src = r.get("gps_source") or ""
-    return 1.0 if src == "exif" else 0.8 if src.startswith("neighbour") else 0.6
+    return 1.0 if src == "exif" else 0.8 if src.startswith(("neighbour", "interpolated")) else 0.6
 
 
 def _photo_entry(r: dict, conf: float) -> dict:

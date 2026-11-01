@@ -95,7 +95,7 @@ def test_gpsless_photo_borrows_from_its_own_phone():
     shot = dev(rec(T0 + h(0.5), geo.ZONE_UNKNOWN, file="shot.jpg"), "phone-b")   # screenshot at home, phone-b
     nogps = dev(rec(T0 + h(0.2), geo.ZONE_UNKNOWN, file="c.jpg"), "phone-c")      # a phone that never has GPS
     recs = _sorted([a, b, shot, nogps])
-    cluster.fill_gps_from_neighbours(cfg, recs)
+    cluster.fill_gps_from_neighbours(cfg, recs, interpolate_hours=0)        # the device rule alone
     assert (shot["lat"], shot["lon"]) == HOME and shot["zone"] == geo.ZONE_HOME  # nearest in time was phone-a
     assert shot["gps_source"] == "neighbour:b.jpg"
     assert (nogps["lat"], nogps["lon"]) == LISBON                                # no GPS ever: anyone's nearest
@@ -183,3 +183,100 @@ def test_named_burst_keeps_its_name_flag_through_a_run_after_approval(cfg, libra
     again = cluster.load_proposals()[home["id"]]
     assert again["status"] == "approved" and again["name_edited"] is True
     assert mover.target_folder(cfg, again) == Path(cfg.root) / "2026-06-29 Hannas Geburtstag"
+
+
+# --- interpolation between located photos (issue #22) ---------------------------------------------
+
+STUTTGART, MUNICH = (48.78, 9.18), (48.14, 11.58)
+
+
+def _add_camera(cfg: config.Config) -> Path:
+    cam = Path(cfg.inboxes[0]["path"]).parent / "camera"
+    cfg.inboxes = [*cfg.inboxes, {"path": str(cam), "name": "camera"}]
+    config.save(cfg)
+    return cam
+
+
+def test_camera_shot_between_two_phone_photos_is_interpolated_by_time():
+    cfg = config.Config(home_lat=HOME[0], home_lon=HOME[1])
+    a = dev(rec(T0, geo.ZONE_AWAY, STUTTGART, file="p1.jpg"), "phone")
+    b = dev(rec(T0 + h(3), geo.ZONE_AWAY, MUNICH, file="p2.jpg"), "phone")
+    shot = dev(rec(T0 + h(1), geo.ZONE_UNKNOWN, file="c.jpg"), "camera")      # a third of the way, in time
+    recs = _sorted([a, b, shot])
+    cluster.fill_gps_from_neighbours(cfg, recs)
+    assert shot["gps_source"] == "interpolated:p1.jpg..p2.jpg" and shot["zone"] == geo.ZONE_AWAY
+    total = geo.haversine_km(*STUTTGART, *MUNICH)
+    assert abs(geo.haversine_km(*STUTTGART, shot["lat"], shot["lon"]) - total / 3) < 0.5
+    assert abs(geo.haversine_km(shot["lat"], shot["lon"], *MUNICH) - 2 * total / 3) < 0.5
+    assert cluster._gps_conf(shot) == 0.8 and cluster._photo_entry(shot, 0.8)["uncertain"] is False
+
+
+def test_a_long_gap_or_the_setting_at_zero_takes_the_nearest_photo():
+    cfg = config.Config(home_lat=HOME[0], home_lon=HOME[1])
+    a = dev(rec(T0, geo.ZONE_AWAY, STUTTGART, file="p1.jpg"), "phone")
+    b = dev(rec(T0 + h(10), geo.ZONE_AWAY, MUNICH, file="p2.jpg"), "phone")    # 10 h apart: a night, a flight
+    shot = dev(rec(T0 + h(8), geo.ZONE_UNKNOWN, file="c.jpg"), "camera")
+    cluster.fill_gps_from_neighbours(cfg, _sorted([a, b, shot]))
+    assert shot["gps_source"] == "neighbour:p2.jpg" and (shot["lat"], shot["lon"]) == MUNICH
+    cfg.gps_interpolation_hours = 12
+    shot.update(lat=None, lon=None, gps_source=None)
+    cluster.fill_gps_from_neighbours(cfg, _sorted([a, b, shot]))
+    assert shot["gps_source"].startswith("interpolated:")
+    cfg.gps_interpolation_hours = 0                                          # off
+    shot.update(lat=None, lon=None, gps_source=None)
+    cluster.fill_gps_from_neighbours(cfg, _sorted([a, b, shot]))
+    assert shot["gps_source"] == "neighbour:p2.jpg"
+    cfg.gps_interpolation_hours, cfg.rules = 6, {"excursions": {"interpolate_gps_hours": 12}}   # the rules' key
+    shot.update(lat=None, lon=None, gps_source=None)
+    cluster.fill_gps_from_neighbours(cfg, _sorted([a, b, shot]))
+    assert shot["gps_source"].startswith("interpolated:")
+
+
+def test_interpolation_uses_the_own_device_first_and_only_photos_on_both_sides():
+    cfg = config.Config(home_lat=HOME[0], home_lon=HOME[1])
+    own = dev(rec(T0, geo.ZONE_AWAY, STUTTGART, file="own.jpg"), "phone-b")
+    other1 = dev(rec(T0 + h(0.5), geo.ZONE_AWAY, LISBON, file="o1.jpg"), "phone-a")
+    other2 = dev(rec(T0 + h(1.5), geo.ZONE_AWAY, LISBON, file="o2.jpg"), "phone-a")
+    shot = dev(rec(T0 + h(1), geo.ZONE_UNKNOWN, file="s.jpg"), "phone-b")    # its own phone has one side only
+    cluster.fill_gps_from_neighbours(cfg, _sorted([own, other1, other2, shot]))
+    assert shot["gps_source"] == "neighbour:own.jpg"
+    first = dev(rec(T0 - h(1), geo.ZONE_UNKNOWN, file="f.jpg"), "camera")    # before every located photo
+    exact = dev(rec(T0 + h(0.5), geo.ZONE_UNKNOWN, file="e.jpg"), "camera")  # the same second as one of them
+    cluster.fill_gps_from_neighbours(cfg, _sorted([own, other1, other2, first, exact]))
+    assert first["gps_source"] == "neighbour:own.jpg"
+    assert exact["gps_source"] == "neighbour:o1.jpg" and (exact["lat"], exact["lon"]) == LISBON
+
+
+def test_a_camera_on_a_drive_spreads_along_the_track_and_joins_the_day_out(cfg, library):
+    """End to end: a camera inbox next to the synthetic library; its shot during a drive from
+    Stuttgart to Munich that the phone recorded lands between the two cities, in the day out."""
+    inbox = Path(cfg.inboxes[0]["path"])
+    cam = _add_camera(cfg)
+    day = datetime(2026, 7, 20, 8, tzinfo=T0.tzinfo)
+    for i, pos in enumerate([STUTTGART, MUNICH, MUNICH]):
+        library.photo(inbox, day + h(2 * i), pos)
+    library.photo(inbox, day + timedelta(days=2), HOME)
+    shot = library.photo(cam, day + h(1), cam="ILCE-7M4")
+    cluster.run(config.load())
+    trip = next(p for p in cluster.load_proposals().values() if str(shot) in {q["path"] for q in p["photos"]})
+    entry = next(q for q in trip["photos"] if q["path"] == str(shot))
+    assert trip["kind"] == "local" and entry["gps_source"].startswith("interpolated:")
+    assert 9.18 < entry["lon"] < 11.58
+
+
+def test_changing_the_interpolation_setting_refills_the_cached_positions(cfg, library):
+    inbox = Path(cfg.inboxes[0]["path"])
+    cam = _add_camera(cfg)
+    day = datetime(2026, 7, 20, 8, tzinfo=T0.tzinfo)
+    library.photo(inbox, day, STUTTGART)
+    library.photo(inbox, day + h(4), MUNICH)
+    shot = str(library.photo(cam, day + h(3), cam="ILCE-7M4"))
+    cfg = config.load()
+    by_path = {r["path"]: r for r in cluster.records_filled(cfg)}
+    assert by_path[shot]["gps_source"].startswith("interpolated:")
+    before = cluster.everyday_records(cfg)
+    cfg.gps_interpolation_hours = 0
+    by_path = {r["path"]: r for r in cluster.records_filled(cfg)}
+    assert by_path[shot]["gps_source"].startswith("neighbour:")
+    after = {r["path"]: r for r in cluster.everyday_records(cfg)}
+    assert after[shot]["gps_source"].startswith("neighbour:") and before is not after
