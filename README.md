@@ -41,6 +41,9 @@ inbox/camera/**.dng  ─┘                          sorted/_unnamed/2026-06-30 
 - **An approval covers what you saw.** A cluster you approved but that has not moved yet (dry-run,
   a failed move) goes back to review when photos join it later, e.g. a camera imported after the
   phones; it never moves photos nobody looked at.
+- **Per-device quirks.** A camera on local time without a time zone in its photos takes the
+  offset of the phone photos around it; videos that store local time instead of UTC, a shorter
+  GPS window or a wider home radius for one device: one line per input in Settings.
 - **Videos included.** iPhone and Android MP4/MOV get correct local timestamps (UTC converted
   to your home zone), GPS from the QuickTime metadata and a thumbnail frame.
 - **Readable names.** `2026-06 Lisbon, Sevilla`; your own place names ("Black Forest") beat

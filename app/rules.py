@@ -95,15 +95,17 @@ def homes(cfg: Config) -> list[dict]:
     return out
 
 
-def zone_at(cfg: Config, lat: float, lon: float) -> tuple[float | None, str, str | None]:
+def zone_at(cfg: Config, lat: float, lon: float,
+            radius_km: float | None = None) -> tuple[float | None, str, str | None]:
     """Distance to the nearest home (None without any), the zone there, that home's name. A
     point inside any home's radius is at home; beyond every home the zone follows the distance
-    to the nearest one (local / away)."""
+    to the nearest one (local / away). `radius_km`: an inbox's own radius for every home (a
+    device with poor GPS, issue #6)."""
     best: tuple[float, str, bool] | None = None
     for h in homes(cfg):
         d = geo.haversine_km(h["lat"], h["lon"], lat, lon)
         if best is None or d < best[0]:
-            best = (d, h["name"], d < h["radius_km"])
+            best = (d, h["name"], d < (h["radius_km"] if radius_km is None else radius_km))
     if best is None:
         return None, geo.ZONE_UNKNOWN, None
     return best[0], geo.ZONE_HOME if best[2] else geo.zone_for(cfg, best[0]), best[1]

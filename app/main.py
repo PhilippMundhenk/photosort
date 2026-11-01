@@ -739,6 +739,7 @@ def settings(request: Request, msg: str = "", mode: str = ""):
     mode = mode if mode in SETTINGS_MODES else cfg.settings_mode if cfg.settings_mode in SETTINGS_MODES else "basic"
     discovered = config.discovered_inboxes(cfg)
     return render(request, "settings.html", inboxes_text=config.inboxes_text(cfg), discovered=discovered,
+                  inbox_settings_text=config.inbox_settings_text(cfg),
                   named_places_text=config.named_places_text(cfg), extensions=", ".join(cfg.photo_extensions),
                   msg=msg, mode=mode, modes=SETTINGS_MODES,
                   homes_text=config.named_places_text(cfg, cfg.homes), home_candidates=_home_candidates(cfg),
