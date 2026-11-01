@@ -78,8 +78,10 @@ are therefore found per device (`source`, the inbox folder), and runs of differe
 become one excursion only when they overlap in time and some of their photos are within a
 day and `trip_split_distance_km` of each other: the family trip with two phones stays one
 folder, the partner at home stays out of it. The same rule applies to GPS-less photos: they
-borrow a position from the nearest located photo *of the same device*; only a device that
-never records GPS at all borrows from the others. Home bursts still look at the merged
+borrow a position from the nearest located photo *of the same device*; a device with no
+located photo of its own within `neighbour_gps_hours` borrows from the others. That covers
+the camera without GPS, and also the camera that geotags only now and then: it used to count
+as a GPS device, found nothing of its own during the trip, and its shots stayed everyday. Home bursts still look at the merged
 timeline, since a birthday photographed with two phones is one occasion.
 
 ### Trip runs: mechanics

@@ -272,8 +272,9 @@ def _load_records(cfg: Config) -> tuple[list[dict], list[dict]]:
 def fill_gps_from_neighbours(cfg: Config, recs: list[dict], max_hours: float | None = None) -> None:
     """Photos without GPS inherit position/zone from the closest GPS'd photo in time, taken by
     the same device (`source`): while one phone is abroad, a screenshot on the other phone at
-    home must not be placed abroad. Only a device that never records GPS at all borrows from
-    the other devices."""
+    home must not be placed abroad. A device with no located photo of its own within the
+    window borrows from the other devices: a camera that geotags now and then (or never) must
+    still join the trip the phone recorded."""
     import bisect
     if max_hours is None:
         max_hours = rules.effective(cfg)["excursions"].get("neighbour_gps_hours", 48.0)
@@ -298,6 +299,8 @@ def fill_gps_from_neighbours(cfg: Config, recs: list[dict], max_hours: float | N
             continue
         key = r.get("source") if r.get("source") in groups else None
         best = nearest(key, r["_t"])
+        if best is None and key is not None:          # nothing of its own nearby: anyone's nearest
+            best = nearest(None, r["_t"])
         if best is None:
             continue
         src = recs[best]

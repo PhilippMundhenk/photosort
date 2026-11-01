@@ -101,6 +101,34 @@ def test_gpsless_photo_borrows_from_its_own_phone():
     assert (nogps["lat"], nogps["lon"]) == LISBON                                # no GPS ever: anyone's nearest
 
 
+def test_camera_that_geotagged_once_still_borrows_the_phones_position():
+    """A camera with one GPS'd photo (a Bluetooth geotag weeks ago) has no position of its own
+    during the trip: its shots take the phone's, instead of staying unknown (everyday)."""
+    cfg = config.Config(home_lat=HOME[0], home_lon=HOME[1])
+    old = dev(rec(T0 - timedelta(days=60), geo.ZONE_HOME, HOME, file="cam-old.jpg"), "camera")
+    trip = [dev(rec(T0 + timedelta(days=d, hours=9), geo.ZONE_AWAY, LISBON, "Lisbon", "Portugal",
+                    file=f"p{d}.jpg"), "phone") for d in range(4)]
+    shots = [dev(rec(T0 + timedelta(days=d, hours=12), geo.ZONE_UNKNOWN, file=f"c{d}.jpg"), "camera")
+             for d in range(4)]
+    back = dev(rec(T0 + timedelta(days=5, hours=9), geo.ZONE_HOME, HOME, file="p-home.jpg"), "phone")
+    recs = _sorted([old, *trip, *shots, back])
+    cluster.fill_gps_from_neighbours(cfg, recs)
+    assert all(s["zone"] == geo.ZONE_AWAY and s["gps_source"].startswith("neighbour:p") for s in shots)
+    runs = cluster.find_excursions(cfg, recs)
+    assert len(runs) == 1 and {r["file"] for r in shots} <= {r["file"] for r in runs[0]}
+    assert cluster.excursion_kind(cfg, runs[0]) == "trip"
+
+
+def test_own_device_still_wins_when_it_has_a_position_nearby():
+    cfg = config.Config(home_lat=HOME[0], home_lon=HOME[1])
+    a = dev(rec(T0, geo.ZONE_AWAY, LISBON, file="a.jpg"), "phone-a")
+    b = dev(rec(T0 + h(10), geo.ZONE_HOME, HOME, file="b.jpg"), "phone-b")
+    shot = dev(rec(T0 + h(1), geo.ZONE_UNKNOWN, file="shot.jpg"), "phone-b")   # phone-a is closer in time
+    recs = _sorted([a, b, shot])
+    cluster.fill_gps_from_neighbours(cfg, recs)
+    assert shot["gps_source"] == "neighbour:b.jpg" and shot["zone"] == geo.ZONE_HOME
+
+
 def test_late_photo_at_the_edge_keeps_proposal_id_and_review_state(cfg, library):
     cluster.run(cfg)
     props = cluster.load_proposals()
