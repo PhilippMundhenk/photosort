@@ -577,7 +577,10 @@ def _xmp_args(photo: Path, keywords: list[str]) -> list[str]:
         args += [f"-XMP-dc:Subject-=photosort/{k}", f"-XMP-dc:Subject+=photosort/{k}"]
     if xmp.exists():
         return ["-q", "-overwrite_original", *args, str(xmp)]
-    return ["-q", "-o", str(xmp), *args, str(photo)]
+    # a new sidecar holds the keywords only. "-o x.xmp photo" would also copy all of the photo's
+    # metadata in exiftool's default translation, which drops the offset of photo dates and writes
+    # the UTC clock of videos as local time; photo managers then prefer those dates to the file's own.
+    return ["-q", *args, str(xmp)]
 
 
 def index_paths(cfg: Config, paths: list[Path]) -> int:
