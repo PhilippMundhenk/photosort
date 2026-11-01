@@ -128,6 +128,22 @@ def test_trip_proposal_confidences_and_ongoing():
     assert cluster.trip_proposal(cfg, run, now=t + timedelta(days=5))["status"] == "ongoing"
 
 
+def test_a_recent_trip_ended_by_a_home_photo_is_not_ongoing():
+    """The badge says "waiting for a home photo": with one after the trip it is pending, even
+    the day after; a home photo of another device does not end it."""
+    cfg = config.Config(trip_gap_days=4, home_lat=HOME[0], home_lon=HOME[1])
+    t = T0
+    trip = [{**rec(t + timedelta(days=d), Z.ZONE_AWAY, LISBON, "Lisbon", "Portugal", file=f"a{d}.jpg"),
+             "source": "phone-a"} for d in range(3)]
+    partner = {**rec(t + timedelta(days=3), Z.ZONE_HOME, HOME, file="b.jpg"), "source": "phone-b"}
+    now = t + timedelta(days=3, hours=12)
+    made, _ = cluster.automatic_proposals(cfg, [*trip, partner], now, baseline=1.0)
+    assert [p["status"] for p in made.values() if p["kind"] == "trip"] == ["ongoing"]
+    back = {**rec(t + timedelta(days=3), Z.ZONE_HOME, HOME, file="a-home.jpg"), "source": "phone-a"}
+    made, _ = cluster.automatic_proposals(cfg, [*trip, partner, back], now, baseline=1.0)
+    assert [p["status"] for p in made.values() if p["kind"] == "trip"] == ["pending"]
+
+
 # --- bursts --------------------------------------------------------------------------
 
 def test_group_bursts_and_baseline():
