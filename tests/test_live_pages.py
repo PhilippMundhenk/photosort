@@ -478,3 +478,22 @@ def test_review_page_stays_small_however_many_proposals_are_open(client, library
     html = client.get("/review", params={"open": trip["id"]}).text
     live = [p for p in cluster.load_proposals().values() if p["status"] in ("pending", "ongoing")]
     assert "data-lazy" not in html and html.count("<figure") == sum(min(80, p["n"]) for p in live)
+
+
+def test_everyday_renders_a_budget_of_photos_and_serves_the_other_days(client, library, monkeypatch):
+    """Issue #7: a month with thousands of photos was one huge page. The first days within the
+    budget carry their photos, the others arrive empty and load from /everyday/day."""
+    cfg = config.load()
+    cluster.run(cfg)
+    monkeypatch.setattr(main, "EVERYDAY_INLINE_TOTAL", 2)
+    html = client.get("/everyday", params={"month": "2026-06"}).text
+    days = html.count('class="card" data-day=')
+    lazy = html.count("data-lazy-day=")
+    assert days > 2 and 0 < lazy < days and html.count("<figure") >= 1
+    first_lazy = html.split('data-lazy-day="/everyday/day?date=')[1][:10]
+    part = client.get("/everyday/day", params={"date": first_lazy})
+    assert part.status_code == 200 and part.text.count("<figure") >= 1 and 'class="pick"' in part.text
+    assert first_lazy in part.text
+    assert client.get("/everyday/day", params={"date": "../etc"}).status_code == 404
+    found = client.get("/everyday", params={"q": "IMG_"}).text                # a search shows everything
+    assert "data-lazy-day=" not in found
