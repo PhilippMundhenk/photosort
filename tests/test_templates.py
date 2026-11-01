@@ -363,3 +363,24 @@ def test_every_page_passes_the_accessibility_basics(client, library):
     config.save(cfg)
     for path in ("/", "/review", "/everyday", "/settings"):
         _check(client.get(path).text, path + " (dry-run)")
+
+
+def test_new_photos_since_approval_are_shown_and_cleared_by_approving(client, library):
+    cfg = config.load()
+    cfg.dry_run = True                                                     # approving only marks here
+    config.save(cfg)
+    cluster.run(cfg)
+    trip = _props()["trip"]
+    _set(trip["id"], new_photos=3)
+    card = client.get("/review").text.split(f'id="{trip["id"]}"')[1].split('<div class="card"')[0]
+    assert "3 new photos since you approved it" in card
+    client.post(f"/proposal/{trip['id']}/approve")
+    assert "new_photos" not in cluster.load_proposals()[trip["id"]]
+    local = _props()["local"]
+    _set(local["id"], new_photos=1)
+    client.post(f"/proposal/{local['id']}/reject")
+    assert "new_photos" not in cluster.load_proposals()[local["id"]]
+    home = _props()["home"]
+    _set(home["id"], new_photos=1)
+    client.post("/proposals/approve_all")
+    assert "new_photos" not in cluster.load_proposals()[home["id"]]
