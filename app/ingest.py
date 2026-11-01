@@ -15,6 +15,7 @@ import json
 import logging
 import re
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -511,32 +512,40 @@ def scan(cfg: Config, force: bool = False, progress=None) -> dict:
         progress(0, total_new)
     for name, folder, photos, todo in plan:
         indexed: list[Path] = []
-        for i in range(0, len(todo), SCAN_CHUNK):
-            chunk = todo[i:i + SCAN_CHUNK]
-            try:
-                tags = exif_batch(chunk)
-            except ExifToolMissing as e:
-                log.error("%s: %d new photos in %s left unindexed", e, len(todo) - i, folder)
-                stats["error"] = str(e)
-                complete = False
-                break
-            for p in chunk:
+        chunks = [todo[i:i + SCAN_CHUNK] for i in range(0, len(todo), SCAN_CHUNK)]
+        workers = max(1, min(int(cfg.scan_workers or 1), len(chunks) or 1))
+        # exiftool over a share is I/O bound: a few processes at once (issue #7); the results are
+        # taken in chunk order, so progress and records come as before
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="exif") as pool:
+            futures = [pool.submit(exif_batch, chunk) for chunk in chunks]
+            for n, (chunk, fut) in enumerate(zip(chunks, futures, strict=True)):
                 try:
-                    rec = build_record(cfg, p, tags.get(str(p), {}), source=name)
-                except Exception as e:  # noqa: BLE001  (one odd file must never abort the scan)
-                    log.exception("cannot index %s: %s", p, e)
-                    stats.setdefault("failed", []).append(str(p))
-                    continue
-                rec["source"] = name
-                rec["inbox"] = str(folder)
-                old = read_sidecar(p, cfg) if force else None
-                if old and old.get("copied_to"):          # a forced re-read (Start over) keeps what copy mode
-                    rec["copied_to"], rec["cluster"] = old["copied_to"], old.get("cluster")   # sorted already
-                write_sidecar(p, rec, cfg)
-                indexed.append(p)
-            done += len(chunk)
-            if progress:
-                progress(done, total_new)
+                    tags = fut.result()
+                except ExifToolMissing as e:
+                    left = len(todo) - n * SCAN_CHUNK
+                    log.error("%s: %d new photos in %s left unindexed", e, left, folder)
+                    stats["error"] = str(e)
+                    complete = False
+                    for f in futures[n + 1:]:
+                        f.cancel()
+                    break
+                for p in chunk:
+                    try:
+                        rec = build_record(cfg, p, tags.get(str(p), {}), source=name)
+                    except Exception as e:  # noqa: BLE001  (one odd file must never abort the scan)
+                        log.exception("cannot index %s: %s", p, e)
+                        stats.setdefault("failed", []).append(str(p))
+                        continue
+                    rec["source"] = name
+                    rec["inbox"] = str(folder)
+                    old = read_sidecar(p, cfg) if force else None
+                    if old and old.get("copied_to"):          # a forced re-read (Start over) keeps what copy
+                        rec["copied_to"], rec["cluster"] = old["copied_to"], old.get("cluster")   # mode sorted
+                    write_sidecar(p, rec, cfg)
+                    indexed.append(p)
+                done += len(chunk)
+                if progress:
+                    progress(done, total_new)
         todo = indexed
         # re-zone existing sidecars if home/radii/places changed: no exiftool needed
         for p in (photos if rezone else ()):

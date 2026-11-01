@@ -301,3 +301,39 @@ def test_list_photos_never_walks_into_thumbnail_or_hidden_folders(tmp_path, monk
     found = [str(p.relative_to(tmp_path)).replace("\\", "/") for p in ingest.list_photos(cfg, tmp_path)]
     assert found == ["2026/06/c.jpg", "a.jpg"]
     assert "@eaDir" not in seen and ".sync" not in seen and "a.jpg" not in seen
+
+
+def test_a_scan_reads_several_batches_at_once_and_keeps_their_order(tmp_path, monkeypatch, data_dir):
+    """Issue #7: exiftool batches over a share run scan_workers at a time; progress and records
+    come in order; a missing exiftool partway stops the rest and says how many are left."""
+    import threading
+    import time
+    inbox = tmp_path / "in"
+    inbox.mkdir()
+    for i in range(450):                                                  # three batches of 200, 200, 50
+        (inbox / f"IMG_{i:04d}.jpg").write_bytes(b"x")
+    cfg = config.Config(inboxes=[{"path": str(inbox), "name": "in"}], scan_workers=3)
+    running, peak, lock = [0], [0], threading.Lock()
+    def fake(paths):
+        with lock:
+            running[0] += 1
+            peak[0] = max(peak[0], running[0])
+        time.sleep(0.2)
+        with lock:
+            running[0] -= 1
+        return {str(p): {"DateTimeOriginal": "2026:06:04 09:00:00"} for p in paths}
+    monkeypatch.setattr(ingest, "exif_batch", fake)
+    seen = []
+    stats = ingest.scan(cfg, progress=lambda done, total: seen.append((done, total)))
+    assert stats["new"] == 450 and peak[0] == 3
+    assert seen == [(0, 450), (200, 450), (400, 450), (450, 450)]
+    calls = []
+    def missing_after_first(paths):
+        calls.append(len(paths))
+        if len(calls) > 1:
+            raise ingest.ExifToolMissing("exiftool not found on PATH")
+        return {str(p): {"DateTimeOriginal": "2026:06:05 09:00:00"} for p in paths}
+    monkeypatch.setattr(ingest, "exif_batch", missing_after_first)
+    cfg.scan_workers = 1
+    stats = ingest.scan(cfg, force=True)
+    assert stats["error"] == "exiftool not found on PATH" and stats["new"] == 200
