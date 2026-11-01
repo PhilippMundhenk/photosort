@@ -4,14 +4,14 @@ FROM python:3.12-slim AS base
 RUN apt-get update && apt-get install -y --no-install-recommends libimage-exiftool-perl ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /srv
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt constraints.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -c constraints.txt
 
 # --- test image: everything the test suite needs, nothing installed on the host ----------------
 # docker build --target test -t photosort-test .   (or: docker compose -f docker-compose.test.yml run --rm tests)
 FROM base AS test
 COPY requirements-dev.txt .
-RUN pip install --no-cache-dir -r requirements-dev.txt \
+RUN pip install --no-cache-dir -r requirements-dev.txt -c constraints.txt \
     && playwright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml ./
