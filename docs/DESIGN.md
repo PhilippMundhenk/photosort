@@ -450,7 +450,8 @@ hundred open bursts is eight thousand figures. Every request, and every thumbnai
 listed and resolved the inbox folders on the share. Now: readers share the cached records
 (only code that edits gets copies), the everyday list is kept until a record or the proposals
 file changes, figures are written out by a plain function, the page has a budget of inline
-photos (400; the other open cards load their first photos when they scroll near), and the browser keeps little of what it has seen (November 2026, issue #69): thumbnails are made at
+photos (400; the other open cards load their first photos when they scroll near; Everyday
+likewise renders 300 and loads the later days of a long month as they scroll near, issue #7), and the browser keeps little of what it has seen (November 2026, issue #69): thumbnails are made at
 twice their display size, 240x180 (they were 440x330, and a review card shown in full with
 two thousand photos held about a gigabyte of decoded images), every one declares its size and
 decodes off the main thread, and figures off screen are neither laid out nor painted

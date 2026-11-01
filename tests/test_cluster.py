@@ -418,3 +418,33 @@ def test_one_home_keeps_the_old_occasion_name():
     two = config.Config(home_lat=HOME[0], home_lon=HOME[1], homes=[{"name": "Granny", "lat": 48.7, "lon": 9.3}])
     assert rules.defaults(one)["burst_rules"][0]["name_template"] == "{span} ({media})"
     assert rules.defaults(two)["burst_rules"][0]["name_template"] == "{span} ({media}) @ {home}"
+
+
+def test_changes_noted_while_a_page_refreshes_the_cache_neither_crash_nor_get_lost(cfg, library):
+    """The worker notes moved photos while page requests take the notes (issue #62): iterating
+    the live set raised "Set changed size during iteration" (an error page during a move)."""
+    import threading
+    cluster.records_filled(cfg)
+    stop, errors = threading.Event(), []
+    outside = Path(cfg.root) / "2026-06 Somewhere"
+
+    def worker():
+        i = 0
+        while not stop.is_set():
+            ingest._bump(outside / f"IMG_{i}.jpg")                         # a destination record
+            ingest._bump(library.paths[i % 5], gone=True)                   # its source went away
+            i += 1
+    t = threading.Thread(target=worker)
+    t.start()
+    try:
+        for _ in range(300):
+            try:
+                cluster.records_filled(cfg)
+            except RuntimeError as e:                                       # pragma: no cover - the bug
+                errors.append(e)
+    finally:
+        stop.set()
+        t.join()
+    assert errors == []
+    left = {r["path"] for r in cluster.records_filled(cfg)}
+    assert not {str(p) for p in library.paths[:5]} & left                  # every noted removal arrived

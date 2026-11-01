@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_everyday_photos.html" import day_figures %}
 {% block content %}
 <h1>Everyday photos <span class="muted small">— {{ total }} photos and videos that are in no cluster</span></h1>
 <div class="card">
@@ -61,15 +62,10 @@
     <b>{{ d.date }}</b> <span class="small">({{ d.weekday }})</span> <span class="act" role="button" tabindex="0" data-select-all title="select or unselect every photo of this day">all</span>
     <span class="muted small">{{ d.n }} files · {{ d.zones }}{% if d.places %} · {{ d.places }}{% endif %}</span>
   </div>
-  <div class="thumbs" data-select>
-  {% for ph in d.photos %}
-    <figure class="{{ 'uncertain' if ph.zone == 'unknown' }}" data-path="{{ ph.path }}">
-      <span class="pick" role="checkbox" aria-checked="false" tabindex="0" title="{{ ph.file }} · click to select"><img src="/thumb?path={{ ph.path|urlencode }}" loading="lazy" decoding="async" width="110" height="82" alt=""></span>
-      <span class="view" role="button" tabindex="0" data-view="/media?path={{ ph.path|urlencode }}" data-type="{{ ph.media }}" data-title="{{ ph.file }} · {{ ph.ts[:16].replace('T',' ') }} · {{ ph.place or ph.zone }}" title="view full size">&#x2921;</span>
-      <figcaption>{% if ph.media == 'video' %}<span class="badge">video</span> {% endif %}{{ ph.ts[11:16] }} {{ ph.zone }}{% if ph.place %} · {{ ph.place }}{% endif %}</figcaption>
-    </figure>
-  {% endfor %}
-  </div>
+  {# within the page's budget a day carries its photos; the days after it arrive empty and load
+     theirs when they scroll near (a month with thousands of photos was one huge page, issue #7) #}
+  {% if d.photos %}<div class="thumbs" data-select>{{ day_figures(d.photos) }}</div>
+  {% else %}<div class="thumbs" data-select data-lazy-day="/everyday/day?date={{ d.date }}"><span class="muted small">photos load as you scroll here…</span></div>{% endif %}
 </div>
 {% endfor %}
 </form>

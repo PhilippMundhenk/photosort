@@ -337,7 +337,7 @@ def test_thumb_and_media_endpoints_handle_unreadable_and_huge_files(client, libr
 def test_transfer_verifies_the_destination_and_current_tolerates_missing_files(cfg, library, monkeypatch):
     assert mover._current(Path("/no/such/file.jpg"))["bytes"] == 0
     src = library.paths[0]
-    monkeypatch.setattr(shutil, "move", lambda a, b: None)                  # a move that does nothing
+    monkeypatch.setattr(mover, "_move_file", lambda a, b: None)             # a move that does nothing
     with pytest.raises(OSError, match="missing or incomplete"):
         mover._transfer(cfg, src, Path(cfg.root) / "x")
     assert src.exists()

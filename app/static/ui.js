@@ -198,7 +198,8 @@
     var stateless = page === "dashboard" || page === "log" || page === "clusters";
     function fmt(a) {
       var c = a.current;
-      return a.done + " / " + a.total + (c ? " · " + c.file + " (" + Math.round(c.bytes / 1048576) + " MB, " + c.seconds + " s)" : "");
+      var pct = c && c.copied != null && c.bytes ? " · " + Math.min(100, Math.round(100 * c.copied / c.bytes)) + " %" : "";
+      return a.done + " / " + a.total + (c ? " · " + c.file + " (" + Math.round(c.bytes / 1048576) + " MB, " + c.seconds + " s" + pct + ")" : "");
     }
     function describe(s) {
       var parts = [];
@@ -486,4 +487,32 @@
   }
   btn.addEventListener("click", preview);
   btn.addEventListener("keydown", function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); preview(); } });
+})();
+
+// --- everyday: days beyond the page's budget of inline photos load when they scroll near (issue #7)
+(function () {
+  var lazy = document.querySelectorAll("[data-lazy-day]");
+  if (!lazy.length) return;
+  function load(box) {
+    var url = box.getAttribute("data-lazy-day");
+    box.removeAttribute("data-lazy-day");
+    fetch(url).then(function (r) { return r.ok ? r.text() : Promise.reject(r.status); })
+      .then(function (html) { box.innerHTML = html; })
+      .catch(function () {                       // no automatic retry: a broken request must not loop
+        box.innerHTML = '<span class="act small" role="button" tabindex="0" data-retry-day>could not load these photos — try again</span>';
+        box.querySelector("[data-retry-day]").addEventListener("click", function () {
+          box.setAttribute("data-lazy-day", url);
+          box.innerHTML = '<span class="muted small">loading…</span>';
+          load(box);
+        });
+      });
+  }
+  var near = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (!e.isIntersecting || !e.target.hasAttribute("data-lazy-day")) return;
+      near.unobserve(e.target);
+      load(e.target);
+    });
+  }, { rootMargin: "800px" });
+  lazy.forEach(function (box) { near.observe(box); });
 })();
