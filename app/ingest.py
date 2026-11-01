@@ -636,16 +636,17 @@ def _exiftool_json(args: list[str], paths: list[Path]) -> dict[str, dict]:
     return {item.get("SourceFile", ""): item for item in json.loads(res.stdout)}
 
 
-def _copied_dates(xmp_tags: dict, file_tags: dict) -> list[str]:
+def _copied_dates(xmp_tags: dict, *file_tags: dict) -> list[str]:
     """The date tags of a photosort .xmp that are a copy of the file's own date: no offset (the
-    copy dropped it) and the same wall clock as a date in the file. A date set in another tool
-    differs from the file, or carries an offset, and is kept. Sidecars without photosort keywords
-    are not photosort's and are never touched."""
+    copy dropped it) and the same wall clock as a date in the file (in any of the files, when a
+    photo and a video of the same name share one .xmp). A date set in another tool differs from
+    the file, or carries an offset, and is kept. Sidecars without photosort keywords are not
+    photosort's and are never touched."""
     subjects = xmp_tags.get("XMP-dc:Subject") or []
     subjects = subjects if isinstance(subjects, list) else [subjects]
     if not any(str(s).startswith("photosort/") for s in subjects):
         return []
-    own = {str(v)[:19] for k, v in file_tags.items()
+    own = {str(v)[:19] for tags in file_tags for k, v in tags.items()
            if ":" in k and k.split(":", 1)[0] not in _NOT_FILE_DATES and _NAIVE_DATE.match(str(v)[:19])}
     return [t for t in XMP_COPIED_DATES
             if _NAIVE_DATE.match(str(xmp_tags.get(t) or "")) and str(xmp_tags[t])[:19] in own]
@@ -654,23 +655,27 @@ def _copied_dates(xmp_tags: dict, file_tags: dict) -> list[str]:
 def repair_xmp_dates(cfg: Config) -> dict:
     """Remove the dates older photosort versions copied into the .xmp sidecars of the sorted tree
     (see XMP_COPIED_DATES); the keywords and everything else stay. Photo managers then read the
-    date from the photo or video itself. Returns counts."""
+    date from the photo or video itself. Returns counts of sidecars (checked, repaired) and dates."""
     stats = {"checked": 0, "repaired": 0, "tags": 0}
     root = Path(cfg.root)
     if not root.exists():
         return stats
-    pairs = [(p, p.with_suffix(".xmp")) for p in list_photos(cfg, root) if p.with_suffix(".xmp").is_file()]
-    for i in range(0, len(pairs), REPAIR_BATCH):
-        chunk = pairs[i:i + REPAIR_BATCH]
+    sidecars: dict[Path, list[Path]] = {}         # x.jpg and x.mp4 share x.xmp: checked once
+    for p in list_photos(cfg, root):
+        if p.with_suffix(".xmp").is_file():
+            sidecars.setdefault(p.with_suffix(".xmp"), []).append(p)
+    items = list(sidecars.items())
+    for i in range(0, len(items), REPAIR_BATCH):
+        chunk = items[i:i + REPAIR_BATCH]
         try:
-            xmps = _exiftool_json(["-XMP-dc:Subject", *(f"-{t}" for t in XMP_COPIED_DATES)], [x for _, x in chunk])
-            files = _exiftool_json(["-time:all"], [p for p, _ in chunk])
+            xmps = _exiftool_json(["-XMP-dc:Subject", *(f"-{t}" for t in XMP_COPIED_DATES)], [x for x, _ in chunk])
+            files = _exiftool_json(["-time:all"], [p for _, media in chunk for p in media])
         except FileNotFoundError as e:
             raise ExifToolMissing("exiftool not found on PATH") from e
         cmd = ["exiftool"]
-        for p, x in chunk:
+        for x, media in chunk:
             stats["checked"] += 1
-            tags = _copied_dates(xmps.get(str(x), {}), files.get(str(p), {}))
+            tags = _copied_dates(xmps.get(str(x), {}), *(files.get(str(p), {}) for p in media))
             if not tags:
                 continue
             if len(cmd) > 1:

@@ -194,6 +194,21 @@ def test_repair_removes_copied_dates_and_keeps_the_rest(tmp_path):
 
 
 @needs_exiftool
+def test_repair_checks_a_shared_sidecar_once_against_both_files(tmp_path):
+    """x.jpg and x.mp4 (a motion photo, a burst with a clip) share x.xmp."""
+    root = tmp_path / "sorted"
+    root.mkdir()
+    photo = _photo(root / "x.png")
+    video = _video(root / "x.mp4")
+    xmp = _old_sidecar(photo)                                     # dates copied from the photo
+    _exiftool("-XMP-photoshop:DateCreated=2026:10:31 16:37:02", str(xmp))   # and one copied from the video
+    assert ingest.repair_xmp_dates(config.Config(root=str(root))) == {"checked": 1, "repaired": 1, "tags": 3}
+    left = _read(xmp)
+    assert not [k for k in left if k in ingest.XMP_COPIED_DATES] and left["XMP-dc:Subject"] == KW
+    assert video.with_suffix(".xmp") == xmp
+
+
+@needs_exiftool
 def test_repair_works_in_batches(tmp_path, monkeypatch):
     root = tmp_path / "sorted"
     root.mkdir()
