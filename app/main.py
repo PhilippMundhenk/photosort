@@ -318,6 +318,7 @@ def figures_html(photos: list[dict], excluded=()) -> Markup:
 
 
 tpl.env.globals["figures"] = figures_html
+tpl.env.globals["why"] = rules.describe            # the why panel of a proposal (issue #6)
 
 REVIEW_INLINE = 80                                    # photos rendered with the page for an open card
 # ...and for the whole page: open cards beyond this budget arrive empty and load their first photos

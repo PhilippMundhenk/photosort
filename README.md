@@ -192,7 +192,9 @@ decision model that was tried for exactly this (DESIGN.md, section 10). You name
    - Everything else is *everyday*: shown on the Everyday page; moved into `YYYY/MM/` by the
      button there once older than `everyday_keep_days` (4), or on every run with *Auto-move everyday*.
 3. **Review** in the web UI: approve, reject, rename, toggle single photos, name unnamed
-   bursts, undo whole clusters, move single photos back out. **Everyday** lists every photo
+   bursts, undo whole clusters, move single photos back out. *why* on a proposal shows the
+   rule that made it, its conditions against the run's numbers, the rules checked before it
+   and the longest pause inside the run, before you tune a threshold. **Everyday** lists every photo
    that is in no cluster, by month and day; tick photos to add them to a pending proposal or
    to create a cluster by hand (kept across runs, marked "by hand"). A cluster's page has the
    same bar: tick photos and move them to another cluster (moved in by the worker), to an
@@ -241,6 +243,7 @@ docker compose -f docker-compose.test.yml run --rm tests pytest -m e2e -v
 | smoke | `python -m tests.smoke` | one synthetic end-to-end run without pytest |
 | journal | `tests/test_journal.py` | every action is one batch of file operations; revert of a batch, of one file, of a revert; skipped files reported; dry-run refused; the History page |
 | rules | `tests/test_rules.py` | the rule engine: golden test against the frozen pre-engine rules on every library and many parameter sets, custom rules, validation, multi-home zoning, the Settings editor |
+| why panel | `tests/test_why.py` | what a proposal stores about the rule that made it, every condition in plain words, the panel on the review and cluster pages |
 | docs | `tests/test_docs.py` | the README's test table matches the files on disk, every configuration field has a form control, the design document names every module |
 | coverage | the test image's default command | line and branch coverage of `app/` must stay at 99 % or above (it is 100 % as of 2026-09-29); `tests/e2e/test_script_coverage.py` measures how much of `ui.js` one browser session executes (99 % or above; every function runs); `tests/test_templates.py` renders every template branch; CI also starts the published runtime image and calls every page |
 

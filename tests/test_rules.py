@@ -30,6 +30,7 @@ def _strip(props: dict) -> dict:
     out = copy.deepcopy(props)
     for pr in out.values():
         pr["decision"].pop("rule", None)
+        pr["decision"].pop("why", None)                    # the why panel's numbers (issue #6)
     return out
 
 
