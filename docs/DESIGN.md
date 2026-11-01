@@ -209,6 +209,8 @@ One package, `app/`, no framework beyond FastAPI and Jinja:
 - `thumbs.py`: thumbnails and previews in a helper process, the cache and its failure markers,
   the paced prefetch.
 - `events.py`: the append-only log and its tail reader.
+- `notify.py`: the Matrix notifier (issue #8, see section 6): one message per new pending
+  proposal after a run, the announced ids in `notified.json`.
 - `journal.py`: the transaction journal, one line per file operation in batches (one per action),
   and revert of a batch or of one file (see section 4b).
 - `main.py`: the pages and actions, the pipeline, the apply worker, the status endpoint.
@@ -287,8 +289,20 @@ Polling every N minutes instead of inotify, because inotify is unreliable over S
 
 Matrix was the first choice for approvals and naming, then dropped for v1: chat is finicky,
 items get lost, there is no queue. A web service with a review queue, a log and a settings
-page is the durable form; a Matrix notifier ("3 reviews waiting" + link) can sit on top later
-with the queue staying authoritative.
+page is the durable form; a Matrix notifier sits on top with the queue staying authoritative
+(November 2026, issue #8, `app/notify.py`). Off by default. At the end of a run, after
+auto-apply (so only what really waits is announced), every pending proposal not announced
+before gets one `m.room.message` with its name, kind, photo count and a link to
+`/review?open=<id>` (prefixed with the `public_url` setting). More than five new ones in one
+run (the first run after switching it on, a big import) become a single "n new proposals
+waiting" message instead of a flood. The announced ids live in `<data>/notified.json`; an id
+is added only when the homeserver accepted the message, so a failed post is retried on the
+next run, and the Matrix transaction id (`photosort-<id>`) makes such a retry idempotent on
+the server. Ids of proposals that are gone are dropped from the file. Plain `urllib`, a
+10 s timeout, every failure logged as one line without the request (the token travels only
+in the `Authorization` header and is never logged, written to the event log or shown on the
+Settings page, whose token box stays empty: empty keeps the saved one). A notifier error
+never fails the run. Mapping users to rooms waits for multi-user support (#1).
 
 Dry-run is the default. Auto-apply is per rule (trips first, bursts later) so trust can be
 built incrementally.

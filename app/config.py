@@ -95,6 +95,15 @@ class Config:
     thumb_pattern: str = "@eaDir/{name}/SYNOPHOTO_THUMB_M.jpg"
     generate_thumbnails: bool = True
 
+    # Matrix notifier (issue #8, app/notify.py): after a run, one message per new proposal in
+    # Review, into one room. Off by default; the token is never shown on the pages nor logged.
+    matrix_enabled: bool = False
+    matrix_homeserver: str = ""           # https://matrix.example.org
+    matrix_token: str = ""                # access token of the account that posts
+    matrix_room: str = ""                 # room id, !abc123:example.org
+    public_url: str = ""                  # how photosort is reached from the phone, for the links;
+                                          # empty: the messages carry /review?open=<id> only
+
     # The Settings page: "basic" shows what a first setup needs, "advanced" adds the clustering
     # thresholds, "expert" everything (folder details, sidecars, rarely touched limits)
     settings_mode: str = "basic"
@@ -193,7 +202,13 @@ def update_from_form(cfg: Config, form: dict) -> Config:
         if not hasattr(cfg, k):
             continue
         cur = getattr(cfg, k)
-        if k in ("named_places", "homes"):
+        if k == "matrix_token":
+            # the form never shows the saved token: an empty box keeps it, the tick box forgets it
+            if str(v).strip():
+                cfg.matrix_token = str(v).strip()
+            elif form.get("matrix_token_clear"):
+                cfg.matrix_token = ""
+        elif k in ("named_places", "homes"):
             setattr(cfg, k, parse_named_places(str(v)))
         elif k == "inboxes":
             # one per line: "name=/path" or just "/path"

@@ -266,6 +266,36 @@
   </div>
 </div>
 
+<div class="card" data-level="advanced"{{ lv('advanced') }}>
+  <h2>Notifications</h2>
+  <p class="intro">photosort can tell you in a Matrix room when something new waits in Review. The message only points at the proposal; you decide on the Review page as always.</p>
+  <div class="field">
+    <div class="what"><label for="mx">Send a Matrix message for new proposals</label>
+      <p>After every run, each proposal that is new in Review is announced once with its name, its kind, the number of photos and a link to it. When a run finds more than a handful at once, one message says how many are waiting instead. A homeserver that cannot be reached only costs the message, never the run; it is sent on the next run.</p></div>
+    <div class="ctl"><input type="checkbox" id="mx" name="matrix_enabled" {% if cfg.matrix_enabled %}checked{% endif %}></div>
+  </div>
+  <div class="field">
+    <div class="what"><label for="f-matrix_homeserver">Homeserver</label>
+      <p>The address of your Matrix server as a client would use it, for example <code>https://matrix.example.org</code>. It must be reachable from the photosort container.</p></div>
+    <div class="ctl"><input type="url" name="matrix_homeserver" id="f-matrix_homeserver" value="{{ cfg.matrix_homeserver }}" placeholder="https://matrix.example.org"></div>
+  </div>
+  <div class="field">
+    <div class="what"><label for="f-matrix_token">Access token</label>
+      <p>The token of the account that posts, ideally a bot account that is a member of the room (Element shows it under Settings, Help &amp; About). It is stored in <code>config.yaml</code> and never shown here again: leave the box empty to keep the saved one.{% if cfg.matrix_token %} <label class="small"><input type="checkbox" name="matrix_token_clear"> forget the saved token</label>{% endif %}</p></div>
+    <div class="ctl"><input type="password" name="matrix_token" id="f-matrix_token" value="" autocomplete="off" placeholder="{{ 'saved, leave empty to keep it' if cfg.matrix_token else 'syt_…' }}"></div>
+  </div>
+  <div class="field">
+    <div class="what"><label for="f-matrix_room">Room</label>
+      <p>The internal id of the room the messages go to, which starts with an exclamation mark, for example <code>!abc123:example.org</code> (Element: room settings, Advanced). The account above must have joined it.</p></div>
+    <div class="ctl"><input type="text" name="matrix_room" id="f-matrix_room" value="{{ cfg.matrix_room }}" placeholder="!abc123:example.org"></div>
+  </div>
+  <div class="field">
+    <div class="what"><label for="f-public_url">Address of photosort</label>
+      <p>How you reach this page from your phone, for example <code>http://nas.local:8080</code>, so that the link in a message opens the proposal. Empty: the message carries only the path, <code>/review?open=…</code>.</p></div>
+    <div class="ctl"><input type="url" name="public_url" id="f-public_url" value="{{ cfg.public_url }}" placeholder="http://nas.local:8080"></div>
+  </div>
+</div>
+
 <div class="card" data-level="expert"{{ lv('expert') }}>
   <h2>Rules</h2>
   <p class="intro">The thresholds above feed a default set of rules. Here you can write your own: several kinds of day out, a trip that needs two devices, a party only on weekends, your own folder names.</p>

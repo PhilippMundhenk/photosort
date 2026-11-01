@@ -47,6 +47,9 @@ inbox/camera/**.dng  ─┘                          sorted/_unnamed/2026-06-30 
   the offline geocoder and are learned when you rename a cluster.
 - **Thumbnails without a NAS.** Generated once and cached; RAW previews and video frames too.
 - **Move or copy.** Moves are renames on the same share; copy mode leaves originals untouched.
+- **A nudge in Matrix, if you like.** Off by default: with a homeserver, a token and a room in
+  Settings (advanced), each new proposal is announced once in the room with a link to it; the
+  Review page stays where you decide.
 - **One small container.** Runs on a CPU-only laptop; the whole test suite runs in Docker.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the rules and why they were chosen. The rules are
@@ -216,6 +219,7 @@ app/
   ingest.py    exiftool → sidecar; optional .xmp keywords
   cluster.py   the rules; proposals with review status
   mover.py     apply / undo / rename / move-out; manifest.json; cluster listing
+  notify.py    Matrix message per new proposal in Review (off by default)
   main.py      FastAPI app, scheduler, routes
   templates/   dashboard, review, clusters, cluster, log, settings
 tests/           pytest suites (see Development & tests); tests/synth.py builds the synthetic library
@@ -234,6 +238,7 @@ docker compose -f docker-compose.test.yml run --rm tests pytest -m e2e -v
 | Suite | Where | What |
 |---|---|---|
 | unit | `tests/test_{geo,config,ingest,events,cluster,devices,mover,video,thumbs,manual,sidecars,perf_paths,edges}.py` | rules, two devices, coercion, records, moving/copying, videos, thumbnails (helper process), manual clusters, caches and hot paths, every error path |
+| notifier | `tests/test_notify.py` | the Matrix notifier against a fake homeserver: off by default, one message per new proposal and never twice, a summary for many, failures logged without the token and retried, the run unharmed, the Settings controls |
 | web e2e | `tests/test_app.py`, `tests/test_live_pages.py`, `tests/test_moving_matrix.py`, `tests/test_templates.py`, `tests/test_jobs.py` | every page and form action through FastAPI's TestClient; batched clicks, a run finishing mid-review; every way a file can move against dry-run, live-with-switches-off and each switch; undo, rename and put back queued for the worker, busy folders, dry-run switched on while they wait |
 | soak | `tests/test_soak.py` | thirty run-approve-undo cycles: no memory growth, nothing left in queues or threads |
 | fuzz | `tests/test_fuzz.py` | a thousand random tag sets, timestamps, offsets, user texts and timelines through every parser and the clustering: never a crash, always well-formed output (it found five defects on its first run) |
@@ -269,4 +274,5 @@ progress. A decision model
 Open work is tracked as [issues](https://github.com/PhilippMundhenk/photosort/issues), among
 them a generic rule engine (#2), multi-home (#3), naming of transit
 stops and city districts (#5), a per-proposal "why" panel (#6), large-library performance (#7),
-a Matrix notifier (#8), content-based signals for home bursts (#9) and multi-user support (#1).
+content-based signals for home bursts (#9) and multi-user support (#1, which will also map users
+to Matrix rooms; the notifier itself, #8, posts into one room).
