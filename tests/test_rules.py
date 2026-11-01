@@ -447,3 +447,27 @@ def test_a_home_rule_without_any_minimum_does_not_crash_a_run():
     burst = [rec(T0 + h(i / 4), "home", HOME) for i in range(3)]
     pr = cluster.home_proposal(cfg, burst, 0.0, {"name": "all", "kind": "home", "when": {}})
     assert pr["decision"]["state"]["burst_ratio"] is None and "usual day" not in pr["decision"]["note"]
+
+
+def test_the_last_constants_are_parameters_too():
+    """Issue #75: the offset window, Detect home's limits and the remembered circle's size."""
+    cfg = config.Config(home_lat=HOME[0], home_lon=HOME[1])
+    rs = rules.defaults(cfg)
+    assert rs["excursions"]["offset_borrow_hours"] == 48.0
+    assert rs["detection"] == {"home_candidates": 4, "home_min_km": 1.0, "home_min_days": 5}
+    assert rs["naming"]["remember_min_km"] == 0.5 and rs["naming"]["remember_max_km"] == 60.0
+    assert rules.validate({"detection": {"home_candidates": "x", "nope": 1}}) == [
+        "detection.home_candidates must be a number", "detection: unknown key nope (known: home_candidates, "
+        "home_min_km, home_min_days)"]
+    def r(ts, source, kind="photo"):
+        d = datetime.fromisoformat(ts)
+        return {"ts": ts, "_t": d, "ts_source": source, "media": kind, "source": "phone", "file": "f", "path": ts}
+    known = r("2026-07-10T10:00:00+08:00", "exif+offset")
+    video = r("2026-07-11T08:00:00+02:00", "utc-home", "video")                 # 28 h after the photo
+    recs = sorted([known, video], key=lambda x: x["_t"])
+    cfg.rules = {"excursions": {"offset_borrow_hours": 24}}
+    cluster.borrow_offsets(cfg, recs)
+    assert video["ts"] == "2026-07-11T08:00:00+02:00"                         # too far for 24 h
+    cfg.rules = {}
+    cluster.borrow_offsets(cfg, recs)
+    assert video["ts"] == "2026-07-11T14:00:00+08:00"                         # within the default 48 h

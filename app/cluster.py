@@ -360,10 +360,11 @@ def borrow_offsets(cfg: Config, recs: list[dict]) -> None:
     """Videos get the offset of the photos around them (the instant stays); photos and local-
     clock videos of an inbox with borrow_offset (issue #11) get it too, keeping their wall time:
     a camera on local time abroad without an offset in its EXIF. Re-sorts when an instant moved."""
-    borrow_video_offsets(recs)
+    hours = float(rules.effective(cfg)["excursions"].get("offset_borrow_hours", 48.0))
+    borrow_video_offsets(recs, hours)
     naive = {name for name, opts in (cfg.inbox_settings or {}).items()
              if isinstance(opts, dict) and opts.get("borrow_offset")}
-    if naive and borrow_naive_offsets(recs, naive):
+    if naive and borrow_naive_offsets(recs, naive, hours):
         recs.sort(key=lambda r: (r["_t"], r["path"]))
 
 

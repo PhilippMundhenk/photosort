@@ -85,6 +85,9 @@ def test_circle_and_remember_place():
     geo.remember_place(cfg, "Alps", [(47.35, 11.05)])
     assert len(cfg.named_places) == 1 and cfg.named_places[0]["radius_km"] == 0.5   # replaced
     assert geo.remember_place(cfg, "", [(1, 1)]) is None
+    cfg.rules = {"naming": {"remember_min_km": 2.0, "remember_max_km": 3.0}}     # the circle's limits (#75)
+    assert geo.remember_place(cfg, "Spot", [(47.35, 11.05)])["radius_km"] == 2.0
+    assert geo.remember_place(cfg, "Wide", [(47.0, 11.0), (47.5, 11.5)])["radius_km"] == 3.0
 
 
 def test_detect_home_prefers_most_distinct_days():
