@@ -123,6 +123,7 @@ excursions:                 # how runs of photos away from home are cut
   same_area_hours: 24.0
   neighbour_gps_hours: 48.0
   interpolate_gps_hours: 6.0
+  offset_borrow_hours: 48.0 # videos and cameras take the UTC offset of photos this close
 excursion_rules:            # the first rule whose conditions hold decides
 - name: trip
   kind: trip
@@ -159,8 +160,14 @@ naming:                     # which places name a cluster
   stop_photos: 5            # at most this many photos (or stop_share of them),
   stop_share: 0.05
   stop_ratio: 3.0           # and this many times fewer than the other places
+  remember_min_km: 0.5      # "remember this place": the circle is at least this big
+  remember_max_km: 60.0     # and at most this big
 review:
   uncertain_below: 0.7      # a photo with a borrowed or missing position counts as doubtful below this
+detection:                  # "Detect home" in Settings
+  home_candidates: 4        # how many places it finds (the first is home, the others are offered)
+  home_min_km: 1.0          # how far apart they must be
+  home_min_days: 5          # on how many different days a place needs photos
 ```
 
 Also possible: `homes` (a list of `{name, lat, lon, radius_km}`).

@@ -917,7 +917,9 @@ def settings_detect_home():
     places of that kind are kept as candidates for further homes (Settings offers them)."""
     cfg = config.load()
     recs, _ = cluster.load_records(cfg)
-    found = geo.detect_homes(recs)
+    d = rules.effective(cfg).get("detection", {})
+    found = geo.detect_homes(recs, n=int(d.get("home_candidates", 4)), min_km=float(d.get("home_min_km", 1.0)),
+                             min_days=int(d.get("home_min_days", 5)))
     if not found:
         return RedirectResponse("/settings?msg=" + quote("No photos with GPS indexed yet; run a scan first."),
                                 status_code=303)

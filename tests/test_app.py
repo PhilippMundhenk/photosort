@@ -595,6 +595,16 @@ def test_detect_offers_further_homes_and_adds_one(client, library):
     assert client.get("/settings").status_code == 200
 
 
+def test_detect_uses_the_detection_parameters(client, library):
+    """Issue #75: with one candidate only, Detect sets home and offers nothing further."""
+    cfg = config.load()
+    cfg.rules = {"detection": {"home_candidates": 1}}
+    config.save(cfg)
+    r = client.post("/settings/detect_home")
+    assert "offered%20under%20Further%20homes" not in r.headers["location"]
+    assert "Found by “Detect”" not in client.get("/settings", params={"mode": "advanced"}).text
+
+
 def test_unset_home_is_detected_by_the_run(client, library):
     cfg = config.load()
     cfg.home_lat, cfg.home_lon = 0.0, 0.0

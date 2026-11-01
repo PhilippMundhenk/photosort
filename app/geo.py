@@ -129,8 +129,10 @@ def circle_for(points: list[tuple[float, float]], min_km: float = 0.5, max_km: f
 
 def remember_place(cfg: Config, name: str, points: list[tuple[float, float]]) -> dict | None:
     """Add (or replace) a named place covering the points; returns the entry. Saves nothing."""
+    from . import rules  # local: rules imports this module
+    naming = rules.effective(cfg).get("naming", {})
     name = name.strip()
-    c = circle_for(points)
+    c = circle_for(points, float(naming.get("remember_min_km", 0.5)), float(naming.get("remember_max_km", 60.0)))
     if not name or c is None:
         return None
     entry = {"name": name, "lat": round(c[0], 5), "lon": round(c[1], 5), "radius_km": c[2]}
