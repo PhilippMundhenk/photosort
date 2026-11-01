@@ -198,7 +198,8 @@
     var stateless = page === "dashboard" || page === "log" || page === "clusters";
     function fmt(a) {
       var c = a.current;
-      return a.done + " / " + a.total + (c ? " · " + c.file + " (" + Math.round(c.bytes / 1048576) + " MB, " + c.seconds + " s)" : "");
+      var pct = c && c.copied != null && c.bytes ? " · " + Math.min(100, Math.round(100 * c.copied / c.bytes)) + " %" : "";
+      return a.done + " / " + a.total + (c ? " · " + c.file + " (" + Math.round(c.bytes / 1048576) + " MB, " + c.seconds + " s" + pct + ")" : "");
     }
     function describe(s) {
       var parts = [];
