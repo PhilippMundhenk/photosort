@@ -134,11 +134,18 @@ def _apply_worker() -> None:
     while True:
         pid = _apply_queue.get()
         _taken["key"] = pid
+        cluster.moving = True                 # pages use the record cache as it is while files move (#62)
         try:
             _apply_one(pid)
         except Exception:  # noqa: BLE001
             log.exception("apply worker")
         finally:
+            cluster.moving = False
+            if _apply_queue.empty():          # the worker, not the next page request, catches the cache up
+                try:
+                    cluster.records_filled(config.load())
+                except Exception:  # noqa: BLE001
+                    log.exception("cache refresh after a job")
             _taken["key"] = None
             _apply_queue.task_done()
 

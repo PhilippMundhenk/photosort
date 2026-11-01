@@ -212,6 +212,8 @@ def test_pages_stay_quick_while_a_big_move_runs(client, cfg):
     day = T0 + timedelta(days=3)
     for i in range(3000):
         lib.photo(a, day + timedelta(minutes=10 * i), LISBON)
+    for i in range(1500):                                # a camera without GPS: positions are filled in,
+        lib.photo(a, day + timedelta(minutes=10 * i + 5), None, cam="ILCE")   # a refill per page is costly
     lib.photo(a, day + timedelta(days=25), HOME)
     for i in range(300):
         lib.photo(a, T0 + timedelta(days=60, hours=6 * i), HOME)
