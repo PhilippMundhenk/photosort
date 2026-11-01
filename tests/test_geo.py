@@ -103,3 +103,17 @@ def test_reverse_result_is_cached_per_100m():
     geo.reverse(cfg, 38.72004, -9.14004)      # rounds to the same 3-decimal key
     info = geo._lookup.cache_info()
     assert info.hits == 1 and info.misses == 1
+
+
+def test_interpolate_along_the_great_circle():
+    lat, lon = geo.interpolate(0.0, 0.0, 0.0, 90.0, 0.5)
+    assert (round(lat, 6), round(lon, 6)) == (0.0, 45.0)
+    assert geo.interpolate(48.0, 9.0, 48.0, 9.0, 0.3) == (48.0, 9.0)                # the same spot
+    lat, lon = geo.interpolate(10.0, 179.0, 10.0, -179.0, 0.5)                       # across the date line
+    assert abs(lat - 10.0) < 0.01 and abs(abs(lon) - 180.0) < 1e-6
+    assert geo.interpolate(0.0, 0.0, 0.0, 180.0, 0.2) == (0.0, 0.0)                  # antipodes: the nearer end
+    assert geo.interpolate(0.0, 0.0, 0.0, 180.0, 0.8) == (0.0, 180.0)
+    a, b = (50.938, 6.96), (48.14, 11.58)
+    for f in (0.0, 0.25, 1.0):
+        p = geo.interpolate(*a, *b, f)
+        assert abs(geo.haversine_km(*a, *p) - f * geo.haversine_km(*a, *b)) < 0.01

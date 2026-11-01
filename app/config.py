@@ -49,6 +49,8 @@ class Config:
     local_gap_hours: float = 12.0          # near home (local zone) a photo-less gap longer than this ends the outing
     trip_gap_days: float = 4.0             # gap without photos > this AND different area -> split
     trip_split_distance_km: float = 300.0  # "different area" if runs are further apart than this
+    gps_interpolation_hours: float = 6.0   # a photo without GPS between two located ones at most this far apart
+                                           # gets a position interpolated by time (0: nearest photo only)
     max_places_in_name: int = 4
     name_multiday_by_month: bool = True    # several days in one month: "2026-08 Tokyo", not "2026-08-08..29 ..."
     min_city_population: int = 1000        # below this use the state/region name instead of the village

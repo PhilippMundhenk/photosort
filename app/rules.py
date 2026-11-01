@@ -7,7 +7,8 @@ fields when none is set):
                       at home, and an excursion ends at any of them
     excursions:       how runs of photos away from home are cut (gaps, distances, device merge,
                       the hours within which two devices are "in the same area" and a photo
-                      without GPS borrows a neighbour's position)
+                      without GPS borrows a neighbour's position, and the longest gap between
+                      two located photos across which its position is interpolated)
     excursion_rules:  evaluated in order over every excursion run; the first whose `when`
                       matches decides: a trip, a day out (`local`), or `everyday` (no cluster)
     bursts:           how the remaining photos are grouped into bursts (a gap in hours)
@@ -58,7 +59,7 @@ CONDITIONS: dict[str, type] = {
 }
 RULE_KEYS = {"name", "kind", "when", "name_template", "ongoing_days"}
 EXCURSION_KEYS = {"split_gap_days": float, "split_distance_km": float, "local_gap_hours": float, "merge_devices": bool,
-                  "same_area_hours": float, "neighbour_gps_hours": float}
+                  "same_area_hours": float, "neighbour_gps_hours": float, "interpolate_gps_hours": float}
 BURST_KEYS = {"gap_hours": float}
 TEMPLATE_FIELDS = ("span", "places", "place", "media", "n", "home")
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
@@ -106,7 +107,8 @@ def defaults(cfg: Config) -> dict:
         "excursions": {"split_gap_days": float(cfg.trip_gap_days),
                        "split_distance_km": float(cfg.trip_split_distance_km),
                        "local_gap_hours": float(cfg.local_gap_hours), "merge_devices": True,
-                       "same_area_hours": 24.0, "neighbour_gps_hours": 48.0},
+                       "same_area_hours": 24.0, "neighbour_gps_hours": 48.0,
+                       "interpolate_gps_hours": float(cfg.gps_interpolation_hours)},
         "excursion_rules": [
             {"name": "trip", "kind": "trip", "when": {"span_hours_min": float(cfg.trip_min_hours),
                                                       "located_min": int(cfg.trip_min_photos)},

@@ -81,7 +81,12 @@ folder, the partner at home stays out of it. The same rule applies to GPS-less p
 borrow a position from the nearest located photo *of the same device*; a device with no
 located photo of its own within `neighbour_gps_hours` borrows from the others. That covers
 the camera without GPS, and also the camera that geotags only now and then: it used to count
-as a GPS device, found nothing of its own during the trip, and its shots stayed everyday. Home bursts still look at the merged
+as a GPS device, found nothing of its own during the trip, and its shots stayed everyday.
+Between two located photos at most `gps_interpolation_hours` apart (6 h by default) the
+position is not copied but interpolated by time along the great circle (issue #22): on a day
+of travel the camera shots spread along the phone's track instead of piling up at its stops.
+Across a longer gap (a night, a flight) the nearest photo stays the better guess; such
+positions are marked `interpolated:<before>..<after>` and count as borrowed (confidence 0.8). Home bursts still look at the merged
 timeline, since a birthday photographed with two phones is one occasion.
 
 ### Trip runs: mechanics

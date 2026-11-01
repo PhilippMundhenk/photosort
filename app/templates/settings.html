@@ -202,6 +202,11 @@
       <p>Near home you sleep at home, even if no photo proves it. A gap longer than this between two photos in the local zone ends the outing, so Saturday's walk and Sunday's are two day outs.</p></div>
     <div class="ctl"><input type="number" step="1" name="local_gap_hours" id="f-local_gap_hours" value="{{ cfg.local_gap_hours }}"></div>
   </div>
+  <div class="field" data-level="advanced"{{ lv('advanced') }}>
+    <div class="what"><label for="f-gps_interpolation_hours">Interpolate positions of photos without GPS (hours)</label>
+      <p>A camera without GPS next to a phone with it: a shot taken between two phone photos gets the position between them, by time (a third of the time, a third of the way). Only when the two phone photos are at most this many hours apart; across a longer gap (a night, a flight) it takes the position of the nearest photo instead. 0 switches interpolation off.</p></div>
+    <div class="ctl"><input type="number" step="0.5" min="0" name="gps_interpolation_hours" id="f-gps_interpolation_hours" value="{{ cfg.gps_interpolation_hours }}"></div>
+  </div>
   <div class="field" data-level="expert"{{ lv('expert') }}>
     <div class="what"><label for="f-trip_gap_days">Days without photos that may split a trip</label>
       <p>Two journeys with no photo at home in between would be one trip. A gap longer than this splits them, but only if the two sides are also far apart (the distance below): a quiet week at the same beach stays one trip.</p></div>
