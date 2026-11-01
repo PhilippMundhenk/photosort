@@ -48,7 +48,7 @@ def test_run_finishing_keeps_what_the_user_is_doing(server, page):
     props = _proposals(data)
     trip = page.locator(f"#{props['trip']['id']}")
     page.evaluate("window.__stay = 1")
-    trip.locator("details summary").click()
+    trip.scroll_into_view_if_needed()                                  # every card arrives open
     figs = trip.locator("figure")
     for i in range(4):                                                  # four quick clicks, no waiting
         figs.nth(i).locator(".pick").click()
@@ -78,7 +78,7 @@ def test_run_finishing_keeps_what_the_user_is_doing(server, page):
     trip = page.locator(f"#{props['trip']['id']}")
     expect(trip.locator("input[name=name]")).to_have_value("2026-06 Portugal")
     expect(page.locator("#busy")).to_be_hidden()
-    trip.locator("details summary").click()
+    trip.scroll_into_view_if_needed()                                  # every card arrives open
     for i in range(4):                                                  # server-side state, as shown after reload
         expect(trip.locator("figure").nth(i)).to_have_class(re.compile(r"(^|\s)excluded(\s|$)"))
         trip.locator("figure").nth(i).locator(".pick").click()         # and back in
@@ -181,7 +181,7 @@ def test_large_library_stays_responsive(big_server, page):
                                                           .read_text(encoding="utf-8")).items()
                    if p["kind"] == "trip")
     trip = page.locator(f"#{trip_id}")
-    trip.locator("details summary").click()
+    trip.scroll_into_view_if_needed()                                  # every card arrives open
     figs = trip.locator("figure")
     t0 = time.time()
     for i in range(8):

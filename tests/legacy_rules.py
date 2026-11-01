@@ -23,6 +23,10 @@ def proposals(cfg: Config, recs: list[dict], now: datetime, baseline: float) -> 
         if kind is None:
             continue
         pr = trip_proposal(cfg, run_, now) if kind == "trip" else local_proposal(cfg, run_, now)
+        # issue #21: a home photo of one of the run's devices after its end closes it: not ongoing
+        end, sources = run_[-1]["_t"], {r.get("source") for r in run_}
+        if any(r["zone"] == geo.ZONE_HOME and r["_t"] > end and r.get("source") in sources for r in recs):
+            pr["status"] = "pending"
         new[pr["id"]] = pr
         taken.update(p["path"] for p in pr["photos"])
     rest = [r for r in recs if r["path"] not in taken]
