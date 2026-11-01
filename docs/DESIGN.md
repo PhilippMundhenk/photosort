@@ -122,6 +122,12 @@ of that code (`tests/legacy_rules.py`) and the engine over every synthetic libra
 parameter sets and requires identical proposals. Several homes (issue #3) are a list in the
 ruleset: a photo inside any home is at home, ends excursions and is everyday there; the
 zone beyond follows the distance to the nearest home, and the record keeps that home's name.
+Each home has its own usual day: `data/baseline.json` keeps the photos per day per home, and a
+home burst is measured against the home it was taken at (a dozen photos at the grandparents',
+where you take one a visit, is an occasion; at home, where you take ten a day, it is not). With
+more than one home, an occasion's default name says where (`2026-06-30 (25 Fotos) @ Granny`).
+"Detect" keeps the next places with photos on many days (at least 5, 1 km apart) and Settings
+offers them as further homes.
 
 ### Naming
 

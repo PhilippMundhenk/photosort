@@ -628,22 +628,60 @@ BASELINE_PATH = DATA_DIR / "baseline.json"
 
 
 def home_baseline(recs: list[dict], persist: bool = True) -> float:
-    """Median photos per day at home. The per-day counts are remembered in data/baseline.json
-    (highest count seen per day), so the baseline does not drift down once everyday photos have
-    been moved out of the inbox and only the bursts remain."""
-    per_day = {str(d): n for d, n in Counter(r["_t"].date() for r in recs if r["zone"] == geo.ZONE_HOME).items()}
-    seen: dict[str, int] = {}
+    """Median photos per day at home, over all homes (the figure the run reports)."""
+    return _median_all(_baseline_days(recs, persist))
+
+
+def home_baselines(recs: list[dict], persist: bool = True) -> dict[str, float]:
+    """Median photos per day at each home (issue #3): a burst at the parents' house is measured
+    against an ordinary day there, not against the main home. Keyed by the home's name."""
+    return _median_each(_baseline_days(recs, persist))
+
+
+def _median_all(seen: dict[str, dict[str, int]]) -> float:
+    merged: dict[str, int] = {}
+    for per_day in seen.values():
+        for day, n in per_day.items():
+            merged[day] = merged.get(day, 0) + n
+    return statistics.median(merged.values()) if merged else 1.0
+
+
+def _median_each(seen: dict[str, dict[str, int]]) -> dict[str, float]:
+    return {home: statistics.median(per_day.values()) for home, per_day in seen.items() if per_day}
+
+
+def _baseline_days(recs: list[dict], persist: bool) -> dict[str, dict[str, int]]:
+    """Photos per day at home, per home. The counts are remembered in data/baseline.json (the
+    highest seen per day), so the baseline does not drift down once everyday photos have been
+    moved out of the inbox and only the bursts remain. A file from before homes were kept
+    apart (one flat {day: n}) belongs to the first home."""
+    fresh: dict[str, Counter] = {}
+    for r in recs:
+        if r["zone"] == geo.ZONE_HOME:
+            fresh.setdefault(r.get("home") or "home", Counter())[str(r["_t"].date())] += 1
+    seen: dict[str, dict[str, int]] = {}
     if persist and BASELINE_PATH.exists():
         try:
-            seen = {k: int(v) for k, v in json.loads(BASELINE_PATH.read_text(encoding="utf-8")).items()}
-        except (json.JSONDecodeError, OSError, ValueError):
+            raw = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
+            if raw and all(isinstance(v, int) for v in raw.values()):     # the old flat file
+                raw = {next(iter(fresh), "home"): raw}
+            seen = {h: {k: int(v) for k, v in days.items()} for h, days in raw.items()}
+        except (json.JSONDecodeError, OSError, ValueError, AttributeError, TypeError):
             seen = {}
-    for day, n in per_day.items():
-        seen[day] = max(seen.get(day, 0), n)
-    if persist and seen != {}:
+    for home, per_day in fresh.items():
+        mine = seen.setdefault(home, {})
+        for day, n in per_day.items():
+            mine[day] = max(mine.get(day, 0), n)
+    if persist and seen:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         BASELINE_PATH.write_text(json.dumps(seen, sort_keys=True), encoding="utf-8")
-    return statistics.median(seen.values()) if seen else 1.0
+    return seen
+
+
+def burst_home(burst: list[dict]) -> str | None:
+    """The home most of a burst's photos at home were taken at."""
+    homes = Counter(r.get("home") or "home" for r in burst if r["zone"] == geo.ZONE_HOME)
+    return homes.most_common(1)[0][0] if homes else None
 
 
 def local_proposal(cfg: Config, run: list[dict], now: datetime | None = None) -> dict:
@@ -714,7 +752,8 @@ def home_proposal(cfg: Config, burst: list[dict], threshold: float, rule: dict |
 
 
 def automatic_proposals(cfg: Config, recs: list[dict], now: datetime, baseline: float,
-                        rs: dict | None = None) -> tuple[dict[str, dict], float]:
+                        rs: dict | None = None, baselines: dict[str, float] | None = None
+                        ) -> tuple[dict[str, dict], float]:
     """The proposals the rules make from records nobody placed by hand: excursions first (the
     first matching excursion rule decides), then bursts of what is left (the first matching
     burst rule). Returns them and the threshold of the first home-burst rule (shown in stats)."""
@@ -741,12 +780,13 @@ def automatic_proposals(cfg: Config, recs: list[dict], now: datetime, baseline: 
     home_rule = next((r for r in rs["burst_rules"] if r["kind"] == "home"), None)
     threshold = rules.threshold(home_rule, baseline) if home_rule else 0.0
     for burst in group_bursts(cfg, rest, rs["bursts"]["gap_hours"]):
-        f = rules.features(burst, baseline)
+        here = baseline if baselines is None else baselines.get(burst_home(burst), baseline)   # per home
+        f = rules.features(burst, here)
         rule = rules.pick(rs["burst_rules"], f)
         if rule is None:
             continue
         if rule["kind"] == "home":
-            pr = home_proposal(cfg, burst, rules.threshold(rule, baseline), rule, f, rs)
+            pr = home_proposal(cfg, burst, rules.threshold(rule, here), rule, f, rs)
         else:                                               # a custom rule: a burst as a day out or a trip
             pr = excursion_proposal(cfg, rule, burst, now, f, rs, "burst_rules")
         new[pr["id"]] = pr
@@ -922,8 +962,9 @@ def _run_locked(cfg: Config, now: datetime, skipped: list[dict], recs: list[dict
         taken.update(paths)
     auto_recs = [r for r in recs if r["path"] not in taken]
 
-    baseline = home_baseline(recs)
-    made, threshold = automatic_proposals(cfg, auto_recs, now, baseline)
+    seen = _baseline_days(recs, persist=True)
+    baselines, baseline = _median_each(seen), _median_all(seen)   # per home; all homes together (reported)
+    made, threshold = automatic_proposals(cfg, auto_recs, now, baseline, baselines=baselines)
     new.update(made)
     for pr in made.values():
         taken.update(p["path"] for p in pr["photos"])

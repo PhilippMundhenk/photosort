@@ -20,6 +20,8 @@
 </p>
 {% if msg %}<div class="warnbox">{{ msg }}</div>{% endif %}
 <form method="post" action="/settings/detect_home" id="detect"></form>
+{% for c in home_candidates %}<form method="post" action="/settings/add_home" id="addhome-{{ loop.index }}"><input type="hidden" name="lat" value="{{ c.lat }}"><input type="hidden" name="lon" value="{{ c.lon }}"></form>
+{% endfor %}
 <form method="post" action="/start_over" id="start-over" onsubmit="return confirm('Start over? Every proposal that has not been moved is dropped with what you decided about it (approvals, rejections, names, excluded photos, clusters built by hand); every photo in the inbox is read again and clustered with the current settings. Moved clusters stay. Save changed settings first.')"></form>
 <form method="post" action="/settings/sidecars/migrate" id="sc-migrate"></form>
 <form method="post" action="/settings/sidecars/purge" id="sc-purge" onsubmit="return confirm('Delete the records of photos in the sorted tree and records without a photo?')"></form>
@@ -161,7 +163,12 @@
   <div class="field" data-level="advanced"{{ lv('advanced') }}>
     <div class="what"><label for="f-homes">Further homes</label>
       <p>A second flat, the grandparents' house, a cabin: places where photos are everyday photos too, and where a trip ends. One per line, <code>Name = latitude, longitude, radius km</code>.</p></div>
-    <div class="ctl"><textarea name="homes" id="f-homes" rows="3" placeholder="Grandparents = 48.7, 9.2, 0.5&#10;Cabin = 47.3, 11.1, 1">{{ homes_text }}</textarea></div>
+    <div class="ctl"><textarea name="homes" id="f-homes" rows="3" placeholder="Grandparents = 48.7, 9.2, 0.5&#10;Cabin = 47.3, 11.1, 1">{{ homes_text }}</textarea>
+      {% if home_candidates %}<div class="small" style="margin-top:8px"><b>Found by “Detect”:</b> places with photos on many different days.
+      {% for c in home_candidates %}<div class="row" style="margin-top:4px">
+        <input type="text" name="name" form="addhome-{{ loop.index }}" value="{{ c.name }}" aria-label="name of the home at {{ '%.3f'|format(c.lat) }}, {{ '%.3f'|format(c.lon) }}" style="width:160px">
+        <span class="muted">{{ '%.3f'|format(c.lat) }}, {{ '%.3f'|format(c.lon) }} · {{ c.days }} days, {{ c.photos }} photos</span>
+        <button form="addhome-{{ loop.index }}" class="secondary small" type="submit">Add as a home</button></div>{% endfor %}</div>{% endif %}</div>
   </div>
   {% if show < 1 %}<p class="more">More in <a href="/settings?mode=advanced">advanced</a>: how far home and “near home” reach, further homes.</p>{% endif %}
 </div>
