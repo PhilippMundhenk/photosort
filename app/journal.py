@@ -134,6 +134,30 @@ def trace(name: str) -> list[dict]:
     return out
 
 
+def originals_left(cfg: Config) -> list[dict]:
+    """Originals that copy mode left in the inbox (a read-only inbox, or copy mode by choice):
+    copied, still there, and their record still pointing at the copy. A copy that was reverted
+    or put back cleared that mark, so the list never names a photo whose only sorted version is
+    gone: it is meant for deleting the originals by hand later. Oldest copy first."""
+    from . import ingest  # local: ingest imports modules that import this one
+    last: dict[str, dict] = {}
+    for e in read_all():
+        if e.get("op") == "copy" and e.get("src"):
+            last.pop(e["src"], None)
+            last[e["src"]] = e                    # the latest copy of a file, in the order copies happened
+    out = []
+    for src, e in last.items():
+        p = Path(src)
+        if not p.exists():
+            continue                              # deleted by hand already
+        rec = ingest.read_sidecar(p, cfg) or {}
+        copy = rec.get("copied_to")
+        if not copy:
+            continue
+        out.append({"original": src, "copy": copy, "copy_found": Path(copy).exists(), "copied": e["ts"]})
+    return out
+
+
 def revert(cfg: Config, batch_id: str, only: str | None = None) -> dict:
     """Undo a batch: its operations in reverse order, each only if the file still is where the
     batch left it (a moved-on file is reported, never guessed). `only` restricts it to one file.

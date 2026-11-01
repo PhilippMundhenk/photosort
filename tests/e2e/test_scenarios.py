@@ -117,7 +117,7 @@ def test_two_phones_far_apart_are_two_trips_end_to_end(two_phones_server, page):
     expect(page.locator(f"#{trips[0]['id']} input[name=name]")).to_have_value("2026-06 Lisbon")
     expect(page.locator(f"#{trips[1]['id']} input[name=name]")).to_have_value("2026-06 Singapore")
     card = page.locator(f"#{trips[1]['id']}")
-    card.locator("details summary").click()
+    card.scroll_into_view_if_needed()                                       # every card arrives open
     expect(card.locator("figcaption", has_text="phone-b")).to_have_count(21)
     page.goto(url + "/everyday?month=2026-06")
     assert page.locator(".thumbs figure").count() >= 40                        # the daily home photos of June

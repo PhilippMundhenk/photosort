@@ -35,6 +35,9 @@ inbox/camera/**.dng  ─┘                          sorted/_unnamed/2026-06-30 
 - **Two phones, one library.** Each device is followed on its own timeline: the family trip
   with two phones is one folder, the partner's photos at home never cut it short, and two
   phones on different continents are two trips.
+- **An approval covers what you saw.** A cluster you approved but that has not moved yet (dry-run,
+  a failed move) goes back to review when photos join it later, e.g. a camera imported after the
+  phones; it never moves photos nobody looked at.
 - **Videos included.** iPhone and Android MP4/MOV get correct local timestamps (UTC converted
   to your home zone), GPS from the QuickTime metadata and a thumbnail frame.
 - **Readable names.** `2026-06 Lisbon, Sevilla`; your own place names ("Black Forest") beat
@@ -66,7 +69,10 @@ clustering thresholds, *expert* everything; every setting says in a sentence or 
 - Photos are mounted, not copied. Moves are `rename()` on the same mount; keep inbox and
   target on the same share. **Copy instead of move** (Settings → Behaviour) copies into the
   sorted tree and leaves the originals in the inbox; their sidecar records `copied_to`, so they
-  are not proposed again. Undo and "move out" then delete the copy and clear that mark.
+  are not proposed again. Undo and "move out" then delete the copy and clear that mark. It is
+  also the way to work with read-only inboxes (a move there fails): **History** offers the list
+  of originals that were copied and are still there, to delete them yourself later (this needs
+  central sidecars, which are written under `data/`).
 - Config lives in `data/config.yaml`, the event log in `data/events.jsonl`, current proposals in
   `data/proposals.json`. Losing `data/` loses history and pending proposals, never photos.
 - Behind Traefik/Authelia: uncomment the labels in `docker-compose.yml`. There is no
@@ -87,6 +93,67 @@ scan, so a new device folder needs no configuration. Settings shows what was fou
 override box takes explicit `name=/path` lines when the layout is different. Each input is
 scanned recursively. With **Per-source subfolders** on, a trip folder gets one subfolder per
 input (`2026-10 Lisbon/hans/`, `2026-10 Lisbon/phone-b/`); the everyday tree does the same.
+
+### NAS share mounts
+
+The share must be mounted on the host before the container starts. Docker binds what is at
+`PHOTOS_BASE` at that moment. A systemd `.automount` does not work: Docker binds the empty
+placeholder, and the real share mounted later never shows up inside the container. Mount the
+share at boot with a `.mount` unit instead. `nofail` lets the host boot without the NAS,
+`_netdev` waits for the network. An example for a CIFS share at `/mnt/nas/photos`
+(the file name must match the path: `/etc/systemd/system/mnt-nas-photos.mount`):
+
+```ini
+[Unit]
+Description=NAS photos share
+After=network-online.target
+Wants=network-online.target
+
+[Mount]
+What=//nas.local/photos
+Where=/mnt/nas/photos
+Type=cifs
+Options=credentials=/etc/nas-credentials,uid=1000,gid=1000,file_mode=0664,dir_mode=0775,nofail,_netdev
+
+[Install]
+WantedBy=multi-user.target
+```
+
+For NFS use `What=nas.local:/volume1/photos`, `Type=nfs` and `Options=nofail,_netdev`.
+Then `sudo systemctl daemon-reload && sudo systemctl enable --now mnt-nas-photos.mount`.
+
+If you want to keep the automount, use the long volume syntax with `propagation: rslave` in
+`docker-compose.yml`, and touch the path first so the share is mounted when Docker binds it:
+
+```yaml
+    volumes:
+      - type: bind
+        source: ${PHOTOS_BASE:-/mnt/nas/photos}
+        target: /photos
+        bind:
+          propagation: rslave
+```
+
+```bash
+ls /mnt/nas/photos > /dev/null && docker compose up -d
+```
+
+With CIFS, `uid=` and `gid=` must be the same numbers as `PUID` and `PGID` in `.env`. The
+container runs as that user. If the share belongs to someone else, reading still works,
+but every move fails: the directories are `0755`, so "other" may read them but not create
+or rename files in them. NFS shows the owners from the NAS; there `PUID`/`PGID` must be the
+NAS user that owns the photos.
+
+### Commands in the container
+
+The container is called `photosort`. `docker exec photosort …` works from any directory.
+`docker compose exec photosort …` works only in the folder with `docker-compose.yml`.
+
+```bash
+docker exec photosort id                 # which user the container runs as
+docker exec photosort ls -l /photos      # is the share there, and who owns it?
+docker logs -f photosort                 # follow the scan
+```
 
 ### Home occasions
 

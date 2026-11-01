@@ -117,7 +117,7 @@ def test_pages_have_no_form_control_per_photo(client, library):
     pending = [p for p in props.values() if p["status"] in ("pending", "ongoing")]
     n_photos = sum(p["n"] for p in pending)
     html = client.get("/review").text
-    assert 0 < html.count("<figure") < n_photos and n_photos > 50         # open cards only, and at most 80 each
+    assert 0 < html.count("<figure") <= min(n_photos, 80 * len(pending)) and n_photos > 50   # at most 80 each
     assert html.count("<input") <= 3 * len(pending) + 3               # name, remember-place per card; not per photo
     assert html.count("<button") <= 3 * len(pending) + 3               # approve, reject per card; approve all, run
     assert html.count("<form") <= 3 * len(pending) + 3
@@ -422,29 +422,29 @@ def test_an_inbox_share_that_disappears_and_returns(client, library):
     parked.rename(inbox)                                                 # mounted again
     stats = main.run_pipeline("test")
     assert stats["ingest"]["missing"] == [] and stats["ingest"]["new"] == 0   # records were kept: no re-index
-    after = {pid: (p["kind"], p["n"]) for pid, p in cluster.load_proposals().items() if p["status"] != "approved"}
-    assert after == {k: v for k, v in before.items() if k != trip_id}   # same proposals, same ids
+    after = {pid: (p["kind"], p["n"]) for pid, p in cluster.load_proposals().items()}
+    assert after == before                                               # same proposals, same ids
     ghost = cluster.load_proposals()[trip_id]
-    assert ghost["status"] == "approved" and ghost["error"]              # still waiting for a retry, not buried
+    # the approval covered 3 photos; the real trip's others joined it again: back to review, not
+    # buried and not moved unseen (issue #18)
+    assert ghost["status"] == "pending" and ghost["new_photos"] > 0 and not ghost.get("error")
     assert "Inbox folders not found" not in client.get("/").text
 
 
 def test_review_renders_only_visible_photos_and_serves_the_rest_in_chunks(client, library):
-    """A collapsed proposal carries no figures; an open one the first 80; the rest comes from
-    /proposal/<id>/photos in chunks, with the excluded state applied."""
+    """Every card is open and carries its first 80 photos (within the page's budget); the rest
+    comes from /proposal/<id>/photos in chunks, with the excluded state applied."""
     cfg = config.load()
     cluster.run(cfg)
     trip, home = _kind("trip"), _kind("home")
     client.post(f"/proposal/{trip['id']}/toggle", data={"path": trip["photos"][5]["path"]}, headers=FETCH)
     html = client.get("/review").text
     trip_card = html.split(f'id="{trip["id"]}"')[1].split('<div class="card"')[0]
-    assert "<figure" not in trip_card and f'data-photos="/proposal/{trip["id"]}/photos"' in trip_card
-    assert f'data-total="{trip["n"]}" data-loaded="0"' in trip_card and f"show all {trip['n']} photos" in trip_card
+    assert "<details open" in trip_card and f'data-photos="/proposal/{trip["id"]}/photos"' in trip_card
+    assert f'data-total="{trip["n"]}" data-loaded="{min(80, trip["n"])}"' in trip_card
+    assert trip_card.count("<figure") == min(80, trip["n"]) and "data-more" not in trip_card   # 67: all inline
     home_card = html.split(f'id="{home["id"]}"')[1].split('<div class="card"')[0]
     assert home_card.count("<figure") == home["n"] and "data-more" not in home_card      # 25: all inline, no button
-    html = client.get("/review", params={"open": trip["id"]}).text
-    trip_card = html.split(f'id="{trip["id"]}"')[1].split('<div class="card"')[0]
-    assert trip_card.count("<figure") == min(80, trip["n"]) and "data-more" not in trip_card   # 67: all inline
     r = client.get(f"/proposal/{trip['id']}/photos", params={"offset": 0, "limit": 10})
     assert r.status_code == 200 and r.text.count("<figure") == 10
     assert r.headers["X-Total"] == str(trip["n"]) and r.headers["X-Next"] == "10"
@@ -473,4 +473,5 @@ def test_review_page_stays_small_however_many_proposals_are_open(client, library
     assert r.text.count("<figure") == min(80, trip["n"])
     monkeypatch.setattr(main, "REVIEW_INLINE_TOTAL", 400)
     html = client.get("/review", params={"open": trip["id"]}).text
-    assert "data-lazy" not in html and html.count("<figure") == home["n"] + min(80, trip["n"])
+    live = [p for p in cluster.load_proposals().values() if p["status"] in ("pending", "ongoing")]
+    assert "data-lazy" not in html and html.count("<figure") == sum(min(80, p["n"]) for p in live)

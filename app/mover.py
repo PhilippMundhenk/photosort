@@ -82,8 +82,8 @@ def _transfer(cfg: Config, src: Path, dst_dir: Path, copy: bool = False, name: s
         raise OSError(f"{dst} is missing or incomplete after the transfer")
     if not copy and src.exists():
         dst.unlink(missing_ok=True)
-        raise PermissionError(f"{src} is still there after the move (inbox mounted read-only?); "
-                              f"the copy in {dst_dir} was removed again")
+        raise PermissionError(f"{src} is still there after the move (inbox mounted read-only? then switch on "
+                              f"'copy instead of move' in Settings); the copy in {dst_dir} was removed again")
     journal.record("copy" if copy else "move", src, dst)
     ingest.move_sidecar(src, dst, cfg, keep_source=copy)
     xmp = src.with_suffix(".xmp")

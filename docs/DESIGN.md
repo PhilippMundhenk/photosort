@@ -330,6 +330,13 @@ review state (toggled photos, an edited name, an approval) was lost on the next 
 proposal that contains at least half of the photos of an old live proposal now takes over
 its id; the larger half keeps it when a late home photo splits an old one in two.
 
+An approval covers the photos you saw. A proposal approved by hand but not moved yet (dry-run,
+a move that failed on a read-only inbox) that gains photos on a later run (typically a camera
+imported after the phones) goes back to the review queue with a note of how many joined
+(`new_photos`) instead of moving them unseen. One approved by an auto-apply rule just takes
+them. Once moved, a cluster is final: photos that arrive later are proposed on their own or
+stay everyday, and adding them is up to you.
+
 Everything in review is temporary (issue #23). A scheduled run keeps review state, so typing
 a name or an approval is not lost every few minutes; **Start over** (Settings) throws all of it
 away: every proposal that has not been moved is dropped, every inbox photo is read again with
