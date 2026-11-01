@@ -5,7 +5,7 @@ sentence or two next to it on the page; this is the overview. The page has three
 only change what is shown (a hidden setting keeps its value):
 
 * **basic**: what a first setup needs (dry-run, what moves by itself, folders, home);
-* **advanced**: adds the thresholds of the rules, places, thumbnails, notifications;
+* **advanced**: adds the thresholds of the rules, places, thumbnails;
 * **expert**: everything, including the records and your own rules.
 
 A setting that differs from its default says so under its control and can be put back; each
@@ -71,21 +71,17 @@ says which one (`2026-06-30 (25 Fotos) @ Granny`).
 | Photos a burst at home needs | `burst_min_photos` | 12 | advanced |
 | How unusual a burst must be (times your usual day) | `burst_baseline_factor` | 4 | expert |
 
-## Thumbnails, notifications, records
+## Thumbnails and records
 
 | Setting | Key | Default | Mode |
 |---|---|---|---|
 | Where the NAS keeps its thumbnails | `thumb_pattern` | `@eaDir/{name}/SYNOPHOTO_THUMB_M.jpg` | advanced |
 | Make thumbnails when the NAS has none | `generate_thumbnails` | on | advanced |
-| Send a Matrix message for new proposals | `matrix_enabled` | off | advanced |
-| Homeserver, access token, room | `matrix_homeserver`, `matrix_token`, `matrix_room` | empty | advanced |
-| Address of photosort, for the links in messages | `public_url` | empty | advanced |
 | Where records are kept (`central` in `data/index/`, or `beside` each photo) | `sidecar_mode` | central | expert |
 | Name of a record file | `sidecar_name` | `{name}.photosort.json` | expert |
 | After a photo is sorted: drop its record, or keep it | `sidecar_cleanup` | `after_move` | expert |
 
-The access token is never shown on the page nor written to a log. The page's mode itself is
-`settings_mode`.
+The page's mode itself is `settings_mode`.
 
 ## Devices that differ
 

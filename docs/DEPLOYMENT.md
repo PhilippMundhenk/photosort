@@ -109,8 +109,7 @@ An inbox you only want to read from (mounted read-only, or another tool's folder
 
 photosort has no login of its own: put it behind your proxy's authentication if it is reachable
 from outside your network. The compose file has commented Traefik labels (with an Authelia
-middleware) to adapt. Set *Address of photosort* in Settings when Matrix messages should link to
-the proxy's address.
+middleware) to adapt.
 
 ## Commands in the container
 

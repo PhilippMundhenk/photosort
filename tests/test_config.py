@@ -140,3 +140,18 @@ def test_inbox_settings_parse_format_and_round_trip_through_the_form():
     updated = config.update_from_form(config.Config(), {"inbox_settings": "cam: gps_hours=6"})
     assert updated.inbox_settings == {"cam": {"neighbour_gps_hours": 6.0}}
     assert config.inbox_option(config.Config(inbox_settings={"x": "not a mapping"}), "x", "video_clock", "d") == "d"
+
+
+def test_a_config_from_an_older_version_with_removed_settings_still_loads(tmp_path, monkeypatch):
+    """The Matrix notifier was removed (#82): its keys in an existing config.yaml are ignored,
+    and the next save drops them (a stored token does not linger in the file)."""
+    path = tmp_path / "config.yaml"
+    path.write_text("dry_run: false\nmatrix_enabled: true\nmatrix_token: secret\npublic_url: http://x\n",
+                    encoding="utf-8")
+    monkeypatch.setattr(config, "CONFIG_PATH", path)
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    config._cache["key"] = None
+    cfg = config.load()
+    assert cfg.dry_run is False and not hasattr(cfg, "matrix_token")
+    config.save(cfg)
+    assert "matrix" not in path.read_text(encoding="utf-8") and "public_url" not in path.read_text(encoding="utf-8")

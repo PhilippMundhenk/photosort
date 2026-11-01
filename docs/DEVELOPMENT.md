@@ -15,7 +15,6 @@ app/
   journal.py     one line per file operation, grouped by action; revert
   events.py      the event log (Log page)
   thumbs.py      thumbnails: the NAS's own, else generated in a helper process
-  notify.py      the Matrix message per new proposal (off by default)
   main.py        FastAPI app, scheduler, the worker for moves and folder jobs, pages and actions
   templates/     the pages; static/ui.js and style.css (conventions at its top)
 tests/           pytest suites (below); tests/synth.py builds the synthetic library
@@ -44,7 +43,6 @@ The default command fails below **99 % line and branch coverage** of `app/`.
 | why panel | `tests/test_why.py` | what a proposal stores about the rule that made it, every condition in plain words, the panel on the review and cluster pages |
 | journal | `tests/test_journal.py` | every action is one batch of file operations; revert of a batch, of one file, of a revert; skipped files reported; dry-run refused; the History page, the originals left by copy mode |
 | jobs | `tests/test_jobs.py` | undo, rename and put back queued for the worker, busy folders, dry-run switched on while they wait |
-| notifier | `tests/test_notify.py` | the Matrix notifier against a fake homeserver: off by default, one message per new proposal and never twice, a summary for many, failures logged without the token and retried |
 | web | `tests/test_app.py`, `tests/test_live_pages.py`, `tests/test_moving_matrix.py`, `tests/test_templates.py` | every page and form action through FastAPI's TestClient; a run finishing mid-review; every way a file can move against dry-run, live with switches off and each switch; every template branch |
 | soak | `tests/test_soak.py` | thirty run-approve-undo cycles: no memory growth, nothing left in queues or threads |
 | fuzz | `tests/test_fuzz.py` | a thousand random tag sets, timestamps, offsets, user texts and timelines through every parser and the clustering: never a crash |
