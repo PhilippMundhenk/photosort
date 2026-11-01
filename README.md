@@ -176,7 +176,7 @@ docker compose -f docker-compose.test.yml run --rm tests pytest -m e2e -v
 Locally without Docker (needs exiftool and `playwright install chromium`):
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -r requirements-dev.txt -c constraints.txt   # the exact versions CI tests
 pytest                                    # -m "not e2e" to skip the browser tests
 PHOTOSORT_DATA=./data uvicorn app.main:app --reload --port 8080
 ```
