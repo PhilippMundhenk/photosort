@@ -1,3 +1,16 @@
+/* photosort's styles (issue #15), one sheet, no framework. Conventions:
+   - Buttons: one primary <button> per card (the action the card is for); .secondary for the
+     others; .danger for what moves files back or deletes (undo, revert, purge, start over);
+     .small inside rows and tables. A link that acts like a button gets the same classes (.btn).
+   - Inline actions on a photo or in a sentence are <span class="act" role="button" tabindex="0">
+     (Enter and Space work like a click), never a form control per photo.
+   - Confirmations only where files move or records go: never for a choice that can be undone
+     by clicking again, and not in dry-run where nothing moves.
+   - Photo grids: .thumbs with one <figure> per photo, written by main._figure for every page;
+     .pick is the thumbnail (its role says whether a click toggles or selects), .view opens
+     the full-size viewer.
+   - Colours come from the variables in :root (light and dark); cards are .card, warnings
+     .warnbox, empty states a muted card. */
 :root{--bg:#0f1115;--card:#171a21;--line:#262b36;--fg:#e6e8ec;--muted:#8b93a3;--accent:#5aa9ff;--ok:#3ecf8e;--warn:#f5b84c;--bad:#ff6b6b;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 @media(prefers-color-scheme:light){:root{--bg:#f6f7f9;--card:#fff;--line:#e2e5ea;--fg:#1a1d24;--muted:#5d6675}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-size:15px}

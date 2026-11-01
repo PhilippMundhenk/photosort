@@ -43,14 +43,7 @@
 </div>
 <div class="card">
   <div class="thumbs" data-select>
-  {% for p in m.photos %}
-    <figure class="{{ 'uncertain' if p.uncertain }}" data-path="{{ p.dst }}">
-      <span class="pick" role="checkbox" aria-checked="false" tabindex="0" title="{{ p.dst }} · conf {{ p.conf }} · click to select"><img src="/thumb?path={{ p.dst|urlencode }}" loading="lazy" decoding="async" width="110" height="82" alt=""></span>
-      <span class="view" role="button" tabindex="0" data-view="/media?path={{ p.dst|urlencode }}" data-type="{{ p.media or 'photo' }}" data-title="{{ p.dst.rsplit('/',1)[-1].rsplit('\\',1)[-1] }} · conf {{ p.conf }}" title="view full size">&#x2921;</span>
-      <figcaption>{% if p.media == 'video' %}<span class="badge">video</span> {% endif %}{{ p.zone }} {{ p.conf }}{% if p.source %} · {{ p.source }}{% endif %}</figcaption>
-      <span class="act" role="button" tabindex="0" data-act="move_out" data-field="photo" data-value="{{ p.dst }}" data-confirm="Remove this photo from the cluster and move it back to the inbox?" title="moves the photo back to the inbox; it can be put back from the Corrections list below">remove from cluster</span>
-    </figure>
-  {% endfor %}
+  {{ cluster_figures(m.photos) }}
   </div>
 </div>
 </form>

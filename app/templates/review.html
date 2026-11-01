@@ -29,7 +29,7 @@
 {% set ready = pending|selectattr('status', 'equalto', 'pending')|list %}
 <div class="row" style="justify-content:space-between;align-items:baseline">
   <h2 style="margin:22px 0 10px">Proposed clusters ({{ pending|length }})</h2>
-  {% if ready %}<form method="post" action="/proposals/approve_all" class="inline" data-approve-all onsubmit="return confirm('{% if cfg.dry_run %}Approve{% else %}Approve and move{% endif %} all {{ ready|length }} proposals?')">
+  {% if ready %}<form method="post" action="/proposals/approve_all" class="inline" data-approve-all{% if not cfg.dry_run %} onsubmit="return confirm('Approve and move all {{ ready|length }} proposals?')"{% endif %}>
     <button>{% if cfg.dry_run %}Approve all{% else %}Approve &amp; move all{% endif %} ({{ ready|length }})</button></form>{% endif %}
 </div>
 {% set budget = namespace(left=inline_total) %}
