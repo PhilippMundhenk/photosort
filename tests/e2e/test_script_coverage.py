@@ -382,6 +382,21 @@ async def _session(url: str, data: Path, cfg) -> list[dict]:
         await expect(page.locator(".card.job")).to_have_count(0)
         await expect(page.get_by_role("link", name="2026-06 Portugal & Spain")).to_have_count(0)
 
+        # settings: what own rules would change, before saving (click, Enter, a failed request)
+        await go(url + "/settings?mode=expert")
+        await page.locator("#f-rules").fill("excursion_rules: []")
+        await page.locator("[data-rules-preview]").click()
+        await expect(page.locator("#rules-preview")).to_contain_text(re.compile(r"would change|With these rules"))
+        await page.locator("#rules-preview").evaluate("el => el.textContent = ''")
+        await page.locator("[data-rules-preview]").press("Enter")
+        await expect(page.locator("#rules-preview")).to_contain_text(re.compile(r"would change|With these rules"))
+        preview = re.compile(r"/settings/rules/preview$")
+        await page.route(preview, lambda route: route.fulfill(status=500, body="no"))
+        await page.locator("[data-rules-preview]").click()
+        await expect(page.locator("#rules-preview")).to_contain_text("could not compute")
+        await page.unroute(preview)
+        await page.locator("#f-rules").fill("")
+
         # settings: the dry-run question, dismissed and accepted
         await go(url + "/settings")
         keep = page.locator("input[name=everyday_keep_days]")                 # a changed value offers the default

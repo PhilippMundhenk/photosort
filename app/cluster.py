@@ -489,7 +489,8 @@ def excursion_proposal(cfg: Config, rule: dict, run: list[dict], now: datetime |
     f = f or rules.features(run)
     rs = rs or rules.effective(cfg)
     a, b = f["start"], f["end"]
-    photos = [_photo_entry(r, _gps_conf(r)) for r in run]
+    below = float(rs.get("review", {}).get("uncertain_below", UNCERTAIN_BELOW))
+    photos = [_photo_entry(r, _gps_conf(r), below) for r in run]
     hours = f["span_hours"]
     note = (f"{hours:.0f} h away from home, ended by a home photo" if rule["kind"] == "trip"
             else f"{hours:.1f} h away from home, {len(run)} photos")
@@ -547,12 +548,17 @@ def span_label(a: datetime, b: datetime, month_only: bool = True) -> str:
 
 def places_label(cfg: Config, recs: list[dict]) -> str:
     """Places in order of first appearance, minus ones that only a couple of photos mention
-    (a photo at a motorway stop must not name the trip)."""
+    (a photo at a motorway stop must not name the trip): a place needs place_min_photos files
+    (in a cluster of fewer than 20, any) and place_min_share of them (rules, `naming`)."""
+    naming = rules.effective(cfg).get("naming", {})
+    min_share, min_photos = float(naming.get("place_min_share", 0.03)), int(naming.get("place_min_photos", 2))
+
     def ordered(key):
         counts = Counter((r.get("place") or {}).get(key) for r in recs if r["zone"] != geo.ZONE_HOME)
         counts.pop(None, None)
         counts.pop("", None)
-        keep = {v for v, n in counts.items() if (n >= 2 or len(recs) < 20) and n >= 0.03 * len(recs)} or set(counts)
+        keep = {v for v, n in counts.items()
+                if (n >= min_photos or len(recs) < 20) and n >= min_share * len(recs)} or set(counts)
         seen, out = set(), []
         for r in recs:
             v = (r.get("place") or {}).get(key)
@@ -591,13 +597,13 @@ def _gps_conf(r: dict) -> float:
     return 1.0 if src == "exif" else 0.8 if src.startswith(("neighbour", "interpolated")) else 0.6
 
 
-def _photo_entry(r: dict, conf: float) -> dict:
+def _photo_entry(r: dict, conf: float, below: float = UNCERTAIN_BELOW) -> dict:
     return {"path": r["path"], "file": r["file"], "ts": r["ts"], "zone": r["zone"],
             "lat": r.get("lat"), "lon": r.get("lon"),
             "media": r.get("media") or ("video" if ingest.is_video(Path(r["path"])) else "photo"),
             "source": r.get("source"), "inbox": r.get("inbox"),
             "place": (r.get("place") or {}).get("place"), "gps_source": r.get("gps_source"),
-            "conf": round(conf, 2), "uncertain": conf < UNCERTAIN_BELOW}
+            "conf": round(conf, 2), "uncertain": conf < below}
 
 
 def _pid(kind: str, recs: list[dict]) -> str:
@@ -650,7 +656,7 @@ def _median_each(seen: dict[str, dict[str, int]]) -> dict[str, float]:
     return {home: statistics.median(per_day.values()) for home, per_day in seen.items() if per_day}
 
 
-def _baseline_days(recs: list[dict], persist: bool) -> dict[str, dict[str, int]]:
+def _baseline_days(recs: list[dict], persist: bool, write: bool = True) -> dict[str, dict[str, int]]:
     """Photos per day at home, per home. The counts are remembered in data/baseline.json (the
     highest seen per day), so the baseline does not drift down once everyday photos have been
     moved out of the inbox and only the bursts remain. A file from before homes were kept
@@ -672,7 +678,7 @@ def _baseline_days(recs: list[dict], persist: bool) -> dict[str, dict[str, int]]
         mine = seen.setdefault(home, {})
         for day, n in per_day.items():
             mine[day] = max(mine.get(day, 0), n)
-    if persist and seen:
+    if persist and write and seen:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         BASELINE_PATH.write_text(json.dumps(seen, sort_keys=True), encoding="utf-8")
     return seen
@@ -725,7 +731,7 @@ def home_state(cfg: Config, burst: list[dict], threshold: float) -> dict:
         "weekday": a.strftime("%A"),
         "start_hour": a.hour, "end_hour": b.hour,
         "devices": count_devices(burst),
-        "burst_ratio": round(len(burst) / threshold, 2),
+        "burst_ratio": round(len(burst) / threshold, 2) if threshold else None,   # a rule with no minimum
         "date": a.strftime("%Y-%m-%d"),
     }
 
@@ -741,7 +747,8 @@ def home_proposal(cfg: Config, burst: list[dict], threshold: float, rule: dict |
     a, b = f["start"], f["end"]
     photos = [_photo_entry(r, 1.0) for r in burst]
     st = home_state(cfg, burst, threshold)
-    note = (f"{st['photos']} files in {st['duration_h']} h at home, {st['burst_ratio']}x your usual day, "
+    ratio = f"{st['burst_ratio']}x your usual day, " if st["burst_ratio"] is not None else ""
+    note = (f"{st['photos']} files in {st['duration_h']} h at home, {ratio}"
             f"{st['devices']} device{'s' if st['devices'] != 1 else ''}")
     return {"id": _pid("home", burst), "kind": "home",
             "name": rules.render_name(cfg, rule, burst, f),
@@ -792,6 +799,38 @@ def automatic_proposals(cfg: Config, recs: list[dict], now: datetime, baseline: 
         new[pr["id"]] = pr
         taken.update(p["path"] for p in pr["photos"])
     return new, threshold
+
+
+def preview_rules(cfg: Config, custom: dict, limit: int = 30) -> dict:
+    """What a ruleset would change (issue #2), before it is saved: the proposals the rules in
+    force make from the inbox now and those `custom` would make, from the same records (photos
+    placed by hand and rejected ones left out, as in a run). Nothing is written. Proposals are
+    matched by id (first and last photo): a run that grew or shrank shows as gone + new."""
+    from dataclasses import replace
+    now = datetime.now(timezone.utc)
+    old = load_proposals()
+    out_of_play = {p["path"] for pr in old.values() if pr["status"] == "rejected" for p in pr["photos"]}
+    for pr in old.values():
+        if pr.get("manual") and pr["status"] in ("pending", "ongoing", "approved"):
+            out_of_play.update(pr.get("paths", []))
+    recs = [r for r in records_filled(cfg) if r["path"] not in out_of_play]
+    seen = _baseline_days(recs, persist=True, write=False)
+    baseline, baselines = _median_all(seen), _median_each(seen)
+    new_cfg = replace(cfg, rules=custom)
+    before, _ = automatic_proposals(cfg, recs, now, baseline, rules.effective(cfg), baselines)
+    after, _ = automatic_proposals(new_cfg, recs, now, baseline, rules.effective(new_cfg), baselines)
+
+    def brief(pr: dict) -> dict:
+        return {"kind": pr["kind"], "name": pr["name"], "n": pr["n"], "start": pr["start"][:10]}
+    added = [brief(after[k]) for k in after if k not in before]
+    gone = [brief(before[k]) for k in before if k not in after]
+    changed = [{"before": brief(before[k]), "after": brief(after[k])} for k in after
+               if k in before and brief(before[k]) != brief(after[k])]
+    same = sum(1 for k in after if k in before and brief(before[k]) == brief(after[k]))
+    return {"added": sorted(added, key=lambda b: b["start"])[:limit],
+            "gone": sorted(gone, key=lambda b: b["start"])[:limit],
+            "changed": sorted(changed, key=lambda c: c["after"]["start"])[:limit], "same": same,
+            "counts": {"added": len(added), "gone": len(gone), "changed": len(changed)}}
 
 
 # --- manual clusters (Everyday page) ---------------------------------------------
