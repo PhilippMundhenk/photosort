@@ -454,8 +454,10 @@ def _rule_of_kind(cfg: Config, block: str, kind: str, run: list[dict]) -> dict:
 
 
 def excursion_proposal(cfg: Config, rule: dict, run: list[dict], now: datetime | None,
-                       f: dict | None = None) -> dict:
-    """A trip or day-out proposal for a run under the rule that matched it."""
+                       f: dict | None = None, closed: bool = False) -> dict:
+    """A trip or day-out proposal for a run under the rule that matched it. `closed`: a photo at
+    home after the run's end, from one of its devices, ended it (it is not ongoing, however
+    recent its last photo is)."""
     f = f or rules.features(run)
     a, b = f["start"], f["end"]
     photos = [_photo_entry(r, _gps_conf(r)) for r in run]
@@ -467,7 +469,7 @@ def excursion_proposal(cfg: Config, rule: dict, run: list[dict], now: datetime |
         "name": rules.render_name(cfg, rule, run, f),
         "start": a.isoformat(), "end": b.isoformat(), "photos": photos,
         "n": len(photos), "n_uncertain": sum(p["uncertain"] for p in photos),
-        "status": "ongoing" if rules.ongoing(rule, f, now) else "pending",
+        "status": "ongoing" if not closed and rules.ongoing(rule, f, now) else "pending",
         "decision": {"by": "rule", "conf": 1.0, "note": note, "rule": rule.get("name")},
     }
 
@@ -661,12 +663,20 @@ def automatic_proposals(cfg: Config, recs: list[dict], now: datetime, baseline: 
     rs = rs or rules.effective(cfg)
     new: dict[str, dict] = {}
     taken: set[str] = set()
+    last_home: dict[str | None, datetime] = {}           # per device: its latest photo at home
+    for r in recs:
+        if r["zone"] == geo.ZONE_HOME:
+            last_home[r.get("source")] = max(last_home.get(r.get("source"), r["_t"]), r["_t"])
     for run_ in find_excursions(cfg, recs, rs):
         f = rules.features(run_)
         rule = rules.pick(rs["excursion_rules"], f)
         if rule is None:
             continue
-        pr = excursion_proposal(cfg, rule, run_, now, f)
+        # "ongoing" waits for the home photo that ends the run; once a device of the run has one
+        # after it, the run is over (it used to stay ongoing for ongoing_days whatever came after)
+        closed = any(last_home.get(s) is not None and last_home[s] > f["end"]
+                     for s in {r.get("source") for r in run_})
+        pr = excursion_proposal(cfg, rule, run_, now, f, closed)
         new[pr["id"]] = pr
         taken.update(p["path"] for p in pr["photos"])
     rest = [r for r in recs if r["path"] not in taken]
@@ -864,8 +874,23 @@ def _run_locked(cfg: Config, now: datetime, skipped: list[dict], recs: list[dict
             pr["auto"] = bool(prev.get("auto"))                 # (a run between approve and move lost both)
             if prev.get("error"):
                 pr["error"] = prev["error"]
+            if prev["status"] == "approved" and not prev.get("auto"):
+                # approved but not moved yet (dry-run, a failed move) and photos joined since, e.g.
+                # a camera imported after the phones: you approved what you saw, so it is reviewed
+                # again instead of moving photos nobody looked at (moves never run during a scan).
+                # What you saw is remembered (`seen`): a share that was offline for a run and comes
+                # back brings no "new" photos
+                seen = set(prev.get("seen") or (p["path"] for p in prev["photos"]))
+                arrived = sum(p["path"] not in seen for p in pr["photos"])
+                if arrived:
+                    pr["status"], pr["new_photos"] = "pending", arrived
+                    pr.pop("error", None)
+                else:
+                    pr["seen"] = sorted(seen)
         elif prev and prev.get("name_edited"):
             pr["name"], pr["name_edited"] = prev["name"], True
+        if prev and prev.get("new_photos") and pr["status"] == "pending" and "new_photos" not in pr:
+            pr["new_photos"] = prev["new_photos"]      # the note stays until the card is decided again
         have = {p["path"] for p in pr["photos"]}
         pr["excluded"] = sorted(p for p in (prev or {}).get("excluded", []) if p in have)
     # keep applied/rejected proposals whose photos are gone from the inbox (history)
