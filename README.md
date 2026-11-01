@@ -234,7 +234,7 @@ docker compose -f docker-compose.test.yml run --rm tests pytest -m e2e -v
 | Suite | Where | What |
 |---|---|---|
 | unit | `tests/test_{geo,config,ingest,events,cluster,devices,mover,video,thumbs,manual,sidecars,perf_paths,edges}.py` | rules, two devices, coercion, records, moving/copying, videos, thumbnails (helper process), manual clusters, caches and hot paths, every error path |
-| web e2e | `tests/test_app.py`, `tests/test_live_pages.py`, `tests/test_moving_matrix.py`, `tests/test_templates.py` | every page and form action through FastAPI's TestClient; batched clicks, a run finishing mid-review; every way a file can move against dry-run, live-with-switches-off and each switch |
+| web e2e | `tests/test_app.py`, `tests/test_live_pages.py`, `tests/test_moving_matrix.py`, `tests/test_templates.py`, `tests/test_jobs.py` | every page and form action through FastAPI's TestClient; batched clicks, a run finishing mid-review; every way a file can move against dry-run, live-with-switches-off and each switch; undo, rename and put back queued for the worker, busy folders, dry-run switched on while they wait |
 | soak | `tests/test_soak.py` | thirty run-approve-undo cycles: no memory growth, nothing left in queues or threads |
 | fuzz | `tests/test_fuzz.py` | a thousand random tag sets, timestamps, offsets, user texts and timelines through every parser and the clustering: never a crash, always well-formed output (it found five defects on its first run) |
 | latency | `tests/test_perf_features.py` | every feature timed on a 20 500-photo library (pages, polls, clicks, approvals, moves of thousands of files, undo, settings); its own CI step without the coverage tracer; `PERF_BASELINE=1` prints without failing |
@@ -262,10 +262,11 @@ CI (`.github/workflows/ci.yml`) runs the test image on every push and PR, then b
 
 Done: inputs discovered per device folder; trips, day outs, home bursts, everyday tree; review
 UI with undo, corrections, Everyday page and manual clusters; videos, thumbnails, named places;
-dry-run that blocks every file operation; background moves with progress. A decision model
+dry-run that blocks every file operation; background moves, undo, renames and put-backs with
+progress. A decision model
 (Laya, System One API) was tried on the home-burst question and dropped (DESIGN.md §10).
 
 Open work is tracked as [issues](https://github.com/PhilippMundhenk/photosort/issues), among
-them a generic rule engine (#2), multi-home (#3), background undo (#4), naming of transit
+them a generic rule engine (#2), multi-home (#3), naming of transit
 stops and city districts (#5), a per-proposal "why" panel (#6), large-library performance (#7),
 a Matrix notifier (#8), content-based signals for home bursts (#9) and multi-user support (#1).

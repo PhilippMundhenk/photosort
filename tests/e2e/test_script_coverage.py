@@ -145,6 +145,13 @@ async def _session(url: str, data: Path, cfg) -> list[dict]:
                     target = url + target
             await go(target)
 
+        async def settle() -> None:
+            """A job card on the page (undo, rename, put back): wait for the worker, then follow the
+            reload the page starts by itself when the job is done."""
+            await _await(page, lambda: not _status(url)["applying"] and not _status(url)["queue"], 120)
+            if await page.locator(".card.job [data-reload-done]").count():
+                await follow()
+
         async def status_fails(route):
             await route.abort()
 
@@ -348,6 +355,7 @@ async def _session(url: str, data: Path, cfg) -> list[dict]:
         await expect(page.get_by_text("Removed from this cluster")).to_be_visible()
         await page.get_by_role("button", name="put back").first.click()
         await follow()
+        await settle()                                                        # put back by the worker
         await expect(page.get_by_text("Removed from this cluster")).to_have_count(0)
         page.once("dialog", dismiss)
         await page.get_by_role("button", name="remove from cluster").first.click()
@@ -358,7 +366,21 @@ async def _session(url: str, data: Path, cfg) -> list[dict]:
         await expect(page.get_by_text("Removed from this cluster")).to_be_visible()
         await page.get_by_role("button", name="put back").first.click()
         await follow()
+        await settle()                                                        # put back by the worker
         await expect(page.get_by_text("Removed from this cluster")).to_have_count(0)
+
+        # undo of the big trip: queued for the worker, its card and the banner while it runs, then the
+        # page reloads by itself
+        await go(url + "/clusters")
+        row = page.locator("tr", has=page.get_by_role("link", name="2026-06 Portugal & Spain"))
+        page.once("dialog", accept)
+        await row.get_by_role("button", name="undo").click()
+        await follow()
+        await expect(page.locator(".card.job [data-progress]")).to_contain_text(re.compile(r"\d+ / \d+"))
+        await expect(page.locator("#busy-text")).to_contain_text("Undoing 2026-06 Portugal & Spain")
+        await settle()
+        await expect(page.locator(".card.job")).to_have_count(0)
+        await expect(page.get_by_role("link", name="2026-06 Portugal & Spain")).to_have_count(0)
 
         # settings: the dry-run question, dismissed and accepted
         await go(url + "/settings")

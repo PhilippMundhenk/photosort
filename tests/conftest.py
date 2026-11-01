@@ -38,6 +38,7 @@ def data_dir() -> Path:
         from app import main
         with main._lock:                   # nor a pipeline run a previous test's scheduler kicked off:
             pass                           # it would write its proposals into the wiped dir
+        main._jobs_failed.clear()          # a failed undo/rename/put back of the last test is no news here
     d = config.DATA_DIR
     for attempt in range(3):               # a thumbnail written by a worker finishing this instant
         try:

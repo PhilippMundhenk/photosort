@@ -67,7 +67,7 @@ def test_pages_render_empty(client):
 def test_api_status(client):
     s = client.get("/api/status").json()
     assert s == {"state": main._state, "pending": 0, "dry_run": False, "approved": 0, "applying": {},
-                 "queue": {}, "everyday_queued": False}
+                 "queue": {}, "jobs": 0, "everyday_queued": False}
 
 
 def test_new_device_folder_is_picked_up_without_configuration(client, tmp_path):
@@ -428,7 +428,9 @@ def test_name_unnamed_burst_then_view_move_out_undo(client, library):
         "/clusters/view", params={"folder": str(dst)}).text
 
     r = client.post("/cluster/undo", data={"folder": str(dst)})
-    assert r.status_code == 303 and r.headers["location"] == "/clusters" and not dst.exists()
+    assert r.status_code == 303 and r.headers["location"] == "/clusters"
+    main.wait_for_apply()                                                   # the worker moves them back
+    assert not dst.exists()
     assert len(list(Path(cfg.inboxes[0]["path"]).glob("*.jpg")) + list(Path(cfg.inboxes[1]["path"]).glob("*.jpg"))) \
         == library.n
 
@@ -509,7 +511,9 @@ def test_removed_photo_is_everyday_and_can_be_put_back(client, library, monkeypa
     assert "Removed from this cluster" in page and "put back" in page and "remove from cluster" in page
     assert "not this trip" not in page
     r = client.post("/cluster/put_back", data={"folder": str(folder), "src": src})
-    assert r.status_code == 303 and Path(photo).exists() and not Path(src).exists()
+    assert r.status_code == 303
+    main.wait_for_apply()                                                   # the worker puts it back
+    assert Path(photo).exists() and not Path(src).exists()
     assert src not in _proposals("local")["excluded"]
     assert len(cluster.everyday_records(cfg)) == n_everyday
     assert "Removed from this cluster" not in client.get("/clusters/view", params={"folder": str(folder)}).text
@@ -524,10 +528,17 @@ def test_removed_photo_is_everyday_and_can_be_put_back(client, library, monkeypa
     cluster.run(cfg)
     assert src in _proposals("local")["excluded"] and len(cluster.everyday_records(cfg)) == n_everyday + 1
 
-    # a removed photo that has vanished cannot be put back: a page says so, not a 500
+    # a removed photo that has vanished cannot be put back: the cluster page says so, not a 500
     Path(src).unlink()
     r = client.post("/cluster/put_back", data={"folder": str(folder), "src": src})
-    assert r.status_code == 404 and "Not put back" in r.text
+    assert r.status_code == 303
+    main.wait_for_apply()
+    key = f"put_back:{folder}:{src}"
+    assert client.get("/api/status").json()["queue"][key].startswith("failed: FileNotFoundError")
+    page = client.get("/clusters/view", params={"folder": str(folder)}).text
+    assert "failed" in page and "not found where it was left" in page
+    assert "not found where it was left" in client.get("/clusters").text
+    assert events.read(limit=1, kind="review")[0]["action"] == "put_back_failed"
 
 
 def test_undo_marks_applied_proposal_rejected(client, library):
@@ -539,6 +550,7 @@ def test_undo_marks_applied_proposal_rejected(client, library):
     folder = mover.target_folder(cfg, trip)
     assert _proposals("trip")["status"] == "applied"
     client.post("/cluster/undo", data={"folder": str(folder)})
+    main.wait_for_apply()
     assert _proposals("trip")["status"] == "rejected"
     assert "No clusters applied yet" in client.get("/clusters").text
 
