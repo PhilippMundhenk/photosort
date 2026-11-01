@@ -384,6 +384,12 @@ async def _session(url: str, data: Path, cfg) -> list[dict]:
 
         # settings: the dry-run question, dismissed and accepted
         await go(url + "/settings")
+        keep = page.locator("input[name=everyday_keep_days]")                 # a changed value offers the default
+        await keep.fill("9")
+        await page.locator(".ctl", has=keep).get_by_role("button", name="use default").click()
+        await keep.fill("9")
+        await page.locator(".ctl", has=keep).get_by_role("button", name="use default").press("Enter")
+        await expect(page.locator(".ctl", has=keep).locator(".default-hint")).to_have_count(0)
         await page.locator("#dry").check()
         await page.get_by_role("button", name="Save settings").click()
         await follow()

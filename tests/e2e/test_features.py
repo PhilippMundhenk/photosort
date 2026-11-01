@@ -238,6 +238,29 @@ def test_settings_modes_keep_hidden_values(server, page):
     page.wait_for_url(re.compile(r"/settings"))
 
 
+def test_settings_mark_changed_values_and_put_back_the_default(server, page):
+    """A field that differs from its default says so and offers the default; the card heading
+    counts them (issue #12). Nothing is saved until Save."""
+    url, data = server["url"], server["data"]
+    expect = pw.expect
+    page.goto(url + "/settings")
+    field = page.locator("input[name=everyday_keep_days]")
+    ctl = page.locator(".ctl", has=field)
+    before = yaml.safe_load((data / "config.yaml").read_text(encoding="utf-8"))["everyday_keep_days"]
+    field.fill("9")
+    hint = ctl.locator(".default-hint")
+    expect(hint).to_contain_text("default: 4 · use default")
+    expect(page.locator(".card", has=field).locator("h2 .changed-count")).to_contain_text("changed")
+    hint.get_by_role("button", name="use default").click()
+    expect(field).to_have_value("4")
+    expect(hint).to_have_count(0)
+    field.fill("9")
+    ctl.get_by_role("button", name="use default").press("Enter")              # by keyboard too
+    expect(field).to_have_value("4")
+    expect(page.locator(".ctl", has=page.locator("#dry")).locator(".default-hint")).to_contain_text("default: on")
+    assert yaml.safe_load((data / "config.yaml").read_text(encoding="utf-8"))["everyday_keep_days"] == before
+
+
 def test_settings_dry_run_dialog_and_detect_home(server, page):
     url, data = server["url"], server["data"]
     expect = pw.expect

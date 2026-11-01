@@ -25,6 +25,7 @@
 <form method="post" action="/start_over" id="start-over" onsubmit="return confirm('Start over? Every proposal that has not been moved is dropped with what you decided about it (approvals, rejections, names, excluded photos, clusters built by hand); every photo in the inbox is read again and clustered with the current settings. Moved clusters stay. Save changed settings first.')"></form>
 <form method="post" action="/settings/sidecars/migrate" id="sc-migrate"></form>
 <form method="post" action="/settings/sidecars/purge" id="sc-purge" onsubmit="return confirm('Delete the records of photos in the sorted tree and records without a photo?')"></form>
+<script type="application/json" id="config-defaults">{{ defaults|tojson }}</script>
 <form method="post" action="/settings" class="settings">
 <input type="hidden" name="settings_mode" value="{{ cfg.settings_mode }}">
 
