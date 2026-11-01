@@ -41,7 +41,7 @@ def server(tmp_path_factory):
     for i in range(1500):                                                 # everyday, four a day, no bursts
         lib.photo(inbox, synth.T0 - timedelta(days=400) + timedelta(hours=6 * i), synth.HOME)
     lib.video(inbox, synth.T0 + timedelta(days=5, hours=12), synth.LISBON)   # a video inside the trip
-    with serve(base, lib, {"PHOTOSORT_REVIEW_INLINE": "20"}) as s:     # a small budget of inline photos:
+    with serve(base, lib, {"PHOTOSORT_REVIEW_INLINE": "20", "PHOTOSORT_EVERYDAY_INLINE": "8"}) as s:   # small budgets:
         yield s                                                         # the second open card loads lazily
 
 
@@ -306,6 +306,18 @@ async def _session(url: str, data: Path, cfg) -> list[dict]:
         await page.get_by_role("button", name=re.compile(r"Approve & move all")).click()
         await follow()
         await _await(page, lambda: all(p["status"] == "applied" for p in _proposals(data).values()), 120)
+
+        # everyday: days beyond the page's budget load when they scroll near; a failed one offers a retry
+        await go(url + "/everyday")
+        days = re.compile(r"/everyday/day\?")
+        await page.route(days, lambda route: route.fulfill(status=500, body="no"))
+        await page.locator("[data-day]").last.scroll_into_view_if_needed()
+        retry = page.locator("[data-retry-day]").last
+        await expect(retry).to_be_visible()
+        await page.unroute(days)
+        await retry.click()
+        await expect(page.locator("[data-day]").last.locator("figure").first).to_be_visible()
+        await page.evaluate("window.scrollTo(0, 0)")
 
         # everyday: the target list and its filter box, pick, select all by click and key, assign; the
         # move button and its card
