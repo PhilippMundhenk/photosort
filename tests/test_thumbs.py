@@ -31,7 +31,7 @@ def test_kind_and_cache_path(tmp_path):
     assert thumbs.kind(Path("a.JPG")) == "image" and thumbs.kind(Path("a.dng")) == "raw"
     assert thumbs.kind(Path("a.MOV")) == "video" and thumbs.kind(Path("a.heic")) == "image"
     c = thumbs.cache_path(tmp_path / "a.jpg")
-    assert c.parent.parent == thumbs.CACHE_DIR and c.name.endswith("_t.jpg")
+    assert c.parent.parent == thumbs.CACHE_DIR and c.name.endswith("_t2.jpg")
     assert thumbs.cache_path(tmp_path / "a.jpg", "p") != c
     assert thumbs.browser_native(Path("x.jpg")) and thumbs.browser_native(Path("x.mp4"))
     assert not thumbs.browser_native(Path("x.heic")) and not thumbs.browser_native(Path("x.dng"))
@@ -46,7 +46,7 @@ def test_generate_jpeg_respects_orientation_and_size(cfg, tmp_path):
     t = thumbs.get(cfg, src)
     assert t == thumbs.cache_path(src) and t.exists()
     size, fmt, _ = _img(t)
-    assert size[1] == 330 and 246 <= size[0] <= 249 and fmt == "JPEG"   # portrait after transpose, fits 440x330
+    assert size[1] == 180 and 134 <= size[0] <= 136 and fmt == "JPEG"   # portrait after transpose, fits 240x180
     mtime = t.stat().st_mtime
     time.sleep(0.01)
     assert thumbs.get(cfg, src) == t and t.stat().st_mtime == mtime       # cached, not regenerated
@@ -56,7 +56,7 @@ def test_generate_png_and_preview_variant(cfg, tmp_path):
     src = tmp_path / "shot.png"
     Image.new("RGBA", (3000, 1000), (0, 255, 0, 128)).save(src, "PNG")
     t = thumbs.get(cfg, src)
-    assert _img(t)[0][0] == 440 and 145 <= _img(t)[0][1] <= 147
+    assert _img(t)[0][0] == 240 and 79 <= _img(t)[0][1] <= 81
     p = thumbs.get(cfg, src, variant="p")
     assert _img(p)[0][0] == 2000 and 665 <= _img(p)[0][1] <= 667 and p != t
 
@@ -148,7 +148,7 @@ def test_video_frame_with_ffmpeg(cfg, tmp_path):
     t = thumbs.get(cfg, src)
     assert t and t.exists()
     size, _, px = _img(t)
-    assert size == (440, 248)
+    assert size[0] == 240 and size[1] in (135, 136)                      # ffmpeg rounds to even heights
     assert px[0] > 200                                            # orange-ish frame, not black
 
 
@@ -165,7 +165,19 @@ def test_raw_preview_via_exiftool(cfg, tmp_path):
     src = jpg.rename(tmp_path / "shot.dng")                  # exiftool checks extension vs content on write
     assert thumbs._raw_preview(src).size == (800, 600)
     t = thumbs.get(cfg, src)
-    assert t and _img(t)[0] == (440, 330)
+    assert t and _img(t)[0] == (240, 180)
     bare = tmp_path / "bare.dng"
     Image.new("RGB", (40, 30)).save(bare, "TIFF")
     assert thumbs._raw_preview(bare) is None and thumbs.get(cfg, bare) is None
+
+
+def test_a_thumbnail_of_the_old_size_is_replaced(cfg, tmp_path):
+    """Issue #69: thumbnails are 240x180 now (a third of the browser memory of 440x330); the
+    old file of the same photo is not served and goes once the new one exists."""
+    src = tmp_path / "IMG_0002.jpg"
+    Image.new("RGB", (800, 600), "blue").save(src, "JPEG")
+    old = thumbs._older_thumb(thumbs.cache_path(src))
+    old.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (440, 330), "red").save(old, "JPEG")
+    t = thumbs.get(cfg, src)
+    assert t == thumbs.cache_path(src) and _img(t)[0] == (240, 180) and not old.exists()

@@ -78,3 +78,6 @@ td,code,.card{overflow-wrap:anywhere}code{white-space:normal}table{table-layout:
 /* the why panel of a proposal (issue #6) */
 .why{margin-top:6px}.why ul{margin:4px 0;padding-left:20px}.why .ok{color:var(--ok)}.why .missed{color:var(--bad);font-weight:700}
 .default-hint{margin-top:4px}.changed-count{font-weight:400}
+/* long photo lists (issue #69): a figure off screen is neither laid out nor painted, so its
+   decoded thumbnail need not stay in memory; the intrinsic size keeps the scroll height */
+.thumbs figure{content-visibility:auto;contain-intrinsic-size:auto 110px auto 104px}
