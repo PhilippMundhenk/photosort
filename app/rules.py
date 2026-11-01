@@ -13,6 +13,9 @@ fields when none is set):
                       matches decides: a trip, a day out (`local`), or `everyday` (no cluster)
     bursts:           how the remaining photos are grouped into bursts (a gap in hours)
     burst_rules:      the same over every burst: a home occasion, or everyday
+    naming:           which places name a cluster (place_min_share of its files, at least
+                      place_min_photos of them)
+    review:           uncertain_below: the confidence under which a photo counts as uncertain
 
 A rule: `name`, `kind` (trip / local / home / everyday), `when` (conditions, all must hold),
 `name_template` and `ongoing_days` for the kinds that make a proposal. Conditions:
@@ -21,6 +24,9 @@ A rule: `name`, `kind` (trip / local / home / everyday), `when` (conditions, all
     photos_min / photos_max           number of files
     located_min                       files with a position (own or a neighbour's)
     mostly_zone                       more than half of the files in that zone (home/local/away)
+    mostly_share                      what "mostly" means for mostly_zone (default 0.5)
+    max_km_min / max_km_max           the farthest photo's distance from home (km)
+    inbox                             a list of inbox names: the run has files from one of them
     zone                              the majority zone
     baseline_factor                   files >= your usual photos per day at home x factor (bursts)
     devices_min / videos_min          distinct devices / videos in the run
@@ -56,14 +62,17 @@ CONDITIONS: dict[str, type] = {
     "span_hours_min": float, "span_hours_max": float, "photos_min": int, "photos_max": int,
     "located_min": int, "mostly_zone": str, "zone": str, "baseline_factor": float,
     "devices_min": int, "videos_min": int, "weekday": list, "start_hour_min": int, "end_hour_max": int,
+    "mostly_share": float, "max_km_min": float, "max_km_max": float, "inbox": list,
 }
 RULE_KEYS = {"name", "kind", "when", "name_template", "ongoing_days"}
 EXCURSION_KEYS = {"split_gap_days": float, "split_distance_km": float, "local_gap_hours": float, "merge_devices": bool,
                   "same_area_hours": float, "neighbour_gps_hours": float, "interpolate_gps_hours": float}
 BURST_KEYS = {"gap_hours": float}
+NAMING_KEYS = {"place_min_share": float, "place_min_photos": int}
+REVIEW_KEYS = {"uncertain_below": float}
 TEMPLATE_FIELDS = ("span", "places", "place", "media", "n", "home")
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
-BLOCKS = ("homes", "excursions", "excursion_rules", "bursts", "burst_rules")
+BLOCKS = ("homes", "excursions", "excursion_rules", "bursts", "burst_rules", "naming", "review")
 
 
 # --- the ruleset ---------------------------------------------------------------------------------------
@@ -126,6 +135,11 @@ def defaults(cfg: Config) -> dict:
              "name_template": "{span} {place}", "ongoing_days": 1.0},
         ],
         "bursts": {"gap_hours": float(cfg.burst_gap_hours)},
+        # a place names a cluster when it has at least place_min_photos files (small clusters:
+        # any) and place_min_share of them; a photo whose position is borrowed or missing is
+        # "uncertain" (parked in _review when a cluster is moved without asking) below this
+        "naming": {"place_min_share": 0.03, "place_min_photos": 2},
+        "review": {"uncertain_below": 0.7},
         "burst_rules": [
             {"name": "home occasion", "kind": "home",
              "when": {"zone": geo.ZONE_HOME, "photos_min": int(cfg.burst_min_photos),
@@ -193,9 +207,9 @@ def validate(rs: dict) -> list[str]:
     ex = rs.get("excursions")
     if ex is not None:
         out += _check_block("excursions", ex, EXCURSION_KEYS)
-    b = rs.get("bursts")
-    if b is not None:
-        out += _check_block("bursts", b, BURST_KEYS)
+    for name, keys in (("bursts", BURST_KEYS), ("naming", NAMING_KEYS), ("review", REVIEW_KEYS)):
+        if rs.get(name) is not None:
+            out += _check_block(name, rs[name], keys)
     for block, allowed in (("excursion_rules", ("trip", "local", "everyday")),
                            ("burst_rules", ("home", "local", "everyday"))):
         rules = rs.get(block)
@@ -242,8 +256,10 @@ def _check_rule(where: str, rule, kinds: tuple) -> list[str]:
                 out.append(f"{where}: unknown condition {k} (known: {', '.join(CONDITIONS)})")
             elif t is str and v not in ZONES:
                 out.append(f"{where}: {k} must be one of {', '.join(ZONES)}")
-            elif t is list and (not isinstance(v, list) or any(d not in WEEKDAYS for d in v)):
+            elif k == "weekday" and (not isinstance(v, list) or any(d not in WEEKDAYS for d in v)):
                 out.append(f"{where}: weekday must be a list of weekday names")
+            elif k == "inbox" and (not isinstance(v, list) or not all(isinstance(d, str) for d in v)):
+                out.append(f"{where}: inbox must be a list of inbox names")
             elif t in (int, float) and (isinstance(v, bool) or not isinstance(v, (int, float))):
                 out.append(f"{where}: {k} must be a number")
     tpl = rule.get("name_template")
@@ -273,19 +289,26 @@ def features(run: list[dict], baseline: float | None = None) -> dict:
         "located": sum(n for z, n in zones.items() if z != geo.ZONE_UNKNOWN),
         "zones": zones, "zone": zones.most_common(1)[0][0],
         "devices": None, "videos": sum(1 for r in run if r.get("media") == "video"),
+        "max_km": max((r["dist_km"] for r in run if r.get("dist_km") is not None), default=None),
+        "inboxes": sorted({r.get("source") for r in run if r.get("source")}),
         "weekday": a.strftime("%A"), "start_hour": a.hour, "end_hour": b.hour,
         "baseline": baseline, "start": a, "end": b, "_run": run,
     }
 
 
-def holds(k: str, v, f: dict) -> bool:
-    """One condition of a rule against a run's features (an unknown key holds)."""
+def holds(k: str, v, f: dict, when: dict | None = None) -> bool:
+    """One condition of a rule against a run's features (an unknown key holds). `when`: the
+    rule's other conditions (mostly_share sets what "mostly" means for mostly_zone)."""
     from . import cluster
+    share = float((when or {}).get("mostly_share", 0.5))
     checks = {
         "span_hours_min": lambda: f["span_hours"] >= v, "span_hours_max": lambda: f["span_hours"] < v,
         "photos_min": lambda: f["photos"] >= v, "photos_max": lambda: f["photos"] <= v,
         "located_min": lambda: f["located"] >= v,
-        "mostly_zone": lambda: f["zones"].get(v, 0) > f["photos"] / 2, "zone": lambda: f["zone"] == v,
+        "mostly_zone": lambda: f["zones"].get(v, 0) > f["photos"] * share, "zone": lambda: f["zone"] == v,
+        "max_km_min": lambda: f["max_km"] is not None and f["max_km"] >= v,
+        "max_km_max": lambda: f["max_km"] is not None and f["max_km"] < v,
+        "inbox": lambda: any(i in v for i in f["inboxes"]),
         "baseline_factor": lambda: f["photos"] >= (f["baseline"] or 0.0) * v,
         "videos_min": lambda: f["videos"] >= v, "weekday": lambda: f["weekday"] in v,
         "start_hour_min": lambda: f["start_hour"] >= v, "end_hour_max": lambda: f["end_hour"] <= v,
@@ -299,7 +322,8 @@ def holds(k: str, v, f: dict) -> bool:
 
 
 def matches(rule: dict, f: dict) -> bool:
-    return all(holds(k, v, f) for k, v in (rule.get("when") or {}).items())
+    when = rule.get("when") or {}
+    return all(holds(k, v, f, when) for k, v in when.items())
 
 
 def pick(rules: list[dict], f: dict) -> dict | None:
@@ -342,13 +366,15 @@ def ongoing(rule: dict, f: dict, now: datetime | None) -> bool:
 FACT_OF = {"span_hours_min": "span_hours", "span_hours_max": "span_hours", "photos_min": "photos",
            "photos_max": "photos", "located_min": "located", "mostly_zone": "zones", "zone": "zone",
            "baseline_factor": "baseline", "devices_min": "devices", "videos_min": "videos",
-           "weekday": "weekday", "start_hour_min": "start_hour", "end_hour_max": "end_hour"}
+           "weekday": "weekday", "start_hour_min": "start_hour", "end_hour_max": "end_hour",
+           "mostly_share": "zones", "max_km_min": "max_km", "max_km_max": "max_km", "inbox": "inboxes"}
 CORE_FACTS = ("span_hours", "photos", "located", "zones", "devices", "videos")
 
 
 def failed(rule: dict, f: dict) -> dict:
     """The conditions of a rule the run does not meet, with their values."""
-    return {k: v for k, v in (rule.get("when") or {}).items() if not holds(k, v, f)}
+    when = rule.get("when") or {}
+    return {k: v for k, v in when.items() if not holds(k, v, f, when)}
 
 
 def explain(block: list[dict], rule: dict, f: dict) -> dict:
@@ -358,7 +384,12 @@ def explain(block: list[dict], rule: dict, f: dict) -> dict:
     values those conditions look at, rounded. A few numbers per proposal."""
     from . import cluster
     idx = next((i for i, r in enumerate(block) if r is rule or r == rule), 0)
-    before = [{"rule": r.get("name"), "failed": failed(r, f)} for r in block[:idx]]
+    before = []
+    for r in block[:idx]:
+        entry = {"rule": r.get("name"), "failed": failed(r, f)}
+        if "mostly_share" in (r.get("when") or {}):           # how "mostly" was meant, for the words
+            entry["share"] = r["when"]["mostly_share"]
+        before.append(entry)
     if f["devices"] is None:
         f["devices"] = cluster.count_devices(f["_run"])
     keys = set(CORE_FACTS) | {FACT_OF[k] for r in [*block[:idx], rule] for k in (r.get("when") or {}) if k in FACT_OF}
@@ -384,16 +415,18 @@ def _plural(n, word: str) -> str:
     return f"{_num(n)} {word}{'' if n == 1 else 's'}"
 
 
-def condition_text(k: str, v, facts: dict) -> tuple[str, str]:
+def condition_text(k: str, v, facts: dict, when: dict | None = None) -> tuple[str, str]:
     """A condition in plain words, and the run's value for it."""
     g = facts.get
+    share = float((when or {}).get("mostly_share", 0.5))
+    most = "more than half" if share == 0.5 else f"more than {_num(round(share * 100, 1))} %"
     texts = {
         "span_hours_min": lambda: (f"lasts at least {_num(v)} h", f"{_num(g('span_hours'))} h"),
         "span_hours_max": lambda: (f"lasts less than {_num(v)} h", f"{_num(g('span_hours'))} h"),
         "photos_min": lambda: (f"at least {_plural(v, 'file')}", _plural(g("photos"), "file")),
         "photos_max": lambda: (f"at most {_plural(v, 'file')}", _plural(g("photos"), "file")),
         "located_min": lambda: (f"at least {_num(v)} with a position", f"{_num(g('located'))} with a position"),
-        "mostly_zone": lambda: (f"more than half of the files {ZONE_TEXT.get(v, v)}",
+        "mostly_zone": lambda: (f"{most} of the files {ZONE_TEXT.get(v, v)}",
                                 f"{(g('zones') or {}).get(v, 0)} of {_num(g('photos'))}"),
         "zone": lambda: (f"most files {ZONE_TEXT.get(v, v)}", f"most {ZONE_TEXT.get(g('zone'), '?')}"),
         "baseline_factor": lambda: (
@@ -405,6 +438,10 @@ def condition_text(k: str, v, facts: dict) -> tuple[str, str]:
         "weekday": lambda: (f"starts on {', '.join(v)}", f"starts on {g('weekday', '?')}"),
         "start_hour_min": lambda: (f"starts at {_num(v)}:00 or later", f"starts at {_num(g('start_hour'))}:xx"),
         "end_hour_max": lambda: (f"ends by {_num(v)}:00", f"ends at {_num(g('end_hour'))}:xx"),
+        "mostly_share": lambda: (f"“mostly” means {most}", "rule setting"),
+        "max_km_min": lambda: (f"reaches at least {_num(v)} km from home", f"farthest {_num(g('max_km'))} km"),
+        "max_km_max": lambda: (f"stays within {_num(v)} km of home", f"farthest {_num(g('max_km'))} km"),
+        "inbox": lambda: (f"has files from {', '.join(v)}", f"files from {', '.join(g('inboxes') or []) or '?'}"),
     }
     text = texts.get(k)
     return text() if text else (f"{k} {v}", "?")
@@ -420,12 +457,14 @@ def describe(decision: dict | None) -> dict | None:
     facts = why.get("facts") or {}
     missed = set(why.get("failed") or ())
     out = {"rule": decision.get("rule"), "note": note, "conditions": [], "before": [], "run": None, "gaps": []}
-    for k, v in (why.get("when") or {}).items():
-        need, have = condition_text(k, v, facts)
+    when = why.get("when") or {}
+    for k, v in when.items():
+        need, have = condition_text(k, v, facts, when)
         out["conditions"].append({"need": need, "have": have, "ok": k not in missed})
     for b in why.get("before") or ():
         out["before"].append({"rule": b.get("rule"), "missed": [
-            "{}: {}".format(*condition_text(k, v, facts)) for k, v in (b.get("failed") or {}).items()]})
+            "{}: {}".format(*condition_text(k, v, facts, {"mostly_share": b.get("share", 0.5)}))
+            for k, v in (b.get("failed") or {}).items()]})
     if facts:
         zones = facts.get("zones") or {}
         parts = [f"{_num(facts.get('span_hours'))} h", _plural(facts.get("photos"), "file")]

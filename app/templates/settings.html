@@ -311,7 +311,9 @@
     <div class="what"><label for="f-rules">Your own rules{% if cfg.rules %} <span class="badge warn">in force — the thresholds above do not apply</span>{% endif %}</label>
       <p>YAML, see <code>app/rules.py</code> for the vocabulary. Leave it empty to use the rules built from the fields above. A rule list given here replaces that list of the defaults, a parameter left out keeps its default; the rest stays. Rules that do not validate are reported and not saved.</p>
       <details><summary class="small muted">rules in force now</summary><pre class="small">{{ rules_in_force }}</pre></details></div>
-    <div class="ctl"><textarea name="rules" id="f-rules" rows="12" spellcheck="false" placeholder="excursion_rules:&#10;  - {name: trip, kind: trip, when: {span_hours_min: 20, located_min: 3}, name_template: '{span} {places}', ongoing_days: 4}&#10;  - {name: day out, kind: local, when: {photos_min: 8}, name_template: '{span} {place}', ongoing_days: 1}&#10;burst_rules:&#10;  - {name: party, kind: home, when: {zone: home, photos_min: 12, baseline_factor: 4, weekday: [Saturday, Sunday]}, name_template: '{span} ({media})'}">{{ rules_text }}</textarea></div>
+    <div class="ctl"><textarea name="rules" id="f-rules" rows="12" spellcheck="false" placeholder="excursion_rules:&#10;  - {name: trip, kind: trip, when: {span_hours_min: 20, located_min: 3}, name_template: '{span} {places}', ongoing_days: 4}&#10;  - {name: day out, kind: local, when: {photos_min: 8}, name_template: '{span} {place}', ongoing_days: 1}&#10;burst_rules:&#10;  - {name: party, kind: home, when: {zone: home, photos_min: 12, baseline_factor: 4, weekday: [Saturday, Sunday]}, name_template: '{span} ({media})'}">{{ rules_text }}</textarea>
+      <div class="row" style="margin-top:8px"><span class="act" role="button" tabindex="0" data-rules-preview="/settings/rules/preview" title="compare the proposals these rules would make with today's, without saving">Preview: what would change?</span></div>
+      <div id="rules-preview" aria-live="polite"></div></div>
   </div>
 </div>
 

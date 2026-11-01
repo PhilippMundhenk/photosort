@@ -119,7 +119,15 @@ whose conditions hold decides, `everyday` is a kind of its own, so a custom rule
 "a burst of 30 photos in the local zone on a weekend is a day out" or "a trip needs two
 devices". The default ruleset is held to the old code by a golden test that runs a frozen copy
 of that code (`tests/legacy_rules.py`) and the engine over every synthetic library and many
-parameter sets and requires identical proposals. Several homes (issue #3) are a list in the
+parameter sets and requires identical proposals. What used to be constants are parameters
+now (November 2026, issue #2): what "mostly" means (`mostly_share`), which places name a
+cluster (`naming`: 3 % of its files and at least 2), the confidence under which a photo is
+uncertain (`review`: 0.7); new conditions look at the farthest photo's distance from home and
+at the inboxes a run comes from. The editor's **Preview** clusters the inbox with the rules in
+force and with the ones typed, from the same records, and lists what would be new, gone or
+different; nothing is saved until Save. Conditions stay named keys (`photos_min: 8`) rather
+than the expression syntax first sketched: they validate one by one with messages a person
+can act on, and the why panel can put each into words. Several homes (issue #3) are a list in the
 ruleset: a photo inside any home is at home, ends excursions and is everyday there; the
 zone beyond follows the distance to the nearest home, and the record keeps that home's name.
 Each home has its own usual day: `data/baseline.json` keeps the photos per day per home, and a

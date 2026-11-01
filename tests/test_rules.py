@@ -329,3 +329,121 @@ def test_a_hand_edited_config_with_broken_rules_still_loads(data_dir):
     assert cfg.rules == {} and cfg.homes == []                               # coerced back to the defaults
     assert rules.effective(cfg) == rules.defaults(cfg)
     Path(config.CONFIG_PATH).unlink()
+
+
+# --- issue #2: conditions and parameters that used to be constants -----------------------------------
+
+def _far_run(n_away: int, n_home: int, dist: float = 900.0, source: str = "phone") -> list[dict]:
+    out = [{**rec(T0 + h(i), "away", LISBON, "Lisbon"), "dist_km": dist, "source": source} for i in range(n_away)]
+    out += [{**rec(T0 + h(n_away + i), "home", HOME), "dist_km": 0.1, "source": source} for i in range(n_home)]
+    return out
+
+
+def test_mostly_share_max_distance_and_inbox_conditions():
+    run = _far_run(6, 4)                                                      # 60 % away, 900 km out
+    f = rules.features(run)
+    assert f["max_km"] == 900.0 and f["inboxes"] == ["phone"]
+    assert rules.matches({"when": {"mostly_zone": "away"}}, f)
+    assert not rules.matches({"when": {"mostly_zone": "away", "mostly_share": 0.7}}, f)
+    assert rules.matches({"when": {"max_km_min": 500}}, f) and not rules.matches({"when": {"max_km_max": 500}}, f)
+    assert rules.matches({"when": {"inbox": ["phone", "camera"]}}, f)
+    assert not rules.matches({"when": {"inbox": ["camera"]}}, f)
+    nowhere = rules.features([rec(T0, "unknown")])
+    assert not rules.matches({"when": {"max_km_min": 1}}, nowhere)
+    assert not rules.matches({"when": {"max_km_max": 1}}, nowhere)
+
+
+def test_new_conditions_and_blocks_validate_and_read_in_words():
+    assert rules.validate({"excursion_rules": [{"kind": "trip", "when": {"inbox": "camera"}}]}) == [
+        "excursion_rules[0]: inbox must be a list of inbox names"]
+    assert rules.validate({"naming": {"place_min_share": "x"}, "review": {"nope": 1}}) == [
+        "naming.place_min_share must be a number", "review: unknown key nope (known: uncertain_below)"]
+    assert rules.parse("naming: {place_min_share: 0.1}\nreview: {uncertain_below: 0.9}")["review"] == {
+        "uncertain_below": 0.9}
+    facts = {"zones": {"away": 6}, "photos": 10, "max_km": 900.0, "inboxes": ["phone"]}
+    when = {"mostly_zone": "away", "mostly_share": 0.7}
+    assert rules.condition_text("mostly_zone", "away", facts, when)[0] == "more than 70 % of the files far from home"
+    assert rules.condition_text("mostly_zone", "away", facts)[0] == "more than half of the files far from home"
+    assert rules.condition_text("mostly_share", 0.7, facts, when)[0] == "“mostly” means more than 70 %"
+    assert rules.condition_text("max_km_min", 500, facts) == ("reaches at least 500 km from home", "farthest 900 km")
+    assert rules.condition_text("max_km_max", 50, facts)[0] == "stays within 50 km of home"
+    assert rules.condition_text("inbox", ["camera"], facts) == ("has files from camera", "files from phone")
+    assert rules.condition_text("inbox", ["camera"], {})[1] == "files from ?"
+
+
+def test_why_panel_remembers_how_mostly_was_meant_for_rules_checked_first():
+    block = [{"name": "far", "kind": "local", "when": {"mostly_zone": "away", "mostly_share": 0.7}},
+             {"name": "any", "kind": "local", "when": {}}]
+    f = rules.features(_far_run(6, 4))
+    why = rules.explain(block, block[1], f)
+    assert why["before"] == [{"rule": "far", "failed": {"mostly_zone": "away"}, "share": 0.7}]
+    words = rules.describe({"rule": "any", "why": why})
+    assert words["before"][0]["missed"] == ["more than 70 % of the files far from home: 6 of 10"]
+
+
+def test_naming_and_review_parameters_change_names_and_uncertain_photos():
+    cfg = config.Config(home_lat=HOME[0], home_lon=HOME[1])
+    run = [rec(T0 + h(i), "away", LISBON, "Lisbon", "Portugal") for i in range(30)]
+    run[5]["place"] = {"place": "Sintra", "country": "Portugal"}               # one photo of 30: 3.3 %
+    assert cluster.places_label(cfg, run) == "Lisbon"                          # needs 2 files by default
+    cfg.rules = {"naming": {"place_min_photos": 1}}
+    assert cluster.places_label(cfg, run) == "Lisbon, Sintra"
+    cfg.rules = {"naming": {"place_min_photos": 1, "place_min_share": 0.05}}
+    assert cluster.places_label(cfg, run) == "Lisbon"
+    trip = run[:3] + [{**rec(T0 + h(40), "away", LISBON, "Lisbon"), "gps_source": "neighbour:x"}]
+    cfg.rules = {}
+    assert cluster.trip_proposal(cfg, trip, NOW)["n_uncertain"] == 0           # borrowed: 0.8 >= 0.7
+    cfg.rules = {"review": {"uncertain_below": 0.9}}
+    assert cluster.trip_proposal(cfg, trip, NOW)["n_uncertain"] == 1
+
+
+def test_preview_shows_what_a_ruleset_would_change_without_saving(cfg, library):
+    cluster.run(cfg)
+    saved = config.load()
+    snapshot = cluster.load_proposals()
+    same = cluster.preview_rules(saved, {})
+    assert same["counts"] == {"added": 0, "gone": 0, "changed": 0} and same["same"] == 3
+    no_trips = {"excursion_rules": [{"name": "day out", "kind": "local", "when": {"span_hours_max": 20}}]}
+    pv = cluster.preview_rules(saved, no_trips)
+    assert pv["counts"]["gone"] == 1 and pv["gone"][0]["kind"] == "trip"
+    renamed = {"burst_rules": [{"name": "party", "kind": "home", "when": {"zone": "home", "photos_min": 12},
+                                "name_template": "Party {span}"}]}
+    pv = cluster.preview_rules(saved, renamed)
+    assert pv["counts"]["changed"] == 1 and pv["changed"][0]["after"]["name"].startswith("Party ")
+    assert config.load().rules == {} and cluster.load_proposals() == snapshot      # nothing written
+    with TestClient(main.app) as client:
+        html = client.post("/settings/rules/preview", data={"rules": ""}).text
+        assert "No proposal would change (3 stay as they are)" in html
+        html = client.post("/settings/rules/preview", data={"rules": yaml.safe_dump(no_trips)}).text
+        assert "<b>0 new</b>, <b>1 gone</b>" in html and "<b>Gone</b>" in html and "badge trip" in html
+        html = client.post("/settings/rules/preview", data={"rules": yaml.safe_dump(renamed)}).text
+        assert "<b>Different</b>" in html and "→ <b>Party " in html
+        html = client.post("/settings/rules/preview", data={"rules": "excursion_rules: [nope]"}).text
+        assert "These rules would not be saved" in html
+        page = client.get("/settings", params={"mode": "expert"}).text
+        assert 'data-rules-preview="/settings/rules/preview"' in page and 'id="rules-preview"' in page
+    assert config.load().rules == {}                                          # nothing saved
+
+
+def test_preview_lists_at_most_the_limit_and_leaves_hand_made_and_rejected_photos_out(cfg, library):
+    cluster.run(cfg)
+    props = cluster.load_proposals()
+    trip = next(p for p in props.values() if p["kind"] == "trip")
+    trip["status"] = "rejected"
+    cluster.save_proposals(props)
+    pv = cluster.preview_rules(config.load(), {})
+    assert pv["same"] == 2                                                    # the rejected trip's photos sit out
+    everything = {"excursion_rules": [], "burst_rules": [{"name": "all", "kind": "home", "when": {}}]}
+    pv = cluster.preview_rules(config.load(), everything, limit=1)
+    assert len(pv["added"]) == 1 and pv["counts"]["added"] > 1
+    with TestClient(main.app) as client:
+        main_limit = client.post("/settings/rules/preview", data={"rules": yaml.safe_dump(everything)}).text
+    assert "<b>New</b>" in main_limit
+
+
+def test_a_home_rule_without_any_minimum_does_not_crash_a_run():
+    """threshold 0: no ratio to the usual day (it used to divide by zero)."""
+    cfg = config.Config(home_lat=HOME[0], home_lon=HOME[1])
+    burst = [rec(T0 + h(i / 4), "home", HOME) for i in range(3)]
+    pr = cluster.home_proposal(cfg, burst, 0.0, {"name": "all", "kind": "home", "when": {}})
+    assert pr["decision"]["state"]["burst_ratio"] is None and "usual day" not in pr["decision"]["note"]

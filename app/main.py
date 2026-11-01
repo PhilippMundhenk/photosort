@@ -738,6 +738,39 @@ def settings(request: Request, msg: str = "", mode: str = ""):
                   rules_in_force=rules.to_yaml(rules.effective(cfg)))
 
 
+def _preview_item(b: dict) -> str:
+    return (f'<li><span class="badge {esc(b["kind"])}">{esc(b["kind"])}</span> {esc(b["name"])} '
+            f'<span class="muted">· {b["n"]} files · {esc(b["start"])}</span></li>')
+
+
+@app.post("/settings/rules/preview", response_class=HTMLResponse)
+def settings_rules_preview(rules_text: str = Form("", alias="rules")):
+    """What the rules in the editor would change, before saving (issue #2): an HTML fragment
+    the Settings page shows under the editor. Nothing is saved or moved."""
+    try:
+        custom = rules.parse(rules_text) if rules_text.strip() else {}
+    except ValueError as e:
+        return HTMLResponse(f'<p class="warnbox">These rules would not be saved: {esc(e)}</p>')
+    pv = cluster.preview_rules(config.load(), custom)
+    c = pv["counts"]
+    if not (c["added"] or c["gone"] or c["changed"]):
+        return HTMLResponse(f'<p class="small">No proposal would change ({pv["same"]} stay as they are).</p>')
+    parts = [f'<p class="small">With these rules: <b>{c["added"]} new</b>, <b>{c["gone"]} gone</b>, '
+             f'<b>{c["changed"]} different</b>, {pv["same"]} unchanged. Nothing is saved until “Save settings”.</p>']
+    for key, title in (("added", "New"), ("gone", "Gone")):
+        if pv[key]:
+            more = c[key] - len(pv[key])
+            rows = "".join(_preview_item(b) for b in pv[key])
+            rows += f'<li class="muted">… {more} more</li>' if more else ""
+            parts.append(f'<p class="small"><b>{title}</b></p><ul class="small">{rows}</ul>')
+    if pv["changed"]:
+        rows = "".join(f'<li>{esc(ch["before"]["name"])} ({esc(ch["before"]["kind"])}) → '
+                       f'<b>{esc(ch["after"]["name"])}</b> ({esc(ch["after"]["kind"])}, {ch["after"]["n"]} files)</li>'
+                       for ch in pv["changed"])
+        parts.append(f'<p class="small"><b>Different</b></p><ul class="small">{rows}</ul>')
+    return HTMLResponse("".join(parts))
+
+
 @app.post("/settings/mode")
 def settings_mode(mode: str = Form("basic")):
     """The basic / advanced / expert switch: remembered, no other setting touched."""

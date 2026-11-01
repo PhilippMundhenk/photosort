@@ -469,3 +469,21 @@
   form.addEventListener("change", refresh);
   refresh();
 })();
+
+// --- settings: what the rules in the editor would change, before saving (issue #2) ---------
+(function () {
+  var btn = document.querySelector("[data-rules-preview]");
+  var out = document.getElementById("rules-preview");
+  if (!btn || !out) return;
+  function preview() {
+    var body = new FormData();
+    body.append("rules", document.getElementById("f-rules").value);
+    out.textContent = "comparing…";
+    fetch(btn.getAttribute("data-rules-preview"), {method: "POST", body: body, headers: {"X-Requested-With": "fetch"}})
+      .then(function (r) { return r.ok ? r.text() : Promise.reject(r.status); })
+      .then(function (html) { out.innerHTML = html; })
+      .catch(function () { out.textContent = "could not compute the preview — try again"; });
+  }
+  btn.addEventListener("click", preview);
+  btn.addEventListener("keydown", function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); preview(); } });
+})();
