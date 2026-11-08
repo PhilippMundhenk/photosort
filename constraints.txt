@@ -30,7 +30,7 @@ pyee==13.0.1
 Pygments==2.21.0
 pytest==9.1.1
 pytest-cov==7.1.0
-python-dotenv==1.2.3
+python-dotenv==1.2.4
 python-multipart==0.0.32
 PyYAML==6.0.3
 reverse_geocode==1.6.6
