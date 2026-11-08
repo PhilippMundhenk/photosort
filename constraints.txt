@@ -7,7 +7,7 @@ anyio==4.15.1
 APScheduler==3.11.3
 certifi==2026.7.22
 click==8.5.0
-coverage==7.17.0
+coverage==7.17.2
 fastapi==0.141.1
 greenlet==3.5.6
 h11==0.16.0
